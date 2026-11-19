@@ -1,6 +1,7 @@
 # AGENTS.md — Falador
 
 > **MEMÓRIA VIVA DO PROJETO. Toda sessão de agente deve ler este arquivo primeiro e ATUALIZÁ-LO ao final de cada conquista.** Última atualização: 2026-11-18.
+> **Operação (subir/usar/derrubar serviços): ver `run.md`** — guia dedicado com comandos exatos, health checks e armadilhas.
 
 ## 1. O que é o Falador
 
