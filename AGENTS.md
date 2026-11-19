@@ -45,6 +45,7 @@ App local (macOS, Apple Silicon M4 Pro 48 GB) que traduz conversas de conferênc
 | ASR (Audio-2B 8-bit) | RTF 0,05 (0,22–0,23 s p/ 4,09 s de fala) |
 | TTS EN / TTS PT | 3,6× / 4,9× realtime |
 | 1º frame de fala no streaming | ~75 ms (frames de 80 ms via `stream_slots`) |
+| Tradução NATIVA LFM3-Audio (task=chat + áudio tipado, sidecar `/asr-translate`) | 4,64 s de fala EN → PT em **0,31 s** (~15× realtime; NÃO streaming — por janela de utterance/flush) |
 | Slots/s no streaming | 77–78 (6,2× realtime; realtime = 12,5) |
 | Codec decode | RTF 0,002 |
 | TTFT omlx solo / 2 concorrentes | 30 / 60 ms (p50, warm) |
@@ -105,6 +106,9 @@ App local (macOS, Apple Silicon M4 Pro 48 GB) que traduz conversas de conferênc
   - **8/8 testes passando** (`npm test` em `packages/falador-graph`; padrões de política drop_oldest/block, TTL, cancel por seq, CYCLE/PORT_TYPE_MISMATCH/DUPLICATE/UNKNOWN_PORT/MISSING_BINDING, drain reverso idempotente, p50/p95).
   - Descobertas da implementação: type-stripping do Node 26 NÃO aceita parameter properties (constructor `public x`) nem `import()` no sandbox; durante o drain do stop() o emit DEVE ser permitido (senão nó em processamento mata o pump e perde mensagem); `stopWhenSourcesDone` liga teste de fim natural.
 - **Sidecar TTS `services/sts-sidecar.py` VERIFICADO AO VIVO (2026-11-19, porta 8091)**: `POST /tts {text, language, voice, sample_rate}` → WAV PCM16 mono 24 kHz. EN: 2,96 s de áudio em 0,65 s (4,55× rt, 142 KB). PT: 4,00 s em 0,75 s (5,32× rt, 192 KB). Roda com `--model <snapshot Path>` (processo residente; **iniciar via tools.process.start**, shell comum mata o processo quando o comando termina).
+- **Sidecar ganhou `POST /asr-translate` (2026-11-19)**: `{audioB64: WAV PCM16 b64, instruction, sample_rate}` → `{text}` — transcrição+tradução NATIVA via `MODEL.generate(messages=[{áudio tipado}+instrução], task='chat')` (VERIFICADO no código do mlx_audio; `result.text`). Mesmo modelo residente, mesmo lock.
+- **Nó `asr.lfm3` (falador-nodes) VERIFICADO AO VIVO (2026-11-19)**: acumula `audio_chunk` s16le (aceita WAV do tts.sts tb) → janela `flushSec` (default 30) → `/asr-translate` → `tokens_parcial {text, final:true}`; resto pendente traduzido no `stop()`. Teste N10 no engine: EN real do sidecar → PT, 1,2 s. Fluxo variante: `apps/tui/flows/cenario1-lfm3.json` (sem nó llm tradutor).
+- **`falador-nodes` 9/9 VERDES (N1–N6, N8–N10; N7 skip por gate FALADOR_MIC_TEST)**.
 - **Pacote `falador-nodes` IMPLEMENTADO (2026-11-19, r2) — 5/5 testes verdes** (`npm test` em `packages/falador-nodes`; zero dependências, imports relativos ao falador-graph):
   - `llm.omlx` — SSE OpenAI-compat em :8080, `enable_thinking:false`, parciais CUMULATIVOS `{text, final}` (TTFT medido no nó), template/multiturno (`historyMax`), age só no `final` quando recebe parciais.
   - `tts.sts` — POST /tts no sidecar :8091 → `audio_chunk` `{format:'wav', sampleRateHz, data:Uint8Array}`; aceita tokens_parcial (fala no final) ou phrase.
@@ -130,7 +134,9 @@ App local (macOS, Apple Silicon M4 Pro 48 GB) que traduz conversas de conferênc
 8. ~~Cenário 1 E2E~~ → **FEITO (2026-11-19)**: `cenario1-pt.json` PASSOU com mídia real (afplay → BlackHole → Voxtral ASR → omlx tradução → legenda PT streaming). Tradução nativa do STT: NÃO streaming; LFM3 `chat`+audio TIPADO traduz nado-nado (potencial nó futuro `asr.lfm3` p/ utterance).
 9. **Fase 2 — UI web (React Flow + Carbon)** desenhada pelo usuário no canvas (ADR-003 "nada fixo"); + nó tradução nativa (`asr.lfm3` chat+audio) como opção do catálogo.
 10. **UI web** → INICIADA (2026-11-19, ver §6). Próximas sub-etapas: (a) confirmação visual pelo usuário em http://127.0.0.1:8787; (b) refino do Inspector (textarea/params complexos, edição fino do LLM template); (c) Cenário 2 no canvas (asr → llm sujestão → tts.fala com playback gear); (d) nó `asr.lfm3` tradução nativa por utterance.
-11. ~~Cenário 2~~ → **FEITO (2026-11-19)**: `cenario2-auto.json` com decisão AUTO/HUMANO roteada por porta, gate humano com edição na UI, TTS EN + playback — E2E ao vivo PASSOU (2× fala+playback, lane auto). Restam itens (a), (b), (d) e `decision.laya` sidecar (se o dono aprovar).
+11. ~~Cenário 2~~ → **FEITO (2026-11-19)**: `cenario2-auto.json` com decisão AUTO/HUMANO roteada por porta, gate humano com edição na UI, TTS EN + playback — E2E ao vivo PASSOU (2× fala+playback, lane auto). Commit `6554a5d`.
+12. **UI web refinada (2026-11-19)**: Inspector com textarea p/ prompts (`system`/`instructions`/`text`), editor **JSON** p/ params estruturados (`template` do llm.omlx é array de strings!, `options` da decisão), "?" aponta pro modelo SELECIONADO (não pro 1º da lista), placeholders com default real do nó. Build limpo (tsc+vite). FALTA: confirmação visual do dono em http://127.0.0.1:8787.
+13. **Nó `asr.lfm3`** → **FEITO (2026-11-19)**: tradução nativa por janela (ver §6). Restam: `decision.laya` sidecar (precisa fine-tune; aprovação do dono) e WebUI fase 3 (metrics por nó, perfis de Run).
 
 ## 8. Protocolo de atualização deste arquivo
 

@@ -20,6 +20,7 @@ import {
   sinkCaptions,
   sinkPlayback,
   asrRealtime,
+  asrLfm3,
   captureFfmpeg,
   registerFaladorNodes,
   VOXTRAL_SNAPSHOT,
@@ -296,7 +297,7 @@ describe('falador-nodes — integração ao vivo (gate por porta)', () => {
 
 test('N5: catálogo de nós reais registrado', () => {
   const r = reg();
-  for (const t of ['llm.omlx', 'tts.sts', 'asr.realtime', 'capture.ffmpeg', 'sink.captions', 'sink.playback']) {
+  for (const t of ['llm.omlx', 'tts.sts', 'asr.realtime', 'asr.lfm3', 'capture.ffmpeg', 'sink.captions', 'sink.playback']) {
     assert.ok(r.has(t), `tipo ${t} registrado`);
   }
 });
@@ -389,6 +390,74 @@ test('N9: decision.llm roteia o payload para a porta da opção escolhida', asyn
   assert.equal(auto.length, 1, `1ª sugestão (tone-1) deve ir por auto; auto=${auto.length} hum=${hum.length}`);
   assert.equal(hum.length, 1, '2ª sugestão (tone-2) deve ir por humano');
   srv.close();
+});
+
+// N10 — asr.lfm3 ao vivo: fala EN real (sidecar /tts) → tradução NATIVA PT (sidecar
+// /asr-translate, LFM3-Audio task='chat') DENTRO do engine. Falando em prova:
+// 4,64 s de áudio EN → 'Olá, posso te ouvir?...' PT em 0,31 s (~15× realtime, 2026-11-19).
+test('N10: asr.lfm3 tradução nativa EN→PT ao vivo dentro do engine', async () => {
+  const sidecarUp = await probeTcp(8091);
+  if (!sidecarUp) return; // sidecar fora do ar: nada a provar aqui (live test)
+  const fraseEn = 'This is a live test. The quick brown fox jumps over the lazy dog.';
+  const sampleRate = 24000;
+  const frameMs = 100;
+  const frameBytes = Math.round((sampleRate * frameMs) / 1000) * 2;
+  const collected = { received: [] as Array<{ payload: unknown }> };
+  // produtor: pega 1 WAV EN real do sidecar e emite frames s16le de 100 ms (como capture.ffmpeg)
+  const produtor: NodeTypeDef = {
+    type: 'produtor.en',
+    paramNames: [],
+    inputs: [],
+    outputs: [{ name: 'out', type: 'audio_chunk' }],
+    sourceOnly: true,
+    create: (ctx) => ({
+      async start() {
+        const bytes = await postJsonBytes(
+          'http://127.0.0.1:8091/tts',
+          { text: fraseEn, language: 'English', voice: 'female', sample_rate: sampleRate },
+          120_000,
+          ctx.signal,
+        );
+        for (let off = 44; off < bytes.byteLength; off += frameBytes) {
+          await ctx.emit('out', bytes.subarray(off, Math.min(off + frameBytes, bytes.byteLength)));
+        }
+      },
+      async onInput() {},
+      async stop() {},
+    }),
+  };
+  const flow: FlowSpec = {
+    version: 1,
+    stopWhenSourcesDone: true,
+    nodes: [
+      { id: 'voz', type: 'produtor.en', params: {} },
+      { id: 'asr3', type: 'asr.lfm3', params: { url: 'http://127.0.0.1:8091', flushSec: 3, sampleRateHz: sampleRate } },
+      { id: 'snk', type: 'sink.collect' },
+    ],
+    edges: [
+      { from: 'voz.out', to: 'asr3.in', capacity: 128, overflow: 'block' },
+      { from: 'asr3.out', to: 'snk.parcs', capacity: 8, overflow: 'drop_oldest' },
+    ],
+    bindings: { snk: { __collect: collected } },
+  };
+  const rg = await runGraph(flow, registerFaladorNodes(createRegistry()).register(sinkCollect).register(produtor));
+  await rg.done;
+  const finals = collected.received
+    .map((r) => (r as { payload: unknown }).payload)
+    .filter((p) => p && typeof p === 'object' && 'text' in (p as object)) as Array<{ text: string; final: boolean }>;
+  const texto = finals.map((p) => p.text).join(' ').toLowerCase();
+  assert.ok(finals.length >= 1, `espera ≥1 tradução final; veio ${finals.length}`);
+  assert.ok(finals.every((p) => p.final), 'tradução sai sempre final (não é streaming)');
+  // PT: NÃO pode conter a frase EN literal (o pedido foi traduzir, não transcrever).
+  const enLiteral = texto.includes('quick brown fox');
+  assert.ok(!enLiteral, `saída deve ser PT, veio EN: "${texto}"`);
+  // aceita palavras-chave probabilísticas (tradução não é determinística);
+  // se nenhuma casar, falha com o texto para auditoria (honesto).
+  assert.match(
+    texto,
+    /(raposa|marron|marrom|preguiçoso|pula|salta|café|teste|rápido)/,
+    `texto PT reconhecido: "${texto}"`,
+  );
 });
 
 test('N7: capture.ffmpeg — mic real produz frames pcm16k contínuos (avfoundation)', { skip: !N7_UP }, async () => {

@@ -47,7 +47,65 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
+    def _send_json(self, code, obj):
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _handle_asr_translate(self):
+        """Transcrição+tradução por utterance (NÃO streaming) via task='chat' + áudio tipado.
+
+        VERIFICADO no código do mlx_audio (sts/models/lfm3_audio/model.py):
+        messages aceita bloco {"type":"audio","audio": <array>} + {"type":"text", ...},
+        e result.text traz a decodificação (modo TEXT para task='chat').
+        Pedido: {"audioB64": <WAV PCM16 base64>, "instruction": "...", "sample_rate": 16000}
+        Resposta: {"text": "..."}
+        """
+        import base64
+        try:
+            n = int(self.headers.get("Content-Length", 0))
+            req = json.loads(self.rfile.read(n) or b"{}")
+            wav_b64 = req.get("audioB64", "")
+            instruction = (req.get("instruction") or "").strip()
+            sample_rate = int(req.get("sample_rate", 16000))
+            if not wav_b64:
+                raise ValueError("audioB64 obrigatorio (WAV PCM16)")
+            if not instruction:
+                raise ValueError("instruction obrigatoria")
+            wav = base64.b64decode(wav_b64)
+            with wave.open(io.BytesIO(wav), "rb") as r:
+                if r.getnchannels() != 1 or r.getsampwidth() != 2:
+                    raise ValueError("esperado WAV mono PCM16")
+                sr = r.getframerate()
+                pcm = np.frombuffer(r.readframes(r.getnframes()), dtype=np.int16)
+            if sample_rate != sr:
+                raise ValueError(f"sample_rate do body ({sample_rate}) != do WAV ({sr})")
+            audio = (pcm.astype(np.float32) / 32768.0).squeeze()
+
+            with LOCK:
+                result = MODEL.generate(
+                    messages=[
+                        {"role": "user", "content": [
+                            {"type": "audio", "audio": audio},
+                            {"type": "text", "text": instruction},
+                        ]},
+                    ],
+                    task="chat",
+                    sample_rate=sample_rate,
+                    temperature=0.0,
+                    top_k=1,
+                )
+            self._send_json(200, {"text": (result.text or "").strip()})
+        except Exception as e:
+            self._send_json(500, {"error": str(e)})
+
     def do_POST(self):
+        if self.path == "/asr-translate":
+            self._handle_asr_translate()
+            return
         if self.path != "/tts":
             self.send_response(404)
             self.end_headers()
