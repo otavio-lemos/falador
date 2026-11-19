@@ -84,7 +84,8 @@ export function Inspector({ node, onUpdate, onDuplicate, onDelete }: {
                   value={selectedId}
                   onChange={(e) => {
                     const m = models.find((mm) => mm.id === e.target.value);
-                    onUpdate({ params: { ...p, [name]: m?.url ?? e.target.value } });
+                    // o value certa p/ o param (omlx id / snapshot path); fallback: url
+                    onUpdate({ params: { ...p, [name]: m ? (m.value ?? m.url) : e.target.value } });
                   }}
                   style={inputStyle}
                 >

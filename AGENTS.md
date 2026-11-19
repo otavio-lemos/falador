@@ -16,6 +16,9 @@ App local (macOS, Apple Silicon M4 Pro 48 GB) que traduz conversas de conferênc
 
 | Ativo | O que é | Como usamos |
 |---|---|---|
+| **omlx** 0.8.0 (brew, Apache-2.0) | Servidor LLM Apple Silicon, OpenAI-compat — **é a versão latest (v0.8.0, 16/11/2026)** | LLM técnico + tradução + **DECISÃO (serve a família d1 da LiquidAI)**, porta 8080; `chat_template_kwargs:{"enable_thinking": false}` OBRIGATÓRIO (medido, ver §4) |
+| **LiquidAI d1-2B / d1-Omni-2B** (HF, oficial, 2026) | Modelos de DECISÃO calibrados (1 forward pass, sem gerar tokens); d1-Omni-2B aceita ÁUDIO (roteia fala sem transcrever) | Substituta OFICIAL do plano Laya p/ o nó decision.llm — omlx 0.8.0 já serve d1. **NÃO VERIFICADO ainda; download do dono** |
+| **Cache HF local** (listado 2026-11-19) | MUITO além do 1.7B: Qwen3.8-27B-4bit, Qwen3.6-35B-A3B-4bit, Qwen3.5-9B-4bit, OsaurusAI DeepSeek-V4.1-Flash-1017, LFM2.5-24B-A2B, Nemotron-3.5-Bolt-74B-A9B etc. | Candidatas p/ nós LLM maiores (Cenário 2) — **todas NÃO VERIFICADAS no omlx**, dropdown do Inspector já lista |
 | **mlx-audio** (Neywa-Labs, MIT, v0.6.6, 8.3k★) | TTS+STT+STS+VAD em MLX; hospeda LFM3-Audio-2B; server OpenAI-compat c/ `/v1/realtime`; `StreamingSession` (feed/step/close) | **Núcleo de áudio da v1** (ADR-004 E1-E2). Instalado no `.venv` |
 | **LFM3-Audio-2B-MLX-8bit** (HF, oficial LiquidAI) | Modelo any-to-any: ASR + TTS (EN e **PT ok**, medido 4,9× rt) | Duas instâncias residentes: escuta + fala (D6) |
 | **omlx** 0.8.0 (brew, Apache-2.0) | Servidor LLM Apple Silicon, OpenAI-compat | LLM técnico + tradução, porta 8080; `chat_template_kwargs:{"enable_thinking": false}` OBRIGATÓRIO (medido, ver §4) |
@@ -139,7 +142,7 @@ App local (macOS, Apple Silicon M4 Pro 48 GB) que traduz conversas de conferênc
 10. **UI web** → INICIADA (2026-11-19, ver §6). Próximas sub-etapas: (a) confirmação visual pelo usuário em http://127.0.0.1:8787; (b) refino do Inspector (textarea/params complexos, edição fino do LLM template); (c) Cenário 2 no canvas (asr → llm sujestão → tts.fala com playback gear); (d) nó `asr.lfm3` tradução nativa por utterance.
 11. ~~Cenário 2~~ → **FEITO (2026-11-19)**: `cenario2-auto.json` com decisão AUTO/HUMANO roteada por porta, gate humano com edição na UI, TTS EN + playback — E2E ao vivo PASSOU (2× fala+playback, lane auto). Commit `6554a5d`.
 12. **UI web refinada (2026-11-19)**: Inspector com textarea p/ prompts (`system`/`instructions`/`text`), editor **JSON** p/ params estruturados (`template` do llm.omlx é array de strings!, `options` da decisão), "?" aponta pro modelo SELECIONADO (não pro 1º da lista), placeholders com default real do nó. Build limpo (tsc+vite). FALTA: confirmação visual do dono em http://127.0.0.1:8787.
-13. **Nó `asr.lfm3`** → **FEITO (2026-11-19)**: tradução nativa por janela (ver §6). Restam: `decision.laya` sidecar (precisa fine-tune; aprovação do dono) e WebUI fase 3 (metrics por nó, perfis de Run).
+13. **Nó `asr.lfm3`** → **FEITO (2026-11-19)**: tradução nativa por janela (ver §6). Restam: **`decision.d1`** — baixar d1-2B (ou d1-Omni-2B p/ decisão por fala) e testar no omlx 0.8.0 (substitui o plano Laya, que exigia fine-tune — ANOTAÇÃO: queda de preferência) e WebUI fase 3 (metrics por nó, perfis de Run).
 
 ## 8. Protocolo de atualização deste arquivo
 
