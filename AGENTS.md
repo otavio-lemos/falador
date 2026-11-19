@@ -29,6 +29,7 @@ App local (macOS, Apple Silicon M4 Pro 48 GB) que traduz conversas de conferênc
 | **Ollama.app** | Runtime LLM alternativo | Alternativa pluggable (D7); não é o primário |
 | **$HOME/ml/mlx-vlm** (clone) | Port alternativo do LFM3-Audio (Blaizzy) | Origem de `stream_slots` (bridge de streaming da G3); manter por referência |
 | **$HOME/ml/falador/.venv** | Python 3.12 + mlx-audio + mlx-vlm + huggingface_hub | Ambiente de execução da fase F0/engine |
+| **d1-2B-MLX-4bit + d1-Omni-2B-MLX-8bit** (LiquidAI, baixados 2026-11-19 c/ aprovação do dono) | Decision models oficiais (1 forward pass, prob calibrada) | Servidos NO NOSSO omlx :8080 (`~/.omlx/models/d1-*` symlinks → HF cache); consumidos via `/v1/systemone` pelo `decision.llm` mode=systemone — NÃO foi construído sidecar/nó novo (L5) |
 
 **Modelos no HF cache local:** LFM3-Audio-2B-MLX-8bit · LFM3-1.7B-MLX-4bit (`~/.cache/huggingface/hub`; `HF_HOME=~/.hf_home` observado também).
 
@@ -55,6 +56,8 @@ App local (macOS, Apple Silicon M4 Pro 48 GB) que traduz conversas de conferênc
 | TTFT omlx solo / 2 concorrentes | 30 / 60 ms (p50, warm) |
 | Carga fria de modelo | 1,5–1,8 s → **serviços residentes obrigatórios** |
 | Captura BlackHole (G1) | max_volume −1,8 dB; laço sistema→ASR provado com mídia real |
+| Decisão d1-2B-MLX-4bit (omlx /v1/systemone) | frio 0,70 s; warm **~40 ms/decisão** (N11: técnica→auto, sensível→humano) |
+| Decisão d1-Omni-2B-MLX-8bit | warm ~38 ms; conf 0,97; aceita áudio/imagem/vídeo (não integrado no engine ainda) |
 | G3b: streaming vs offline (mesmo modelo/áudio) | texto IDÊNTICO (WER 0 EN e 0,087 PT nos DOIS caminhos — erros são do TTS de referência); 1º delta ~1,1 s; `completed` < duração do áudio (7,8 s < 8,5 s) |
 
 **Armadilhas descobertas na prática:**
@@ -152,4 +155,5 @@ App local (macOS, Apple Silicon M4 Pro 48 GB) que traduz conversas de conferênc
 2. Mudança de estado (servidor, setup do usuário, gate) → §6.
 3. Anotação de algo JÁ EXISTENTE que passamos a utilizar → §2.
 4. Regra de ouro: se um agente do futuro precisar redesenhar o projeto só lendo este arquivo + ADRs, nós falhamos. Escreva pra esse padrão.- **RODADA E2E-WEB (2026-11-19)**: suítes 12/12 + falador-nodes fail 0 (1 skip = gate mic). Flow `cenario1-lfm3` tinha PORT_TYPE_MISMATCH (asr.lfm3 declarava `audio_chunk`, consome `pcm16k`) — corrigido no nó; run pelo host web `/api/run` PASSA (validação→start→stop limpo). demo-live pelo `/api/run`: omlx→TTS sidecar→sink com WAV 24kHz 1,1 MB, parada natural "fontes esgotadas". d1-2B AINDA não baixado (download é do dono); decision.d1 não será nó novo — `decision.llm` + modelo d1 servido no omlx cobre (não duplicar).
+- **DECISÃO d1 AO VIVO (2026-11-19, "pode baixar")**: d1-2B-MLX-4bit (1,35 GB) + d1-Omni-2B-MLX-8bit baixados; omlx descobre subdirs SÓ no boot (reinicie após adicionar modelo). `decision.llm` ganhou `mode` (chat | systemone) — systemone = POST /v1/systemone {model, state, questions} e emite porta da escolha + meta {confidence, probabilities}. **N11 novo: 10 pass + 1 skip (mic), 40 ms/decisão**. cenario2-auto atualizado p/ systemone+d1; valida/roda limpo pelo /api/run. d1 não gera texto — chat/completions contra ele dá erro (usar systemone).
 

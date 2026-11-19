@@ -45,7 +45,13 @@
           "humano"
         ],
         "defaultOption": "humano",
-        "instructions": "Um assistente sugere uma resposta para o usuário falar numa entrevista técnica. Decida se a sugestão está PRONTA para ser falada sem revisão humana: 'auto' se é objetiva, técnica e curta; 'humano' se o usuário provavelmente vai querer editar."
+        "instructions": "Um assistente sugere uma resposta para o usuário falar numa entrevista técnica. Decida se a sugestão está PRONTA para ser falada sem revisão humana: 'auto' se é objetiva, técnica e curta; 'humano' se o usuário provavelmente vai querer editar.",
+        "mode": "systemone",
+        "model": "d1-2B-MLX-4bit",
+        "criteria": {
+          "auto": "Routine, factual or technical question the assistant can answer directly",
+          "humano": "Sensitive, personal or ambiguous — the user must speak for themselves"
+        }
       }
     },
     {
@@ -136,5 +142,5 @@
       "overflow": "block"
     }
   ],
-  "description": "Cenário 2 (auto): entrevista — LLM sugere resposta, decisão por LLM roteia auto/humano, TTS EN fala direto no lane auto"
+  "description": "Cenário 2 (auto): entrevista — LLM sugere resposta, decisão CALIBRADA d1-2B (~40 ms) roteia auto/humano, TTS EN fala direto no lane auto"
 }

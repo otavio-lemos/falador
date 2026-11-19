@@ -408,7 +408,7 @@ test('N10: asr.lfm3 tradução nativa EN→PT ao vivo dentro do engine', async (
     type: 'produtor.en',
     paramNames: [],
     inputs: [],
-    outputs: [{ name: 'out', type: 'audio_chunk' }],
+    outputs: [{ name: 'out', type: 'pcm16k' }],
     sourceOnly: true,
     create: (ctx) => ({
       async start() {
@@ -502,3 +502,69 @@ test('N7: capture.ffmpeg — mic real produz frames pcm16k contínuos (avfoundat
 });
 
 void asrRealtime; void captureFfmpeg; void sinkCaptions; void sinkPlayback; // usados nos próximos passos (TUI/fluxo completo)
+
+// N11 — decision.llm mode='systemone' AO VIVO: d1-2B-MLX-4bit servido pelo omlx :8080
+// (/v1/systemone). VERIFICADO 2026-11-19: warm ~40 ms, probabilidade calibrada por opção.
+const OMLX_D1 = process.env.FALADOR_OMLX_URL ?? 'http://127.0.0.1:8080';
+const D1_MODEL = process.env.FALADOR_D1_MODEL ?? 'd1-2B-MLX-4bit';
+const D1_UP = await (async () => {
+  try {
+    const up = await probeTcp(8080);
+    if (!up) return false;
+    const raw = await postJsonBytes(`${OMLX_D1}/v1/systemone`, { model: D1_MODEL, state: 'ping', questions: { q: { type: 'noul', instructions: 'Is this active?' } } }, 5000, undefined as never);
+    return raw.byteLength > 0;
+  } catch {
+    return false;
+  }
+})();
+
+test('N11: decision.llm mode=systemone ao vivo — d1-2B roteia com probabilidade calibrada', { skip: !D1_UP }, async () => {
+  // fonte de FRASES (tokens_parcial final): 1 técnica (→ auto), 1 sensível (→ humano)
+  const frases = [
+    'The interviewer asked: explain the difference between a process and a thread.',
+    'The interviewer asked: why did you leave your last job? The candidate is nervous about this one.',
+  ];
+  const srcFrases: NodeTypeDef = {
+    type: 'fonte.frases',
+    paramNames: [],
+    inputs: [],
+    outputs: [{ name: 'out', type: 'tokens_parcial' }],
+    sourceOnly: true,
+    create: (ctx) => ({
+      async start() {
+        for (const f of frases) await ctx.emit('out', { text: f, final: true });
+      },
+      async onInput() {},
+      async stop() {},
+    }),
+  };
+  const collectedAuto = { received: [] as Array<{ payload: unknown }> };
+  const collectedHumano = { received: [] as Array<{ payload: unknown }> };
+  const flow: FlowSpec = {
+    version: 1,
+    stopWhenSourcesDone: true,
+    nodes: [
+      { id: 'src', type: 'fonte.frases', params: {} },
+      { id: 'dec', type: 'decision.llm', params: { baseUrl: OMLX_D1, model: D1_MODEL, mode: 'systemone', options: ['auto', 'humano'], instructions: 'Which lane should handle this turn?' } },
+      { id: 'snkA', type: 'sink.collect' },
+      { id: 'snkH', type: 'sink.collect' },
+    ],
+    edges: [
+      { from: 'src.out', to: 'dec.in', capacity: 8, overflow: 'block' },
+      { from: 'dec.auto', to: 'snkA.parcs', capacity: 8, overflow: 'block' },
+      { from: 'dec.humano', to: 'snkH.parcs', capacity: 8, overflow: 'block' },
+    ],
+    bindings: { snkA: { __collect: collectedAuto }, snkH: { __collect: collectedHumano } },
+  };
+  const t0 = Date.now();
+  const rg = await runGraph(flow, reg().register(srcFrases));
+  await rg.done;
+  const ms = Date.now() - t0;
+  const auto = collectedAuto.received.map((r) => (r as { payload?: { decision?: { mode?: string; confidence?: number } } }).payload).filter(Boolean) as Array<{ decision?: { mode?: string; confidence?: number } }>;
+  const hum = collectedHumano.received.map((r) => (r as { payload?: { decision?: { mode?: string; confidence?: number } } }).payload).filter(Boolean) as Array<{ decision?: { mode?: string; confidence?: number } }>;
+  assert.equal(auto.length + hum.length, frases.length, `cada frase sai por UMA porta; auto=${auto.length} hum=${hum.length}`);
+  const all = [...auto, ...hum];
+  assert.ok(all.every((p) => p.decision?.mode === 'systemone'), 'meta decision.mode=systemone presente');
+  assert.ok(all.every((p) => typeof p.decision?.confidence === 'number' && p.decision.confidence > 0 && p.decision.confidence <= 1), 'confidence calibrada presente');
+  console.log(`[N11] 2 decisões d1-2B em ${ms} ms (${(ms / frases.length).toFixed(0)} ms/decisão) — auto=${auto.length} humano=${hum.length}`);
+});

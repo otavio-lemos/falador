@@ -9,7 +9,7 @@ export const NODE_DESCRIPTIONS: Record<string, string> = {
   'llm.omlx':
     'LLM TEXTO via omlx :8080 (streaming SSE). uso: tradução EN→PT, assistente de entrevista, qualquer instruction/template. enable_thinking:false já vem de fábrica.',
   'decision.llm':
-    'DECISÃO/ROTEAMENTO: escolhe UMA opção e manda o payload pela PORTA correspondente (ex.: options [auto,humano] → portas dec.auto e dec.humano). plano: trocar por d1-2B (oficial da LiquidAI, calibrado).',
+    'DECISÃO/ROTEAMENTO: escolhe UMA opção e manda o payload pela PORTA correspondente (ex.: options [auto,humano] → portas dec.auto e dec.humano). mode=systemone usa d1-2B (LiquidAI, calibrado) via omlx /v1/systemone — VERIFICADO: ~40 ms/decisão; mode=chat usa LLM gerando texto (mais lento, sem calibração).',
   'human.approve':
     'GATE HUMANO: o run PAUSA, a sugestão aparece na UI (editável) e só segue depois de Aprovar/Rejeitar. use quando a máquina não pode decidir sozinha.',
   'tts.sts':
