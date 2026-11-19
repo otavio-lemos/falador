@@ -70,6 +70,7 @@ export const ttsSts: NodeTypeDef = {
       }
       ctx.metrics.timer('tts.sts.ms', Date.now() - t0);
       ctx.metrics.counter('tts.sts.bytes', bytes.byteLength);
+      ctx.log('info', `fala: "${clean.slice(0, 80)}" (${(bytes.byteLength / 1024).toFixed(0)} KB)`);
       const payload: AudioChunkPayload = { format: 'wav', sampleRateHz, data: bytes };
       await ctx.emit('out', payload, { meta: { chars: clean.length } });
     }

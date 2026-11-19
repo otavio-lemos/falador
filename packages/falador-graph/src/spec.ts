@@ -55,7 +55,11 @@ export interface ValidatedFlow {
 const ID_RE = /^[A-Za-z0-9_-]+$/;
 const OVERFLOWS = ['drop_oldest', 'drop_newest', 'block'] as const;
 
-function portOf(def: NodeTypeDef, name: string, dir: 'in' | 'out'): PortDecl | null {
+function portOf(def: NodeTypeDef, name: string, dir: 'in' | 'out', params?: Record<string, unknown>): PortDecl | null {
+  if (dir === 'out' && def.outputsFor) {
+    const list = def.outputsFor(params ?? {});
+    return list.find((p) => p.name === name) ?? null;
+  }
   const list = dir === 'in' ? def.inputs : def.outputs;
   return list.find((p) => p.name === name) ?? null;
 }
@@ -133,7 +137,7 @@ export function validateFlow(raw: FlowSpec, registry: Map<string, NodeTypeDef>):
     const dst = nodes.get(toNode);
     if (!src) throw new GraphError('UNKNOWN_NODE', path, `nó de origem "${fromNode}" não existe`);
     if (!dst) throw new GraphError('UNKNOWN_NODE', path, `nó de destino "${toNode}" não existe`);
-    const sp = portOf(src.def, fromPort, 'out');
+    const sp = portOf(src.def, fromPort, 'out', src.params);
     if (!sp) throw new GraphError('UNKNOWN_PORT', path, `"${fromNode}" não tem porta de SAÍDA "${fromPort}"`);
     const dp = portOf(dst.def, toPort, 'in');
     if (!dp) throw new GraphError('UNKNOWN_PORT', path, `"${toNode}" não tem porta de ENTRADA "${toPort}"`);

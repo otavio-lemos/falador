@@ -23,7 +23,9 @@ function defToCatalog(def) {
     sourceOnly: def.sourceOnly === true,
     paramNames: def.paramNames ?? [],
     inputs: (def.inputs ?? []).map((p) => ({ name: p.name, type: p.type })),
-    outputs: (def.outputs ?? []).map((p) => ({ name: p.name, type: p.type })),
+    outputs: (def.outputs ?? []).map((p) => ({ name: p.name, type: p.type, required: p.required !== false })),
+    // saídas dinâmicas por instância (ex.: decision.llm → porta por opção)
+    dynamicOutputs: typeof def.outputsFor === 'function',
   };
 }
 
@@ -70,6 +72,48 @@ async function main() {
     }
   }
 
+  // gates human.approve: runner cria holder por nó, anuncia {"type":"gate"} e
+  // resolve via stdin JSON {"type":"gate_action","nodeId","text"} (null = rejeitar).
+  const gates = new Map(); // nodeId -> resolve
+  const pendingGates = new Set(); // resolvers abertos (reject all no stop do run)
+  for (const n of flow.nodes ?? []) {
+    if (n.type === 'human.approve') {
+      flow.bindings[n.id] = {
+        ...(flow.bindings[n.id] ?? {}),
+        __gate: {
+          request: (text) =>
+            new Promise((resolve) => {
+              const res = (t) => { pendingGates.delete(res); resolve(typeof t === 'string' ? t : null); };
+              pendingGates.add(res);
+              gates.set(n.id, res);
+              line({ type: 'gate', nodeId: n.id, text });
+            }),
+        },
+      };
+    }
+  }
+  // stop do run nunca pode pendurar num gate sem resposta: resolve tudo como rejeições
+  const rejectPendingGates = () => { for (const res of [...pendingGates]) res(null); };
+  process.on('SIGTERM', () => { rejectPendingGates(); setTimeout(() => process.exit(0), 400); });
+  let stdinBuf = '';
+  process.stdin.setEncoding('utf-8');
+  process.stdin.on('data', (d) => {
+    stdinBuf += d;
+    let idx;
+    while ((idx = stdinBuf.indexOf('\n')) >= 0) {
+      const l = stdinBuf.slice(0, idx).trim();
+      stdinBuf = stdinBuf.slice(idx + 1);
+      if (!l) continue;
+      try {
+        const m = JSON.parse(l);
+        if (m.type === 'gate_action' && gates.has(m.nodeId)) {
+          gates.get(m.nodeId)(typeof m.text === 'string' ? m.text : null);
+          gates.delete(m.nodeId);
+        }
+      } catch { /* linha inválida: ignora */ }
+    }
+  });
+
   const line = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
   // --run-seconds N: fonte contínua (mic/BlackHole) não "esgota" — o host pede stop programático
   const runSecondsArg = args.find((a) => a === '--run-seconds');
@@ -82,7 +126,7 @@ async function main() {
     process.exit(1);
   }
   if (runSeconds > 0) {
-    setTimeout(() => void rg.stop(`run-seconds ${runSeconds}`), runSeconds * 1000).unref?.();
+    setTimeout(() => { rejectPendingGates(); void rg.stop(`run-seconds ${runSeconds}`); }, runSeconds * 1000).unref?.();
   }
   (async () => {
     try {

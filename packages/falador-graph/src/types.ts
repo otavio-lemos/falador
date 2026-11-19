@@ -49,6 +49,12 @@ export interface NodeTypeDef {
   type: string;
   inputs: PortDecl[];
   outputs: PortDecl[];
+  /**
+   * Portas de saída DINÂMICAS por instância (ex.: decision.llm emite uma porta por
+   * opção). Resolvidas na validação e no emit com os params do nó; têm precedência
+   * sobre `outputs` quando presentes.
+   */
+  outputsFor?: (params: Record<string, unknown>) => PortDecl[];
   /** Nó sem entradas conectáveis (fonte). */
   sourceOnly?: boolean;
   /** Nó sem saídas (coletor). */

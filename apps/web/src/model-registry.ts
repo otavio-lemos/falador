@@ -34,6 +34,14 @@ export const MODEL_REGISTRY: RegistryModel[] = [
     recommended: true,
     notes: 'PT oficial entre 16 idiomas. TTFT 30-60ms warm. enable_thinking:false OBRIGATÓRIO.',
   },
+  {
+    id: 'Laya (decision)',
+    url: 'https://huggingface.co/convaiinnovations/laya',
+    kind: 'llm',
+    param: 'model',
+    recommended: false,
+    notes: 'VERIFICADO: existe (Apache-2.0, ~0.3-0.4B, decisões System 1 calibradas). Precisa sidecar + fine-tuning para o caso; NÃO VERIFICADO zero-shot. Alternativa futura ao decision.llm (LFM3-1.7B via omlx, padrão atual).',
+  },
 ];
 
 export function modelsFor(kind: RegistryModel['kind']): RegistryModel[] {

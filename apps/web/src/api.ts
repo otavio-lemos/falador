@@ -79,5 +79,12 @@ export function openRun(flow: Flow, onEvent: (ev: RunnerEvent) => void, onEnd: (
 export function stopRun(): Promise<void> {
   return fetch('/api/stop', { method: 'POST' }).then(() => undefined);
 }
+export function gateAction(nodeId: string, text: string | null): Promise<void> {
+  return fetch('/api/gate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nodeId, text }),
+  }).then(() => undefined);
+}
 
 export type RunnerEvent = { type: string; [k: string]: unknown };

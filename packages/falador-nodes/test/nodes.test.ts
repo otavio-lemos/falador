@@ -10,6 +10,7 @@ import {
   runGraph,
   sourceTone,
   pipeDelay,
+  pipeParcs,
   sinkCollect,
   type FlowSpec,
 } from '../../falador-graph/src/index.ts';
@@ -30,6 +31,7 @@ function reg() {
   return registerFaladorNodes(createRegistry())
     .register(sourceTone)
     .register(pipeDelay)
+    .register(pipeParcs)
     .register(sinkCollect);
 }
 
@@ -302,6 +304,93 @@ test('N5: catálogo de nós reais registrado', () => {
 // N7 — capture.ffmpeg com MIC REAL (gate: FALADOR_MIC_TEST=1 — grava 2 s do mic default).
 // Rodar: FALADOR_MIC_TEST=1 npm test
 const N7_UP = process.env.FALADOR_MIC_TEST === '1' && existsSync('/opt/homebrew/bin/ffmpeg');
+
+test('N8: human.approve segura, aprova (aceita edição), rejeita', async () => {
+  const collected = { received: [] as Array<{ payload: unknown }> };
+  // gate fake: aprova a 1ª sugestão (com edição), rejeita a 2ª
+  let calls = 0;
+  const gate = {
+    request: async (text: string): Promise<string | null> => {
+      calls++;
+      if (calls === 1) return `EDITADO: ${text.toUpperCase()}`;
+      return null;
+    },
+  };
+  const flow: FlowSpec = {
+    version: 1,
+    stopWhenSourcesDone: true,
+    nodes: [
+      { id: 'src', type: 'source.tone', params: { count: 2 } },
+      { id: 'pp', type: 'pipe.parcs', params: {} },
+      { id: 'dec', type: 'human.approve', params: {} },
+      { id: 'snk', type: 'sink.collect' },
+    ],
+    edges: [
+      { from: 'src.out', to: 'pp.in', capacity: 8, overflow: 'block' },
+      { from: 'pp.out', to: 'dec.in', capacity: 8, overflow: 'block' },
+      { from: 'dec.out', to: 'snk.phrase', capacity: 8, overflow: 'block' },
+    ],
+    bindings: { dec: { __gate: gate }, snk: { __collect: collected } },
+  };
+  const rg = await runGraph(flow, reg());
+  await rg.done;
+  const outs = collected.received.map((r) => r.payload) as Array<string>;
+  assert.equal(calls, 2, 'duas sugestões passaram pelo gate');
+  assert.equal(outs.length, 1, 'rejeitada não emite');
+  assert.equal(outs[0], 'EDITADO: TONE-1');
+  // valida: sem binding __gate a montagem falha (requiredBindings)
+  await assert.rejects(
+    () => runGraph({ ...flow, bindings: { snk: { __collect: collected } } }, reg()),
+    /MISSING_BINDING/
+  );
+});
+
+test('N9: decision.llm roteia o payload para a porta da opção escolhida', async () => {
+  let reqN = 0;
+  // server fake: 1ª request → 'auto', 2ª → 'humano' (determinístico por ordem)
+  const srv = await new Promise<{ url: string; close(): void }>((resolve) => {
+    const srv = http.createServer((req, res) => {
+      reqN++;
+      const choice = reqN === 1 ? 'auto' : 'humano';
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: choice } }] })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    });
+    srv.listen(0, '127.0.0.1', () => {
+      const addr = srv.address() as AddressInfo;
+      resolve({ url: `http://127.0.0.1:${addr.port}`, close: () => srv.close() });
+    });
+  });
+  const collectedAuto = { received: [] as Array<{ payload: unknown }> };
+  const collectedHumano = { received: [] as Array<{ payload: unknown }> };
+  const flow: FlowSpec = {
+    version: 1,
+    stopWhenSourcesDone: true,
+    nodes: [
+      { id: 'src', type: 'source.tone', params: { count: 2 } },
+      { id: 'pp', type: 'pipe.parcs', params: {} },
+      { id: 'dec', type: 'decision.llm', params: { baseUrl: srv.url, options: ['auto', 'humano'], defaultOption: 'humano' } },
+      { id: 'snkA', type: 'sink.collect' },
+      { id: 'snkH', type: 'sink.collect' },
+    ],
+    edges: [
+      { from: 'src.out', to: 'pp.in', capacity: 8, overflow: 'block' },
+      { from: 'pp.out', to: 'dec.in', capacity: 8, overflow: 'block' },
+      { from: 'dec.auto', to: 'snkA.parcs', capacity: 8, overflow: 'block' },
+      { from: 'dec.humano', to: 'snkH.parcs', capacity: 8, overflow: 'block' },
+    ],
+    bindings: { snkA: { __collect: collectedAuto }, snkH: { __collect: collectedHumano } },
+  };
+  const rg = await runGraph(flow, reg());
+  await rg.done;
+  const auto = collectedAuto.received.map((r) => r.payload) as Array<string>;
+  const hum = collectedHumano.received.map((r) => r.payload) as Array<string>;
+  assert.equal(auto.length, 1, `1ª sugestão (tone-1) deve ir por auto; auto=${auto.length} hum=${hum.length}`);
+  assert.equal(hum.length, 1, '2ª sugestão (tone-2) deve ir por humano');
+  srv.close();
+});
+
 test('N7: capture.ffmpeg — mic real produz frames pcm16k contínuos (avfoundation)', { skip: !N7_UP }, async () => {
   const collected = { received: [] as Array<{ payload: unknown }> };
   const counter: NodeTypeDef = {

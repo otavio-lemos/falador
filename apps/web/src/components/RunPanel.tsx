@@ -1,6 +1,6 @@
 // RunPanel — executa o fluxo atual via host (SSE do runner NDJSON), legenda ao vivo.
 import { useCallback, useRef, useState } from 'react';
-import { openRun, stopRun, type Flow, type RunnerEvent } from '../api';
+import { gateAction, openRun, stopRun, type Flow, type RunnerEvent } from '../api';
 
 interface Line {
   t: number;
@@ -12,6 +12,8 @@ export function RunPanel({ flowGetter }: { flowGetter: () => Flow }) {
   const [running, setRunning] = useState(false);
   const [lines, setLines] = useState<Line[]>([]);
   const [caption, setCaption] = useState('');
+  const [pending, setPending] = useState<{ nodeId: string; text: string } | null>(null);
+  const [edited, setEdited] = useState('');
   const ctlRef = useRef<AbortController | null>(null);
 
   const push = useCallback((text: string, kind: Line['kind'] = 'ev') => {
@@ -27,6 +29,12 @@ export function RunPanel({ flowGetter }: { flowGetter: () => Flow }) {
     ctlRef.current = openRun(
       flow,
       (ev: RunnerEvent) => {
+        if (ev.type === 'gate') {
+          const g = ev as { type: 'gate'; nodeId: string; text: string };
+          setPending({ nodeId: g.nodeId, text: g.text });
+          setEdited(g.text);
+          return;
+        }
         if (ev.type === 'caption') {
           const c = ev as { type: 'caption'; text: string; final: boolean };
           if (c.final) setCaption(c.text);
@@ -83,6 +91,39 @@ export function RunPanel({ flowGetter }: { flowGetter: () => Flow }) {
         </button>
       </div>
       <div className="live-caption">{caption || <span style={{ opacity: 0.6 }}>legenda ao vivo…</span>}</div>
+      {pending && (
+        <div style={{ marginTop: 10, border: '1px solid #4589ff', borderRadius: 6, padding: 10, background: '#1e2933' }}>
+          <div className="section-title" style={{ marginTop: 0 }}>
+            ✍️ Sugestão do LLM — edite e aprove
+          </div>
+          <textarea
+            value={edited}
+            onChange={(e) => setEdited(e.target.value)}
+            rows={4}
+            style={{ width: '100%', boxSizing: 'border-box', background: '#262626', color: '#f4f4f4', border: '1px solid #525252', borderRadius: 4, padding: 6, fontSize: 13 }}
+          />
+          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+            <button
+              onClick={() => {
+                gateAction(pending.nodeId, edited);
+                setPending(null);
+              }}
+              style={{ flex: 1, background: '#24a148', color: '#161616', border: 'none', padding: 8, borderRadius: 4, fontWeight: 600, cursor: 'pointer' }}
+            >
+              ✔ Aprovar (falar EN)
+            </button>
+            <button
+              onClick={() => {
+                gateAction(pending.nodeId, null);
+                setPending(null);
+              }}
+              style={{ flex: 1, background: '#da1e28', color: '#fff', border: 'none', padding: 8, borderRadius: 4, fontWeight: 600, cursor: 'pointer' }}
+            >
+              ✖ Rejeitar
+            </button>
+          </div>
+        </div>
+      )}
       <div style={{ height: 10 }} />
       <div className="runlog" id="runlog">
         {lines.map((l, i) => (

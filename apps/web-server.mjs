@@ -53,7 +53,7 @@ function startRun(flow, runSeconds) {
   writeFileSync(tmp, JSON.stringify(flow));
   const args = [CLI, tmp];
   if (runSeconds) args.push('--run-seconds', String(runSeconds));
-  const child = spawn('node', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn('node', args, { stdio: ['pipe', 'pipe', 'pipe'] });
   const clients = new Set();
   currentRun = { child, clients, stopRequested: false };
   const sses = (res) => {
@@ -72,6 +72,13 @@ function startRun(flow, runSeconds) {
       if (!line) continue;
       let ev;
       try { ev = JSON.parse(line); } catch { continue; }
+      // undici keep-alive: o child do runner pode não sair sozinho no fim do run
+      // (lição §4) — emitido run_stopped/summary, encerra o child e libera o next run.
+      if (ev.type === 'summary' || ev.type === 'run_stopped') {
+        setTimeout(() => {
+          try { if (child.exitCode === null) child.kill('SIGKILL'); } catch { /* race de exit */ }
+        }, 300);
+      }
       broadcast('runner', ev);
     }
   });
@@ -120,6 +127,14 @@ async function handleApi(req, res, pathname) {
     if (r.error) return json(res, 409, r), true;
     r.sse(res);
     return true;
+  }
+  if (pathname === '/api/gate' && req.method === 'POST') {
+    // aprovação/edição/rejeição do human.approve: {"nodeId","text"|null}
+    if (!currentRun) return json(res, 409, { error: 'nenhum run' }), true;
+    const body = await readBody(req);
+    if (!body.nodeId) return json(res, 400, { error: 'nodeId obrigatório' }), true;
+    currentRun.child.stdin?.write(JSON.stringify({ type: 'gate_action', nodeId: body.nodeId, text: body.text ?? null }) + '\n');
+    return json(res, 200, { ok: true }), true;
   }
   if (pathname === '/api/stop' && req.method === 'POST') {
     if (!currentRun) return json(res, 200, { ok: 'nenhum run' }), true;

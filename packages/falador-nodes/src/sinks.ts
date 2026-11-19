@@ -119,6 +119,7 @@ export const sinkPlayback: NodeTypeDef = {
         ctx.signal.addEventListener('abort', () => p.kill('SIGKILL'), { once: true });
       });
       ctx.metrics.timer('sink.playback.ms', Date.now() - t0);
+      ctx.log('info', `playback ok (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
       await rm(file, { force: true }).catch(() => {});
     }
 

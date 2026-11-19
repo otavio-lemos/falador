@@ -140,8 +140,9 @@ export class RunningGraph {
         return self.cancelledSeqs.get(vn.id)?.get(port)?.has(seq) ?? false;
       },
       async emit(port, payload, emitOpts) {
-        const def = self.flow.nodes.get(vn.id)!.def;
-        if (!def.outputs.some((p) => p.name === port)) {
+        const vnode = self.flow.nodes.get(vn.id)!;
+        const dyn = vnode.def.outputsFor?.(vnode.params) ?? [];
+        if (!vnode.def.outputs.some((p) => p.name === port) && !dyn.some((p) => p.name === port)) {
           throw new GraphError('UNKNOWN_PORT', `${vn.id}.emit(${port})`, `porta de saída "${port}" não declarada`);
         }
         if (self.phase === 'done') throw new GraphError('RUN_STOPPED', `${vn.id}.emit(${port})`, 'run já parado');
