@@ -1,0 +1,92 @@
+// Tela de CRIAÇÃO do workflow — paleta + canvas + editor inline. Carrega/salva flows,
+// adiciona nós (drag/duplo clique), edita params no próprio nó, testa o fluxo.
+import { useCallback, useEffect, useState } from 'react';
+import { useNodesState, useEdgesState, addEdge, type Edge, type Connection } from '@xyflow/react';
+import { Palette } from '../components/Palette';
+import { FlowCanvas } from '../components/FlowCanvas';
+import { fetchFlow, saveFlow, type Catalog, type Flow } from '../api';
+import { flowToRf, rfToFlow, newNodeId, type FNode } from '../flow-utils';
+import { NODE_META, accentOf } from '../data';
+import type { Runner } from '../useRunner';
+
+interface Props {
+  catalog: Catalog;
+  currentFlow: string;
+  runner: Runner;
+  registerActions: (a: { getFlow: () => Flow; save: () => void }) => void;
+  onSaved: () => void;
+}
+
+export function BuilderView({ catalog, currentFlow, runner, registerActions, onSaved }: Props) {
+  const [nodes, setNodes, onNodesChange] = useNodesState<FNode>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [meta, setMeta] = useState<Flow>({ version: 1, nodes: [], edges: [], stopWhenSourcesDone: false, description: '' });
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!currentFlow) return;
+    let alive = true;
+    fetchFlow(currentFlow).then((flow) => {
+      if (!alive) return;
+      const { nodes: ns, edges: es } = flowToRf(flow, catalog);
+      setNodes(ns); setEdges(es); setMeta(flow); setSelectedId(null);
+    }).catch(() => { /* flow novo/vazio */ });
+    return () => { alive = false; };
+  }, [currentFlow, catalog, setNodes, setEdges]);
+
+  const buildFlow = useCallback(() => rfToFlow(nodes, edges, meta), [nodes, edges, meta]);
+
+  const onConnect = useCallback((c: Connection) => {
+    setEdges((es) => addEdge({ ...c, id: `e-${c.source}-${c.sourceHandle}-${c.target}-${c.targetHandle}`, data: { capacity: 16, overflow: 'block' } }, es));
+  }, [setEdges]);
+
+  const onParamsChange = useCallback((id: string, params: Record<string, unknown>) => {
+    setNodes((ns) => ns.map((n) => {
+      if (n.id !== id) return n;
+      let outputs = n.data.outputs;
+      if (n.data.type === 'decision.llm' && Array.isArray(params.options)) {
+        outputs = (params.options as string[]).map((o) => ({ name: o, type: 'phrase' }));
+      }
+      return { ...n, data: { ...n.data, params, outputs } };
+    }));
+  }, [setNodes]);
+
+  const onAddNode = useCallback((type: string, pos: { x: number; y: number }) => {
+    const cn = catalog.nodes.find((n) => n.type === type);
+    const m = NODE_META[type] ?? { title: type, subtitle: '' };
+    const id = newNodeId(type);
+    const outputs = type === 'decision.llm' ? [{ name: 'auto', type: 'phrase' }] : (cn?.outputs ?? []);
+    const node: FNode = {
+      id, type: 'falador', position: pos,
+      data: {
+        type, params: type === 'decision.llm' ? { options: ['auto'] } : {}, enabled: true,
+        paramNames: cn?.paramNames ?? [], inputs: cn?.inputs ?? [], outputs,
+        accent: accentOf(type), title: m.title, subtitle: m.subtitle,
+      },
+    };
+    setNodes((ns) => [...ns, node]);
+    setSelectedId(id);
+  }, [catalog, setNodes]);
+
+  const doSave = useCallback(async () => {
+    try { await saveFlow(currentFlow, buildFlow()); onSaved(); }
+    catch (e) { console.error(e); }
+  }, [currentFlow, buildFlow, onSaved]);
+
+  useEffect(() => {
+    registerActions({ getFlow: buildFlow, save: () => void doSave() });
+  }, [buildFlow, doSave, registerActions]);
+
+  return (
+    <div className="builder">
+      <Palette onAdd={(t) => onAddNode(t, { x: 120 + Math.random() * 80, y: 120 + Math.random() * 80 })} />
+      <FlowCanvas
+        nodes={nodes} edges={edges}
+        onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect}
+        selectedId={selectedId} onSelect={setSelectedId}
+        onParamsChange={onParamsChange} onAddNode={onAddNode}
+        metrics={runner.metrics} events={runner.events} running={runner.running}
+      />
+    </div>
+  );
+}
