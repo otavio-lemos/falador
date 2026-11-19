@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "stopWhenSourcesDone": true,
+  "nodes": [
+    {
+      "id": "tone",
+      "type": "source.tone",
+      "params": {
+        "count": 3,
+        "prefix": "ola"
+      }
+    },
+    {
+      "id": "parcs",
+      "type": "pipe.parcs",
+      "enabled": true
+    },
+    {
+      "id": "snk",
+      "type": "sink.collect"
+    }
+  ],
+  "edges": [
+    {
+      "from": "tone.out",
+      "to": "parcs.in",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "parcs.out",
+      "to": "snk.parcs",
+      "capacity": 8,
+      "overflow": "block"
+    }
+  ]
+}

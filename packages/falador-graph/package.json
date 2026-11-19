@@ -1,0 +1,12 @@
+{
+  "name": "falador-graph",
+  "version": "0.1.0",
+  "description": "Motor headless de grafo de tempo real do Falador (ADR-003 W1)",
+  "type": "module",
+  "main": "src/runtime.ts",
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "license": "MIT",
+  "private": true
+}

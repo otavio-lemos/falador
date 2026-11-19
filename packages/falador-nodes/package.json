@@ -1,0 +1,12 @@
+{
+  "name": "falador-nodes",
+  "version": "0.1.0",
+  "description": "Nós reais do Falador: llm.omlx, asr.realtime, tts.sts, capture.ffmpeg, sink.captions, sink.playback (ADR-003 r2)",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "node --test --test-force-exit test/"
+  },
+  "license": "MIT",
+  "private": true
+}

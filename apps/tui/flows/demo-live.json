@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "stopWhenSourcesDone": true,
+  "nodes": [
+    { "id": "pergunta", "type": "source.tone", "params": { "count": 1, "prefix": "Explique em uma frase o que é tradução simultânea on-device." } },
+    { "id": "llm", "type": "llm.omlx", "params": { "baseUrl": "http://127.0.0.1:8080", "system": "Responda em português, uma frase curta." } },
+    { "id": "tts", "type": "tts.sts", "params": { "url": "http://127.0.0.1:8091", "language": "Portuguese" } },
+    { "id": "snk", "type": "sink.collect" }
+  ],
+  "edges": [
+    { "from": "pergunta.out", "to": "llm.in", "capacity": 8, "overflow": "block" },
+    { "from": "llm.out", "to": "tts.in", "capacity": 8, "overflow": "block" },
+    { "from": "tts.out", "to": "snk.chunk", "capacity": 8, "overflow": "drop_oldest" }
+  ]
+}
