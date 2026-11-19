@@ -1,14 +1,46 @@
 {
   "version": 1,
   "stopWhenSourcesDone": false,
-  "description": "Cenário 1 (variante tradução NATIVA): BlackHole → asr.lfm3 (LFM3-Audio task=chat traduz por janela de flushSec) → legendas PT. Sem o nó llm tradutor — o próprio modelo de áudio traduz (medido ~15x realtime por janela, NÃO streaming).",
+  "description": "Cenário 1 (nativo): traduz DIRETO do áudio (LFM3-Audio task=chat), janelas de 12 s, ~15× rt, sem nó llm",
   "nodes": [
-    { "id": "pipasist", "type": "capture.ffmpeg", "params": { "input": ":0", "chunkMs": 80 } },
-    { "id": "asrtraduz", "type": "asr.lfm3", "params": { "url": "http://127.0.0.1:8091", "sampleRateHz": 16000, "flushSec": 12 } },
-    { "id": "legenda", "type": "sink.captions", "params": { "mode": "callback", "showParcials": true } }
+    {
+      "id": "pipasist",
+      "type": "capture.ffmpeg",
+      "params": {
+        "input": ":0",
+        "chunkMs": 80
+      }
+    },
+    {
+      "id": "asrtraduz",
+      "type": "asr.lfm3",
+      "params": {
+        "url": "http://127.0.0.1:8091",
+        "sampleRateHz": 16000,
+        "flushSec": 12
+      }
+    },
+    {
+      "id": "legenda",
+      "type": "sink.captions",
+      "params": {
+        "mode": "callback",
+        "showParcials": true
+      }
+    }
   ],
   "edges": [
-    { "from": "pipasist.out", "to": "asrtraduz.in", "capacity": 128, "overflow": "block" },
-    { "from": "asrtraduz.out", "to": "legenda.in", "capacity": 16, "overflow": "drop_oldest" }
+    {
+      "from": "pipasist.out",
+      "to": "asrtraduz.in",
+      "capacity": 128,
+      "overflow": "block"
+    },
+    {
+      "from": "asrtraduz.out",
+      "to": "legenda.in",
+      "capacity": 16,
+      "overflow": "drop_oldest"
+    }
   ]
 }

@@ -33,5 +33,6 @@
       "capacity": 8,
       "overflow": "block"
     }
-  ]
+  ],
+  "description": "Smoke do motor com nós sintéticos (sem serviços reais)"
 }

@@ -15,6 +15,7 @@ export interface FlowEdge {
 export interface Flow {
   version: number;
   stopWhenSourcesDone?: boolean;
+  description?: string; // descritivo humano — aparece no seletor de flows
   nodes: FlowNode[];
   edges: FlowEdge[];
   bindings?: Record<string, Record<string, unknown>>;
@@ -33,9 +34,13 @@ export async function fetchCatalog(): Promise<CatalogEntry[]> {
   const j = (await r.json()) as { nodes: CatalogEntry[] };
   return j.nodes;
 }
-export async function fetchFlowList(): Promise<string[]> {
+export interface FlowInfo {
+  name: string;
+  description: string;
+}
+export async function fetchFlowList(): Promise<FlowInfo[]> {
   const r = await fetch('/api/flows');
-  const j = (await r.json()) as { flows: string[] };
+  const j = (await r.json()) as { flows: FlowInfo[] };
   return j.flows;
 }
 export async function fetchFlow(name: string): Promise<Flow> {
@@ -43,8 +48,12 @@ export async function fetchFlow(name: string): Promise<Flow> {
   const j = (await r.json()) as { name: string; flow: Flow };
   return j.flow;
 }
-export async function saveFlow(name: string, flow: Flow): Promise<void> {
-  await fetch('/api/flows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, flow }) });
+export async function saveFlow(name: string, flow: Flow, renameFrom?: string): Promise<void> {
+  await fetch('/api/flows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, flow, renameFrom }) });
+}
+export async function fetchModels(): Promise<{ omlx: string[]; cache: string[] }> {
+  const r = await fetch('/api/models');
+  return (await r.json()) as { omlx: string[]; cache: string[] };
 }
 export function openRun(flow: Flow, onEvent: (ev: RunnerEvent) => void, onEnd: (code: number) => void, onOpen?: () => void): AbortController {
   const ctl = new AbortController();

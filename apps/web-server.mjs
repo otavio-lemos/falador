@@ -8,8 +8,8 @@
 //   estático: serve apps/web/dist (build) — um único processo para tudo.
 // Executa APENAS local (127.0.0.1). Nada de rede externa.
 import { spawn } from 'node:child_process';
-import { createServer } from 'node:http';
-import { readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { createServer, get as httpGet } from 'node:http';
+import { readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -104,7 +104,29 @@ async function handleApi(req, res, pathname) {
   if (pathname === '/api/flows' && req.method === 'GET') {
     if (!existsSync(FLOWS_DIR)) mkdirSync(FLOWS_DIR, { recursive: true });
     const files = readdirSync(FLOWS_DIR).filter((f) => f.endsWith('.json') && !f.startsWith('.'));
-    return json(res, 200, { flows: files.map((f) => f.replace(/\.json$/, '')) }), true;
+    const flows = files.map((f) => {
+      let description = '';
+      try { description = JSON.parse(readFileSync(join(FLOWS_DIR, f), 'utf-8')).description ?? ''; } catch { /* corrompido */ }
+      return { name: f.replace(/\.json$/, ''), description };
+    });
+    return json(res, 200, { flows }), true;
+  }
+  if (pathname === '/api/models' && req.method === 'GET') {
+    // REUTILIZA serviços que existem: /v1/models do omlx (:8080) + cache HF local (nomes de dir).
+    const omlx = await new Promise((resolve) => {
+      let out = '';
+      const h = httpGet('http://127.0.0.1:8080/v1/models', { timeout: 2500 }, (r) => {
+        r.on('data', (d) => (out += d));
+        r.on('end', () => { try { resolve(JSON.parse(out).data.map((m) => m.id)); } catch { resolve([]); } });
+      });
+      h.on('error', () => resolve([]));
+      h.on('timeout', () => { h.destroy(); resolve([]); });
+    });
+    const cacheDir = join(process.env.HOME ?? '', '.cache', 'huggingface', 'hub');
+    const cache = existsSync(cacheDir)
+      ? readdirSync(cacheDir).filter((d) => d.startsWith('models--')).map((d) => d.replace(/^models--/, '').replace(/--/g, '/'))
+      : [];
+    return json(res, 200, { omlx, cache }), true;
   }
   if (pathname.startsWith('/api/flows/') && req.method === 'GET') {
     const name = decodeURIComponent(pathname.slice('/api/flows/'.length));
@@ -117,7 +139,13 @@ async function handleApi(req, res, pathname) {
     const body = await readBody(req);
     if (!body.name || !body.flow) return json(res, 400, { error: 'name e flow obrigatórios' }), true;
     if (!existsSync(FLOWS_DIR)) mkdirSync(FLOWS_DIR, { recursive: true });
-    writeFileSync(join(FLOWS_DIR, body.name.replace(/\.json$/, '') + '.json'), JSON.stringify(body.flow, null, 2));
+    // descrição vai DENTRO do flow (um arquivo, uma verdade); rename apaga o antigo
+    const flow = { ...body.flow, description: body.flow.description ?? '' };
+    writeFileSync(join(FLOWS_DIR, body.name.replace(/\.json$/, '') + '.json'), JSON.stringify(flow, null, 2));
+    if (body.renameFrom && body.renameFrom !== body.name) {
+      const old = join(FLOWS_DIR, body.renameFrom.replace(/\.json$/, '') + '.json');
+      if (old.startsWith(FLOWS_DIR) && existsSync(old)) { try { unlinkSync(old); } catch { /* busy */ } }
+    }
     return json(res, 200, { ok: true }), true;
   }
   if (pathname === '/api/run' && req.method === 'POST') {

@@ -2,26 +2,139 @@
   "version": 1,
   "stopWhenSourcesDone": false,
   "nodes": [
-    { "id": "pipasist", "type": "capture.ffmpeg", "params": { "input": ":0", "chunkMs": 80 } },
-    { "id": "asr", "type": "asr.realtime", "params": { "model": "/Users/otaviolemos/.cache/huggingface/hub/models--mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit/snapshots/fdebf7b2af834a1db4b8a3c99ab7480b333adf9e", "serverVad": true, "inputRate": 16000 } },
-    { "id": "legenda", "type": "sink.captions", "params": { "mode": "callback", "showParcials": true } },
-    { "id": "assistente", "type": "llm.omlx", "params": { "enableThinking": false, "historyMax": 4, "system": "Você está numa entrevista técnica. O usuário recebeu uma pergunta em inglês e quer responder com as SUAS IDEIAS: sugira a RESPOSTA (não traduza a pergunta). Responda em PORTUGUÊS do Brasil, primeira pessoa, objetiva, 2-4 frases, sem comentários." } },
-    { "id": "porta", "type": "decision.llm", "params": { "options": ["auto", "humano"], "defaultOption": "humano", "instructions": "Um assistente sugere uma resposta para o usuário falar numa entrevista técnica. Decida se a sugestão está PRONTA para ser falada sem revisão humana: 'auto' se é objetiva, técnica e curta; 'humano' se o usuário provavelmente vai querer editar." } },
-    { "id": "gate", "type": "human.approve", "params": {} },
-    { "id": "voz-auto", "type": "tts.sts", "params": { "url": "http://127.0.0.1:8091", "language": "en" } },
-    { "id": "som-auto", "type": "sink.playback", "params": {} },
-    { "id": "voz-gate", "type": "tts.sts", "params": { "url": "http://127.0.0.1:8091", "language": "en" } },
-    { "id": "som-gate", "type": "sink.playback", "params": {} }
+    {
+      "id": "pipasist",
+      "type": "capture.ffmpeg",
+      "params": {
+        "input": ":0",
+        "chunkMs": 80
+      }
+    },
+    {
+      "id": "asr",
+      "type": "asr.realtime",
+      "params": {
+        "model": "/Users/otaviolemos/.cache/huggingface/hub/models--mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit/snapshots/fdebf7b2af834a1db4b8a3c99ab7480b333adf9e",
+        "serverVad": true,
+        "inputRate": 16000
+      }
+    },
+    {
+      "id": "legenda",
+      "type": "sink.captions",
+      "params": {
+        "mode": "callback",
+        "showParcials": true
+      }
+    },
+    {
+      "id": "assistente",
+      "type": "llm.omlx",
+      "params": {
+        "enableThinking": false,
+        "historyMax": 4,
+        "system": "Você está numa entrevista técnica. O usuário recebeu uma pergunta em inglês e quer responder com as SUAS IDEIAS: sugira a RESPOSTA (não traduza a pergunta). Responda em PORTUGUÊS do Brasil, primeira pessoa, objetiva, 2-4 frases, sem comentários."
+      }
+    },
+    {
+      "id": "porta",
+      "type": "decision.llm",
+      "params": {
+        "options": [
+          "auto",
+          "humano"
+        ],
+        "defaultOption": "humano",
+        "instructions": "Um assistente sugere uma resposta para o usuário falar numa entrevista técnica. Decida se a sugestão está PRONTA para ser falada sem revisão humana: 'auto' se é objetiva, técnica e curta; 'humano' se o usuário provavelmente vai querer editar."
+      }
+    },
+    {
+      "id": "gate",
+      "type": "human.approve",
+      "params": {}
+    },
+    {
+      "id": "voz-auto",
+      "type": "tts.sts",
+      "params": {
+        "url": "http://127.0.0.1:8091",
+        "language": "en"
+      }
+    },
+    {
+      "id": "som-auto",
+      "type": "sink.playback",
+      "params": {}
+    },
+    {
+      "id": "voz-gate",
+      "type": "tts.sts",
+      "params": {
+        "url": "http://127.0.0.1:8091",
+        "language": "en"
+      }
+    },
+    {
+      "id": "som-gate",
+      "type": "sink.playback",
+      "params": {}
+    }
   ],
   "edges": [
-    { "from": "pipasist.out", "to": "asr.in", "capacity": 128, "overflow": "block" },
-    { "from": "asr.out", "to": "legenda.in", "capacity": 16, "overflow": "drop_oldest" },
-    { "from": "asr.out", "to": "assistente.parcs", "capacity": 16, "overflow": "drop_oldest" },
-    { "from": "assistente.out", "to": "porta.in", "capacity": 8, "overflow": "block" },
-    { "from": "porta.auto", "to": "voz-auto.in", "capacity": 8, "overflow": "block" },
-    { "from": "voz-auto.out", "to": "som-auto.in", "capacity": 8, "overflow": "block" },
-    { "from": "porta.humano", "to": "gate.in", "capacity": 8, "overflow": "block" },
-    { "from": "gate.out", "to": "voz-gate.phrase", "capacity": 8, "overflow": "block" },
-    { "from": "voz-gate.out", "to": "som-gate.in", "capacity": 8, "overflow": "block" }
-  ]
+    {
+      "from": "pipasist.out",
+      "to": "asr.in",
+      "capacity": 128,
+      "overflow": "block"
+    },
+    {
+      "from": "asr.out",
+      "to": "legenda.in",
+      "capacity": 16,
+      "overflow": "drop_oldest"
+    },
+    {
+      "from": "asr.out",
+      "to": "assistente.parcs",
+      "capacity": 16,
+      "overflow": "drop_oldest"
+    },
+    {
+      "from": "assistente.out",
+      "to": "porta.in",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "porta.auto",
+      "to": "voz-auto.in",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "voz-auto.out",
+      "to": "som-auto.in",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "porta.humano",
+      "to": "gate.in",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "gate.out",
+      "to": "voz-gate.phrase",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "voz-gate.out",
+      "to": "som-gate.in",
+      "capacity": 8,
+      "overflow": "block"
+    }
+  ],
+  "description": "Cenário 2 (auto): entrevista — LLM sugere resposta, decisão por LLM roteia auto/humano, TTS EN fala direto no lane auto"
 }

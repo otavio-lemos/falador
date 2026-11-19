@@ -3,16 +3,30 @@ import { useState } from 'react';
 import { MODEL_REGISTRY } from '../model-registry';
 import type { FaladorNode } from './FlowNode';
 
-const MODEL_BY_PARAM: Record<string, typeof MODEL_REGISTRY> = {};
-for (const m of MODEL_REGISTRY) {
-  (MODEL_BY_PARAM[m.param] ??= []).push(m);
-}
-
 // Params longos (prompt/instruções) ganham textarea em vez de input de 1 linha.
 const TEXTAREA_PARAMS = new Set(['system', 'prompt', 'instructions', 'text']);
 
 // Params estruturados ganham editor JSON (template do llm.omlx é array de strings).
 const JSON_PARAMS = new Set(['template', 'options', 'chat_template_kwargs']);
+
+
+// Param que 'alimenta' a escolha de modelo: qual input λ o modelo controla.
+function m_paramFor(models: RegistryEntry[], cur: unknown): string | undefined {
+  const m = models.find((mm) => mm.value === cur) ?? models.find((mm) => mm.recommended) ?? models[0];
+  return m && m.param !== '(sidecar)' ? m.param : undefined;
+}
+
+// Idiomas p/ params chamados 'language' (TTS: EN/PT VERIFICADOS medidos no LFM3-Audio).
+const LANGUAGES: [string, string, boolean][] = [
+  ['English', 'inglês', true],
+  ['Portuguese', 'português', true],
+  ['Spanish', 'espanhol', false],
+  ['French', 'francês', false],
+  ['German', 'alemão', false],
+  ['Italian', 'italiano', false],
+  ['Japanese', 'japonês', false],
+  ['Mandarin', 'mandarim', false],
+];
 
 /** Defaults por tipo de nó, para placeholders honestos (catálogo não guarda defaults). */
 const DEFAULTS_BY_TYPE: Record<string, Record<string, string>> = {
@@ -36,19 +50,52 @@ const textareaStyle: React.CSSProperties = {
   font: '12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace',
 };
 
-function selectedModelUrl(param: string, cur: unknown): string | undefined {
-  const models = MODEL_BY_PARAM[param];
-  if (!models) return undefined;
-  const byUrl = cur != null ? models.find((m) => m.url === cur) : undefined;
+function selectedModelUrl(models: RegistryEntry[], cur: unknown): string | undefined {
+  if (!models.length) return undefined;
+  const byValue = cur != null ? models.find((m) => m.value === cur) : undefined;
   const byId = typeof cur === 'string' ? models.find((m) => m.id === cur) : undefined;
-  return (byUrl ?? byId ?? models.find((m) => m.recommended) ?? models[0])?.url;
+  return (byValue ?? byId ?? models.find((m) => m.recommended) ?? models[0])?.url;
 }
 
-export function Inspector({ node, onUpdate, onDuplicate, onDelete }: {
+/** Kinds de modelo válidos para o tipo de nó (evita LLM no dropdown do ASR etc.). */
+function modelKinds(nodeType: string): RegistryEntry0['kind'][] {
+  if (nodeType.startsWith('asr')) return ['asr'];
+  if (nodeType.startsWith('decision')) return ['decision', 'llm'];
+  if (nodeType.startsWith('llm')) return ['llm'];
+  if (nodeType.startsWith('tts')) return ['tts'];
+  return ['llm'];
+}
+
+type RegistryEntry = (typeof MODEL_REGISTRY)[number];
+type RegistryEntry0 = RegistryEntry;
+
+/** Catálogo de modelos p/ o nó: registry estático + ids ao vivo do omlx (⟳). */
+function modelsForNode(nodeType: string, modelName: string, availableModels?: string[]): RegistryEntry[] {
+  if (modelName !== 'model') return [];
+  const kinds = modelKinds(nodeType);
+  const merged: RegistryEntry[] = MODEL_REGISTRY.filter((m) => kinds.includes(m.kind));
+  if (availableModels?.length) {
+    for (const id of availableModels) {
+      if (merged.some((m) => m.value === id || m.id === id)) continue;
+      merged.push({
+        id, value: id, url: '',
+        kind: kinds[0] ?? 'llm', param: 'model',
+        recommended: false, verified: false, local: 'omlx',
+        notes: 'id vindo do omlx (/v1/models) — disponível AGORA no servidor',
+      });
+    }
+  }
+  return merged.sort((a, b) => (a.verified === b.verified ? 0 : a.verified ? -1 : 1));
+}
+
+export function Inspector({ node, onUpdate, onDuplicate, onDelete, availableModels, fetchViaParam, modelsVia }: {
   node: FaladorNode;
   onUpdate: (d: Partial<FaladorNode['data']>) => void;
   onDuplicate: () => void;
   onDelete: () => void;
+  availableModels?: string[]; // ids vindos do omlx /v1/models (botão ⟳ na toolbar)
+  fetchViaParam?: (param: string) => void;
+  modelsVia?: string;       // param sendo "via" — dispara o fetch λ no host
 }) {
   const { type, params, enabled } = node.data;
   const paramNames = node.data.paramNames ?? [];
@@ -67,15 +114,36 @@ export function Inspector({ node, onUpdate, onDuplicate, onDelete }: {
 
       {paramNames.map((name) => {
         const cur = p[name];
-        const models = MODEL_BY_PARAM[name];
+        const models = modelsForNode(type, name, availableModels);
         const placeholder = cur === undefined || cur === null
           ? (defaults[name] ?? '(omitido — usa default do nó)')
           : undefined;
 
-        // Registro de modelos: dropdown + "?" para o GitHub/HF do modelo ESCOLHIDO.
-        if (models) {
-          const selectedId = models.find((m) => m.url === cur)?.id ?? (typeof cur === 'string' ? cur : '');
-          const url = selectedModelUrl(name, cur);
+        // Seletor de IDIOMA (params 'language' — o idioma da SAÍDA deste nó).
+        if (name === 'language') {
+          const curLang = cur === undefined ? 'English' : String(cur);
+          return (
+            <div key={name} style={{ marginBottom: 8 }}>
+              <ParamLabel name={name} hint="idioma da saída deste nó (por nó, não global)" />
+              <select
+                value={curLang}
+                onChange={(e) => onUpdate({ params: { ...p, [name]: e.target.value } })}
+                style={inputStyle}
+              >
+                {LANGUAGES.map(([val, label, verif]) => (
+                  <option key={val} value={val}>
+                    {label} ({val}){verif ? ' ★ VERIFICADO' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          );
+        }
+
+        // Registro de modelos: dropdown (registry + omlx ao vivo) + "?" → HF do modelo ESCOLHIDO.
+        if (models.length) {
+          const selectedId = models.find((m) => m.value === cur)?.id ?? (typeof cur === 'string' ? cur : '');
+          const url = selectedModelUrl(models, cur);
           return (
             <div key={name} style={{ marginBottom: 8 }}>
               <ParamLabel name={name} />
@@ -93,13 +161,30 @@ export function Inspector({ node, onUpdate, onDuplicate, onDelete }: {
                   {models.map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.id}{m.recommended ? ' ★ RECOMENDADO' : ''}
+                      {m.param !== 'model' && m.param !== '(sidecar)' ? ` · λ:${m.param}` : ''}
+                      {m.verified ? '' : ' · NÃO VERIFICADO'}
                     </option>
                   ))}
                 </select>
                 {url && (
                   <a href={url} target="_blank" rel="noreferrer" title="GitHub/HF do modelo selecionado (ADR-004)" style={{ color: '#78a9ff' }}>?</a>
                 )}
+                {fetchViaParam && m_paramFor(models, cur) && (
+                  <a
+                    href="#"
+                    onClick={(e) => { e.preventDefault(); fetchViaParam(m_paramFor(models, cur)!); }}
+                    title="roda o nó fetch λ com este modelo e mostra a saída crua (sem trust-me)"
+                    style={{ color: '#78a9ff', fontSize: 11 }}
+                  >
+                    ⟲ via-fetch
+                  </a>
+                )}
               </div>
+              {fetchViaParam && modelsVia === m_paramFor(models, cur) && (
+                <div style={{ marginTop: 4, fontSize: 10, color: '#a8a8a8' }}>
+                  λ disparado no host; resultado chega pelo datasource `{modelsVia}` no run atual.
+                </div>
+              )}
             </div>
           );
         }

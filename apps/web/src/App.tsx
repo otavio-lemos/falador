@@ -17,7 +17,8 @@ import {
 import { FlowNode, type FaladorNode, type FaladorNodeData } from './components/FlowNode';
 import { Inspector } from './components/Inspector';
 import { RunPanel } from './components/RunPanel';
-import { fetchCatalog, fetchFlow, fetchFlowList, saveFlow, type CatalogEntry, type Flow } from './api';
+import { NODE_DESCRIPTIONS } from './node-descriptions';
+import { fetchCatalog, fetchFlow, fetchFlowList, fetchModels, saveFlow, type CatalogEntry, type Flow, type FlowInfo } from './api';
 
 const nodeTypes = { falador: FlowNode };
 
@@ -58,12 +59,13 @@ function flowToRf(flow: Flow, catalog: CatalogMap): { nodes: FaladorNode[]; edge
   return { nodes, edges };
 }
 
-function rfToFlow(nodes: FaladorNode[], edges: RFEdge[]): Flow {
+function rfToFlow(nodes: FaladorNode[], edges: RFEdge[], description?: string): Flow {
   nodes.sort((a, b) => a.id.localeCompare(b.id));
   edges.sort((a, b) => a.id.localeCompare(b.id));
   return {
     version: 1,
     stopWhenSourcesDone: false,
+    ...(description !== undefined ? { description } : {}),
     nodes: nodes.map((n) => ({
       id: n.id,
       type: n.data.type,
@@ -87,8 +89,14 @@ export function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState<FaladorNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<RFEdge>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [flowList, setFlowList] = useState<string[]>([]);
+  const [flowList, setFlowList] = useState<FlowInfo[]>([]);
   const [currentName, setCurrentName] = useState<string>('cenario1-pt');
+  const [currentDesc, setCurrentDesc] = useState<string>('');
+  const [editingMeta, setEditingMeta] = useState(false);
+  const [modelsInfo, setModelsInfo] = useState<{ omlx: string[]; cache: string[] } | null>(null);
+  const [showModels, setShowModels] = useState(false);
+  const [modelsVia, setModelsVia] = useState<string | undefined>(undefined);
+  const [paletteOpen, setPaletteOpen] = useState<string | null>(null); // item de paleta expandido
   const rfWrap = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -109,6 +117,7 @@ export function App() {
         const { nodes: n, edges: e } = flowToRf(f, catalog);
         setNodes(n);
         setEdges(e);
+        setCurrentDesc(f.description ?? '');
       })
       .catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -189,10 +198,20 @@ export function App() {
   );
 
   const doSave = useCallback(async () => {
-    const flow = rfToFlow(nodes as FaladorNode[], edges);
+    const flow = rfToFlow(nodes as FaladorNode[], edges, currentDesc);
     await saveFlow(currentName, flow);
     fetchFlowList().then(setFlowList).catch(() => undefined);
-    alert(`Salvo em apps/tui/flows/${currentName}.json`);
+    setEditingMeta(false);
+  }, [nodes, edges, currentName, currentDesc]);
+
+  const doSaveAs = useCallback(async (newName: string, newDesc: string) => {
+    const flow = rfToFlow(nodes as FaladorNode[], edges, newDesc);
+    // rename: servidor apaga o arquivo antigo quando renameFrom ≠ name
+    await saveFlow(newName, flow, currentName !== newName ? currentName : undefined);
+    fetchFlowList().then(setFlowList).catch(() => undefined);
+    setCurrentName(newName);
+    setCurrentDesc(newDesc);
+    setEditingMeta(false);
   }, [nodes, edges, currentName]);
 
   const doLoad = useCallback(async (name: string) => {
@@ -201,7 +220,24 @@ export function App() {
     setNodes(n);
     setEdges(e);
     setCurrentName(name);
+    setCurrentDesc(f.description ?? '');
   }, [catalog, setNodes, setEdges]);
+
+  const doRefreshModels = useCallback(() => {
+    fetchModels().then((m) => {
+      setModelsInfo(m);
+      setModelsVia(undefined);
+      setShowModels(true);
+    }).catch(() => undefined);
+  }, []);
+
+  const doFetchViaParam = useCallback((param: string) => {
+    fetchModels().then((m) => {
+      setModelsInfo(m);
+      setModelsVia(param);
+      setShowModels(true);
+    }).catch(() => undefined);
+  }, []);
 
   const selected = useMemo(() => nodes.find((n) => n.id === selectedId) as FaladorNode | undefined, [nodes, selectedId]);
 
@@ -211,35 +247,106 @@ export function App() {
     <div className="app">
       <div className="toolbar">
         <strong style={{ marginRight: 8 }}>Falador</strong>
-        <select value={currentName} onChange={(e) => doLoad(e.target.value)} style={{ background: '#262626', color: '#f4f4f4', border: '1px solid #393939', padding: '4px 8px', borderRadius: 4 }}>
+        <select
+          value={currentName}
+          onChange={(e) => doLoad(e.target.value)}
+          title={currentDesc}
+          style={{ background: '#262626', color: '#f4f4f4', border: '1px solid #393939', padding: '4px 8px', borderRadius: 4, maxWidth: 340 }}
+        >
           {flowList.map((f) => (
-            <option key={f} value={f}>
-              {f}
+            <option key={f.name} value={f.name}>
+              {f.name}{f.description ? ` — ${f.description}` : ''}
             </option>
           ))}
         </select>
+        <button onClick={() => setEditingMeta((v) => !v)} title="renomear / descrever este flow" style={{ background: '#393939', color: '#f4f4f4', border: '1px solid #525252', padding: '6px 10px', borderRadius: 4, cursor: 'pointer' }}>✎ nome&nbsp;/&nbsp;descrição</button>
         <button onClick={doSave} style={{ background: '#0f62fe', color: '#fff', border: 'none', padding: '6px 14px', borderRadius: 4, cursor: 'pointer' }}>
           Salvar
         </button>
-        <span style={{ color: '#8d8d8d', fontSize: 12 }}>
-          arraste da paleta · ligue portas · Salvar → Run usa apps/tui/flows/{currentName}.json
-        </span>
+        <button onClick={doRefreshModels} title="consulta omlx /v1/models + cache HF guardando na máquina" style={{ background: '#393939', color: '#f4f4f4', border: '1px solid #525252', padding: '6px 10px', borderRadius: 4, cursor: 'pointer' }}>
+          ⟳ atualizar modelos
+        </button>
+        {editingMeta ? (
+          <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+            <input
+              autoFocus
+              defaultValue={currentName}
+              id="flow-name-input"
+              placeholder="nome (arquivo .json)"
+              style={{ background: '#262626', color: '#f4f4f4', border: '1px solid #525252', padding: '4px 8px', borderRadius: 4, width: 180 }}
+            />
+            <input
+              defaultValue={currentDesc}
+              id="flow-desc-input"
+              placeholder="o que este cenário faz (aparece no seletor)"
+              style={{ background: '#262626', color: '#f4f4f4', border: '1px solid #525252', padding: '4px 8px', borderRadius: 4, width: 320 }}
+            />
+            <button
+              onClick={() => {
+                const name = (document.getElementById('flow-name-input') as HTMLInputElement | null)?.value.trim();
+                const desc = (document.getElementById('flow-desc-input') as HTMLInputElement | null)?.value ?? '';
+                if (name) void doSaveAs(name, desc);
+              }}
+              style={{ background: '#0f62fe', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: 4, cursor: 'pointer' }}
+            >
+              ok
+            </button>
+            <button onClick={() => setEditingMeta(false)} style={{ background: 'transparent', color: '#8d8d8d', border: '1px solid #525252', padding: '6px 10px', borderRadius: 4, cursor: 'pointer' }}>✕</button>
+          </span>
+        ) : (
+          currentDesc && <span style={{ color: '#8d8d8d', fontSize: 12 }} title={currentDesc}>{currentDesc.slice(0, 80)}</span>
+        )}
+        {showModels && modelsInfo && (
+          <span style={{ position: 'relative' }}>
+            <div style={{ position: 'absolute', top: 28, right: 0, zIndex: 50, background: '#262626', border: '1px solid #525252', borderRadius: 6, padding: 10, width: 420, maxHeight: 300, overflow: 'auto', boxShadow: '0 4px 12px #000a' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <strong style={{ fontSize: 12 }}>Modelos disponíveis (omlx :8080)</strong>
+                <button onClick={() => setShowModels(false)} style={{ background: 'transparent', color: '#8d8d8d', border: 'none', cursor: 'pointer' }}>✕</button>
+              </div>
+              {modelsInfo.omlx.length === 0 && <div style={{ color: '#ff8389', fontSize: 12 }}>omlx :8080 não respondeu — suba o serviço (./faladorctl start)</div>}
+              {modelsInfo.omlx.map((id) => (
+                <div key={id} style={{ fontSize: 12, padding: '2px 0', color: '#f4f4f4' }}>• {id}</div>
+              ))}
+              <div style={{ marginTop: 8, fontSize: 10, color: '#8d8d8d' }}>Cache HF local ({modelsInfo.cache.length}) — clicável no Inspector; baixados:</div>
+              {modelsInfo.cache.slice(0, 30).map((c) => (
+                <div key={c} style={{ fontSize: 11, color: '#a8a8a8' }}>· {c}</div>
+              ))}
+              {modelsInfo.cache.length > 30 && <div style={{ fontSize: 10, color: '#8d8d8d' }}>… +{modelsInfo.cache.length - 30} no cache</div>}
+            </div>
+          </span>
+        )}
       </div>
       <div className="app-body">
         <aside className="sidebar">
-          <div className="section-title">Paleta (catálogo do runner)</div>
-          {Object.values(catalog).map((c) => (
-            <div
-              key={c.type}
-              className="palette-item"
-              draggable
-              onDragStart={(e) => e.dataTransfer.setData('application/falador-node', c.type)}
-              onDoubleClick={() => addNode(c.type)}
-              title={`in: ${c.inputs.map((p) => p.type).join(',') || '—'} | out: ${c.outputs.map((p) => p.type).join(',') || '—'}`}
-            >
-              + {c.type}
-            </div>
-          ))}
+          <div className="section-title">Paleta — clique para ver o que cada nó faz</div>
+          {Object.values(catalog).map((c) => {
+            const desc = NODE_DESCRIPTIONS[c.type] ?? '(sem descrição)';
+            const open = paletteOpen === c.type;
+            return (
+              <div key={c.type}>
+                <div
+                  className="palette-item"
+                  draggable
+                  onDragStart={(e) => e.dataTransfer.setData('application/falador-node', c.type)}
+                  onClick={() => setPaletteOpen(open ? null : c.type)}
+                  onDoubleClick={() => addNode(c.type)}
+                  title={`${desc}\nin: ${c.inputs.map((p) => p.type).join(', ') || '—'} | out: ${c.outputs.map((p) => p.name).join(', ') || '—'}\n(duplo clique adiciona ao canvas)`}
+                  style={{ cursor: 'grab', borderLeft: `3px solid ${open ? '#0f62fe' : 'transparent'}` }}
+                >
+                  + {c.type}
+                </div>
+                {open && (
+                  <div style={{ fontSize: 11, color: '#a8a8a8', padding: '4px 8px 8px', borderBottom: '1px solid #393939' }}>
+                    {desc}
+                    <div style={{ color: '#6f6f6f', marginTop: 3 }}>
+                      entra: {c.inputs.map((p) => `${p.name}(${p.type})`).join(', ') || '—'} · sai: {c.outputs.map((p) => `${p.name}(${p.type})`).join(', ') || '—'}<br />
+                      <span style={{ color: '#78a9ff' }}>duplo clique = adiciona ao canvas · ou arraste</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </aside>
         <div className="canvas-wrap" ref={rfWrap} onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
           <ReactFlow
@@ -260,7 +367,7 @@ export function App() {
         </div>
         <div className="mainbar">
           {selected ? (
-            <Inspector node={selected} onUpdate={(d) => updateNode(selected.id, d)} onDuplicate={() => duplicateNode(selected.id)} onDelete={() => deleteNode(selected.id)} />
+            <Inspector node={selected} onUpdate={(d) => updateNode(selected.id, d)} onDuplicate={() => duplicateNode(selected.id)} onDelete={() => deleteNode(selected.id)} availableModels={modelsInfo?.omlx} fetchViaParam={doFetchViaParam} modelsVia={modelsVia} />
           ) : (
             <div style={{ color: '#8d8d8d', fontSize: 13 }}>Selecione um nó para editar parâmetros, modelo (RECOMENDADO + "?"→GitHub) e enabled.</div>
           )}

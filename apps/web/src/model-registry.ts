@@ -9,7 +9,7 @@ export interface RegistryModel {
   param: string; // nome do param do nó que recebe `value`
   recommended: boolean; // só verdadeiro onde MEDIDO (AGENTS.md §4)
   verified: boolean; // rodou na nossa máquina? false = NÃO VERIFICADO
-  local: 'sim' | 'não'; // está no cache HF/baixado na máquina?
+  local: 'sim' | 'não' | 'omlx'; // sim = cache local · omlx = registrado no servidor agora
   notes: string;
 }
 
@@ -40,7 +40,7 @@ export const MODEL_REGISTRY: RegistryModel[] = [
     id: 'LFM3-Audio-2B-MLX-8bit',
     value: LFM3_AUDIO_SNAPSHOT,
     url: HF('LiquidAI/LFM3-Audio-2B-MLX-8bit'),
-    kind: 'tts', param: 'text',
+    kind: 'tts', param: '(sidecar)',
     recommended: true, verified: true, local: 'sim',
     notes: 'Sidecar :8091. TTS EN 4,55× / PT 5,32× rt (medido). + /asr-translate (tradução nativa ~15× rt).',
   },
@@ -48,7 +48,7 @@ export const MODEL_REGISTRY: RegistryModel[] = [
     id: 'LFM3-Audio-2B-MLX-4bit',
     value: 'LiquidAI/LFM3-Audio-2B-MLX-4bit',
     url: HF('LiquidAI/LFM3-Audio-2B-MLX-4bit'),
-    kind: 'tts', param: 'text',
+    kind: 'tts', param: '(sidecar)',
     recommended: false, verified: false, local: 'não',
     notes: 'OFICIAL LiquidAI, quant 4bit (menos RAM). NÃO VERIFICADO — download do dono (ADR-004).',
   },
