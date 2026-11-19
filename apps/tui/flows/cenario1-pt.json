@@ -25,7 +25,10 @@
       "type": "llm.omlx",
       "params": {
         "enableThinking": false,
-        "historyMax": 0
+        "historyMax": 0,
+        "template": [
+          "Traduza para português do Brasil, natural e falado. Responda APENAS com a tradução."
+        ]
       }
     },
     {

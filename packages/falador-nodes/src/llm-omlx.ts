@@ -48,11 +48,12 @@ export const llmOmlx: NodeTypeDef = {
     const model = (ctx.params.model as string | undefined) ?? DEFAULT_MODEL;
     const system = ctx.params.system as string | undefined;
     // template: FRAGMENTO com '{text}' que antecede a fala do usuário.
-    // Ex. cenário 1 (legendar): ["Traduza para brasileiro natural. Só a tradução, sem comentários."]
-    //     cenário 2 (sugerir):  ["Você é assistente técnico. Responda em português, direto e curto."]
-    const template = (ctx.params.template as string[] | undefined) ?? [
-      'Traduza para português do Brasil, natural e falado. Responda APENAS com a tradução.',
-    ];
+    // DEFAULT NEUTRO (só o texto) — cada flow declara sua instrução (nada fixo):
+    //   cenário 1 (legendar): ["Traduza para brasileiro natural. Só a tradução, sem comentários."]
+    //   entrevista EN:        ["Suggest a short first-person ANSWER in ENGLISH…"]
+    // (o default antigo era uma instrução de tradução PT embutida — sobrescrevia o
+    //  system prompt de outros flows; bug apanhado no pivô ADR-005)
+    const template = (ctx.params.template as string[] | undefined) ?? [];
     const temperature = (ctx.params.temperature as number | undefined) ?? 0.2;
     const maxTokens = (ctx.params.maxTokens as number | undefined) ?? 256;
     const enableThinking = (ctx.params.enableThinking as boolean | undefined) ?? false;
