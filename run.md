@@ -19,7 +19,23 @@ Nenhum serviço sai para a rede — tudo bind em `127.0.0.1`.
 
 ---
 
-## 2. Subir tudo (ordem importa: LLM → ASR → TTS → host)
+## 2. Subir tudo — `faladorctl` (jeito fácil): start · stop · restart · status
+
+```bash
+cd /Users/otaviolemos/ml/falador
+./faladorctl status      # lista TODOS os serviços: omlx asr tts web (pid + o que é + PARADO/✔)
+./faladorctl start       # sobe os 4 (espera carga dos modelos; logs em logs/<nome>.log)
+./faladorctl stop        # derruba TODOS (SIGTERM; SIGKILL só no teimoso)
+./faladorctl restart     # stop → espera porta liberar → start
+```
+
+Todos os comandos sempre listam os 4 serviços individualmente. O `status` mostra pid e o comando real de cada um. Sob o capô, o `start` é exatamente os comandos da §3 — os logs caem em `logs/omlx.log`, `logs/asr.log`, `logs/tts.log`, `logs/web.log`.
+
+> Se portas estiverem ocupadas por processos zumbis antigos, o `stop` cuida deles antes do `start`.
+
+---
+
+## 3. Subir manualmente, um a um (ordem importa: LLM → ASR → TTS → host)
 
 Abra um **terminal para cada serviço** (ou use `nohup … &`). Não iniciar dentro do shell agent comum — o processo morre quando o comando termina.
 
@@ -67,7 +83,7 @@ node web-server.mjs
 
 ---
 
-## 3. Verificar que está tudo no ar (saúde)
+## 4. Verificar que está tudo no ar (saúde)
 
 ```bash
 curl -s http://127.0.0.1:8080/v1/models | head -c 120   # lista LFM3-1.7B
@@ -95,7 +111,7 @@ EOF
 
 ---
 
-## 4. Como usar
+## 5. Como usar
 
 ### 4a. UI web (canvas — o jeito principal)
 
@@ -135,7 +151,7 @@ cd apps/tui && ../../.venv/bin/python smoke.py   # TUI (Textual) smoke
 
 ---
 
-## 5. Entrada de áudio (BlackHole)
+## 6. Entrada de áudio (BlackHole)
 
 - Saída do sistema deve ser o **"Dispositivo com Saída Múltipla"** (Alto-falantes + BlackHole, clock = Alto-falantes) — configurado no Audio MIDI Setup (provado com mídia real, AGENTS.md §2/§4).
 - Índice AVFoundation em uso: **`:0` = BlackHole 2ch**, `:1` = mic MBP. Para conferir os índices atuais: `ffmpeg -f avfoundation -list_devices true -i ""`.
@@ -143,10 +159,11 @@ cd apps/tui && ../../.venv/bin/python smoke.py   # TUI (Textual) smoke
 
 ---
 
-## 6. Derrubar tudo
+## 7. Derrubar tudo
 
 ```bash
-# duro e limpo (o que os serviços escutam):
+./faladorctl stop                # derruba TODOS os 4 (SIGTERM, com SIGKILL de reserva)
+# ou manual, porta por porta:
 kill $(lsof -ti :8080 :8090 :8091 :8787)
 ```
 
@@ -163,7 +180,7 @@ kill $(lsof -ti :8787)   # host web
 
 ---
 
-## 7. Armadilhas (resumo — detalhes em AGENTS.md §4/§5)
+## 8. Armadilhas (resumo — detalhes em AGENTS.md §4/§5)
 
 - LLM no omlx **SEMPRE** com `chat_template_kwargs: {"enable_thinking": false}` (senão `content` vem vazio; só `reasoning_content`). Nós `llm.omlx`/`decision.llm` já mandam por default (`enableThinking`).
 - TTS sidecar sai em 24 kHz mesmo pedindo 16 k — para `/asr-translate`, o `sample_rate` do body deve ser o **real do WAV**.
