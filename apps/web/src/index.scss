@@ -307,6 +307,12 @@ body,
   color: $text-secondary;
 }
 
+.param-help {
+  @include type-style('helper-text-01');
+  margin-top: $spacing-02;
+  color: $text-helper;
+}
+
 .metrics-block {
   margin-top: $spacing-03;
 }

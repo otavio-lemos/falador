@@ -128,6 +128,20 @@ async function handleApi(req, res, pathname) {
       : [];
     return json(res, 200, { omlx, cache }), true;
   }
+  if (pathname === '/api/apps' && req.method === 'GET') {
+    // apps rodando via ScreenCaptureKit (--list) — picker de captura por app (W10)
+    const bin = join(ROOT, 'services/capture-sck');
+    if (!existsSync(bin)) return json(res, 200, { apps: [], note: 'capture-sck ainda não compilado (rode um flow sck primeiro)' }), true;
+    const child = spawn(bin, ['--list'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let out = '';
+    const to = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* já morto */ } }, 6000);
+    child.stdout.on('data', (d) => (out += d));
+    child.on('exit', () => {
+      clearTimeout(to);
+      try { return json(res, 200, { apps: JSON.parse(out) }); } catch { return json(res, 200, { apps: [] }); }
+    });
+    return true;
+  }
   if (pathname.startsWith('/api/flows/') && req.method === 'GET') {
     const name = decodeURIComponent(pathname.slice('/api/flows/'.length));
     const p = join(FLOWS_DIR, name + '.json');

@@ -80,6 +80,12 @@ export async function fetchModels(): Promise<{ omlx: string[]; cache: string[] }
   const r = await fetch('/api/models');
   return (await r.json()) as { omlx: string[]; cache: string[] };
 }
+// apps rodando (ScreenCaptureKit --list) — picker de captura por app
+export async function fetchApps(): Promise<string[]> {
+  const r = await fetch('/api/apps');
+  const j = (await r.json()) as { apps: { name: string; bundleId: string }[] };
+  return [...new Set(j.apps.map((a) => a.name).filter((n) => n && n.trim() && !n.startsWith('Open and Save Panel Service')))];
+}
 export function openRun(flow: Flow, onEvent: (ev: RunnerEvent) => void, onEnd: (code: number) => void, onOpen?: () => void): AbortController {
   const ctl = new AbortController();
   fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ flow }), signal: ctl.signal })

@@ -1,11 +1,12 @@
 // Inspector — edita params/enabled do nó selecionado + registro de modelos (ADR-004).
 // Camada visual Carbon v11; lógica de params/modelos preservada 1:1.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button, ComboBox, Dropdown, Link, TextArea, TextInput, Toggle } from '@carbon/react';
 import { Copy, Help, TrashCan } from '@carbon/icons-react';
 import { MODEL_REGISTRY } from '../model-registry';
+import { PARAM_HELP } from '../param-help';
+import { fetchApps, type NodeMetrics } from '../api';
 import type { FaladorNode } from './FlowNode';
-import type { NodeMetrics } from '../api';
 
 // Params longos (prompt/instruções) ganham textarea em vez de input de 1 linha.
 const TEXTAREA_PARAMS = new Set(['system', 'prompt', 'instructions', 'text']);
@@ -34,17 +35,12 @@ const LANGUAGES: [string, string, boolean][] = [
 type LanguageItem = { val: string; label: string; verif: boolean };
 const LANGUAGE_ITEMS: LanguageItem[] = LANGUAGES.map(([val, label, verif]) => ({ val, label, verif }));
 
-/** Defaults por tipo de nó, para placeholders honestos (catálogo não guarda defaults). */
-const DEFAULTS_BY_TYPE: Record<string, Record<string, string>> = {
-  'llm.omlx': {
-    // template é FRAGMENTO (string[]):[...template, userText].join('\n\n') — '{text}' marca a fala.
-    template: '["Fragmento de instrução antes da fala do usuário…"]',
-  },
-  'decision.llm': {
-    options: '["auto","humano"]',
-    instructions: 'Decida a qual categoria o texto abaixo pertence. Responda EXATAMENTE com UMA das opções, nada mais.',
-  },
-};
+/** Documentação + defaults REAIS por param (param-help.ts, extraído do código dos nós). */
+const BACKENDS = [
+  { val: 'sck', label: 'sck — ScreenCaptureKit por app (recomendado)' },
+  { val: 'sounddevice', label: 'sounddevice — PortAudio por device' },
+  { val: 'ffmpeg', label: 'ffmpeg — avfoundation (perde samples no ffmpeg 9)' },
+];
 
 function selectedModelUrl(models: RegistryEntry[], cur: unknown): string | undefined {
   if (!models.length) return undefined;
@@ -103,10 +99,15 @@ export function Inspector({ node, onUpdate, onDuplicate, onDelete, availableMode
   const { type, params, enabled } = node.data;
   const paramNames = node.data.paramNames ?? [];
   const p = params as Record<string, unknown>;
-  const defaults = DEFAULTS_BY_TYPE[type] ?? {};
+  const docs = PARAM_HELP[type] ?? {};
   // Rascunho/erro do editor JSON: enquanto o texto não parseia, mantemos o que o usuário digita.
   const [jsonDrafts, setJsonDrafts] = useState<Record<string, string>>({});
   const [jsonErrors, setJsonErrors] = useState<Record<string, string | undefined>>({});
+  // apps rodando pro picker de captura (SCK) — atualiza ao selecionar o nó
+  const [apps, setApps] = useState<string[]>([]);
+  useEffect(() => {
+    if (type === 'capture.ffmpeg') fetchApps().then(setApps).catch(() => setApps([]));
+  }, [type, node.id]);
 
   return (
     <div>
@@ -126,9 +127,32 @@ export function Inspector({ node, onUpdate, onDuplicate, onDelete, availableMode
       {paramNames.map((name) => {
         const cur = p[name];
         const models = modelsForNode(type, name, availableModels);
-        const placeholder = cur === undefined || cur === null
-          ? (defaults[name] ?? '(omitido — usa default do nó)')
-          : undefined;
+        const doc = docs[name];
+        const helper = doc ? `${doc.help}${doc.def ? ` · default: ${doc.def}` : ''}` : undefined;
+        const placeholder = cur === undefined || cur === null ? doc?.def : undefined;
+
+        // Backend de captura: Dropdown com os 3 backends reais.
+        if (type === 'capture.ffmpeg' && name === 'backend') {
+          const curB = cur === undefined ? 'ffmpeg' : String(cur);
+          return (
+            <div key={name} className="param-block">
+              <Dropdown
+                id={`backend-${node.id}`}
+                size="sm"
+                titleText="backend"
+                hideLabel
+                label="backend"
+                helperText={helper}
+                items={BACKENDS}
+                itemToString={(it) => (it ? it.label : '')}
+                selectedItem={BACKENDS.find((b) => b.val === curB) ?? BACKENDS[2]}
+                onChange={({ selectedItem }) => {
+                  if (selectedItem) onUpdate({ params: { ...p, [name]: selectedItem.val } });
+                }}
+              />
+            </div>
+          );
+        }
 
         // Seletor de IDIOMA (params 'language' — o idioma da SAÍDA deste nó).
         if (name === 'language') {
@@ -142,6 +166,7 @@ export function Inspector({ node, onUpdate, onDuplicate, onDelete, availableMode
                 titleText="idioma da saída deste nó"
                 hideLabel
                 label="idioma"
+                helperText={helper}
                 items={LANGUAGE_ITEMS}
                 itemToString={(it) => (it ? `${it.label} (${it.val})${it.verif ? ' ★ VERIFICADO' : ''}` : '')}
                 selectedItem={LANGUAGE_ITEMS.find((it) => it.val === curLang) ?? LANGUAGE_ITEMS[0]}
@@ -201,6 +226,7 @@ export function Inspector({ node, onUpdate, onDuplicate, onDelete, availableMode
                   λ disparado no host; resultado chega pelo datasource `{modelsVia}` no run atual.
                 </div>
               )}
+              {helper && <div className="param-help">{helper}</div>}
             </div>
           );
         }
@@ -220,6 +246,7 @@ export function Inspector({ node, onUpdate, onDuplicate, onDelete, availableMode
                 rows={3}
                 value={raw}
                 placeholder={placeholderText}
+                helperText={helper}
                 invalid={!!err}
                 invalidText={err}
                 onChange={(e) => {
@@ -250,6 +277,9 @@ export function Inspector({ node, onUpdate, onDuplicate, onDelete, availableMode
 
         // Textarea para prompts/templates longos; input para escalares.
         const isLong = TEXTAREA_PARAMS.has(name) || (typeof cur === 'string' && (cur.includes('\n') || cur.length > 60));
+        // Picker de app (SCK): datalist nativo com os apps RODANDO agora + texto livre
+        // (o app da call pode abrir depois — o helper espera até 30 s).
+        const isAppInput = type === 'capture.ffmpeg' && name === 'input';
         return (
           <div key={name} className="param-block">
             <ParamLabel name={name} />
@@ -261,6 +291,7 @@ export function Inspector({ node, onUpdate, onDuplicate, onDelete, availableMode
                 rows={4}
                 value={cur === undefined || cur === null ? '' : String(cur)}
                 placeholder={placeholder}
+                helperText={helper}
                 onChange={(e) => onUpdate({ params: { ...p, [name]: e.target.value === '' ? undefined : e.target.value } })}
               />
             ) : (
@@ -271,16 +302,18 @@ export function Inspector({ node, onUpdate, onDuplicate, onDelete, availableMode
                 size="sm"
                 value={cur === undefined || cur === null ? '' : String(cur)}
                 placeholder={placeholder}
+                helperText={helper}
+                {...(isAppInput ? { list: `apps-${node.id}` } : {})}
                 onChange={(e) => {
                   const raw = e.target.value;
                   onUpdate({ params: { ...p, [name]: raw === '' ? undefined : parseScalar(raw) } });
                 }}
               />
             )}
-            {cur === undefined && defaults[name] && (
-              <div className="param-default-hint">
-                default: <code>{defaults[name].split('\n')[0]}…</code>
-              </div>
+            {isAppInput && (
+              <datalist id={`apps-${node.id}`}>
+                {apps.map((a) => <option key={a} value={a} />)}
+              </datalist>
             )}
           </div>
         );

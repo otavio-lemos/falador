@@ -10,11 +10,13 @@ import CoreMedia
 
 var appName = ""
 var rate = 16000
+var listOnly = false
 let args = CommandLine.arguments
 var i = 1
 while i < args.count {
     if args[i] == "--app" && i + 1 < args.count { i += 1; appName = args[i] }
     else if args[i] == "--rate" && i + 1 < args.count { i += 1; rate = Int(args[i]) ?? 16000 }
+    else if args[i] == "--list" { listOnly = true }
     i += 1
 }
 
@@ -52,6 +54,24 @@ final class AudioOut: NSObject, SCStreamOutput {
             pcm.withUnsafeBufferPointer { out.write(Data(buffer: $0)) }
         }
     }
+}
+
+// --list: apps rodando em JSON (pro picker da UI) e sai
+if listOnly {
+    let semL = DispatchSemaphore(value: 0)
+    var contentL: SCShareableContent?
+    SCShareableContent.getWithCompletionHandler { c, _ in contentL = c; semL.signal() }
+    semL.wait()
+    let apps = (contentL?.applications ?? []).map {
+        ["name": $0.applicationName, "bundleId": $0.bundleIdentifier]
+    }
+    if let data = try? JSONSerialization.data(withJSONObject: apps),
+       let json = String(data: data, encoding: .utf8) {
+        print(json)
+    } else {
+        print("[]")
+    }
+    exit(0)
 }
 
 // espera o app alvo aparecer (usuário pode iniciar o run ANTES de abrir a call)
