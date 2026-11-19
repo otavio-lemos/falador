@@ -116,6 +116,8 @@ App local (macOS, Apple Silicon M4 Pro 48 GB) que traduz conversas de conferênc
 
 ## 6. Estado atual (atualizar SEMPRE)
 
+- **UI WEB APAGADA (2026-11-19, ordem do dono)**: "apague toda interface gráfica, não quero UI nenhuma… vou te passar o layout e quero 100% reconstruído do zero". `apps/web/` removido (worktree + primary). Motivo: a UI nunca cumpriu a função — a sugestão (o que o dono lê pra falar) ficou enterrada num log no canto, e clicar num nó mostrava spec técnica crua. **NÃO reconstruir até o dono mandar o layout.** Backend intacto: motor, nós, runner CLI, sidecars, flows, TUI e o host de API `apps/web-server.mjs` (a nova UI nasce do desenho do dono, por cima dessas APIs provadas). Serviços todos DOWN.
+
 - F0 **FECHADA** (2026-11-18): G1 PASS · G2 PASS · G3 PASS-COM-MODIFICAÇÃO — detalhes em `docs/adr/research/F0-resultados.md`.
 - Servidor omlx no ar: porta 8080, modelo LFM3-1.7B-MLX-4bit (processo de fundo da sessão).
 - Pendente menor do G1: confirmar com o usuário se ouviu a frase `afplay` durante a captura (não foi transcrita — possível corrida; midia real provou o laço).
