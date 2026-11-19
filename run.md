@@ -113,15 +113,14 @@ EOF
 
 ## 5. Como usar
 
-### 4a. UI web (canvas — o jeito principal)
+### 4a. UI web (duas telas — rebuild do layout do dono, 2026-11-19)
 
 - **Abrir:** <http://127.0.0.1:8787>
-- Paleta à esquerda: arraste os nós para o canvas (catálogo dinâmico — sempre reflete os nós registrados, incluindo `asr.lfm3` e `decision.llm`).
-- Clique num nó → **Inspector**: `enabled`, params (promopts em textarea, `template`/`options` como JSON), dropdown de modelos do registro (★ RECOMENDADO = medido; "?" abre o GitHub/HF do modelo selecionado).
-- **Run** → eventos ao vivo. **Transcrição** (azul, ao vivo) e **sugestão do assistente** (verde, fixa até a próxima — "leia e responda com suas palavras") em caixas separadas. Gate `human.approve` abre card editável → Aprovar/Rejeitar.
-- **Métricas por nó ao vivo (fase 3)**: durante o run, cada nó mostra badge `↓in ↑out · p50ms` (azul, monospace); clique no nó → Inspector → "Métricas do run" com timers/counters nomeados (`llm.omlx.ttftMs`, `tts.sts.ms`, `decision.llm.<opção>`…). Snapshot final também vai no `summary`.
-- **Perfis de Run (W8)**: seletor `perfil:` acima do ▶ Capturar. `✚` fotografa os params atuais de todos os nós como perfil nomeado (persiste em `profiles:` no flow JSON). Ao rodar com perfil, os overrides são aplicados SÓ naquela execução — o grafo salvo não muda. `(padrão do grafo)` = sem override.
-- Salvar/carregar flows: `apps/tui/flows/*.json` (o host lista via `/api/flows`).
+- **Tela 1 — Criação (Builder):** barra superior (título + seletor de flow + salvar + pill `Live Latency` + **Testar Fluxo** / **Iniciar Live**). Paleta à esquerda com busca e 6 categorias coloridas (Captura/Transcrição/Pensar/Decidir/Falar/Saída) + grupo Teste recolhível; arraste um nó pro canvas (ou duplo clique). Canvas React Flow com cards de header colorido por categoria, conexões tracejadas + ramos coloridos rotulados (auto/humano), minimap e zoom.
+- **Edição INLINE:** clique num nó → o editor abre **ancorado no próprio nó** (acompanha pan/zoom/drag; flipa pro lado se não couber; fecha clicando no canvas ou no ×). Abas **Configuração / Regras / Logs**; campos reais de cada nó com o controle certo (dropdown/slider/toggle/textarea/JSON) + texto de ajuda e **default real**. Não há painel direito fixo.
+- **Tela 2 — Execução (Live):** interina (o dono vai mandar o layout definitivo). **Iniciar Live** roda o flow e mostra a sugestão como hero da tela + gate humano (Aprovar/Editar/Rejeitar) + transcrição. Botão **Builder** volta pra criação; **Parar** encerra o run.
+- **Testar Fluxo** roda o flow na própria tela de criação (métricas/latência ao vivo nos nós e no pill).
+- Salvar/carregar flows: `apps/tui/flows/*.json` (host lista via `/api/flows`; descrição dentro do flow).
 
 ### 4b. Fluxos prontos
 
