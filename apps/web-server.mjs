@@ -8,10 +8,11 @@
 //   estático: serve apps/web/dist (build) — um único processo para tudo.
 // Executa APENAS local (127.0.0.1). Nada de rede externa.
 import { spawn } from 'node:child_process';
-import { createServer, get as httpGet } from 'node:http';
+import { createServer, get as httpGet, request as httpRequest } from 'node:http';
 import { readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = join(ROOT, 'packages/falador-cli/run-flow.mjs');
@@ -22,6 +23,56 @@ const PORT = 8787;
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml' };
 
 let currentRun = null; // { child, clients:Set<res>, stopRequested }
+
+// ---- Contexto & Cheatsheet (RAG leve 100% on-device via omlx) ----
+const CONTEXT_DIR = join(ROOT, 'context');
+const CONTEXT_FILE = join(CONTEXT_DIR, 'docs.json');
+const OMLX = 'http://127.0.0.1:8080';
+const TEXT_MODEL = 'LFM3-1.7B-MLX-4bit';
+
+function loadDocs() { try { return JSON.parse(readFileSync(CONTEXT_FILE, 'utf-8')); } catch { return []; } }
+function saveDocs(docs) { if (!existsSync(CONTEXT_DIR)) mkdirSync(CONTEXT_DIR, { recursive: true }); writeFileSync(CONTEXT_FILE, JSON.stringify(docs, null, 2)); }
+
+// chamada síncrona (stream:false) ao omlx — enable_thinking:false OBRIGATÓRIO (LFM3)
+function omlxChat(messages, maxTokens = 256) {
+  return new Promise((resolve) => {
+    const body = JSON.stringify({ model: TEXT_MODEL, messages, temperature: 0.2, max_tokens: maxTokens, stream: false, chat_template_kwargs: { enable_thinking: false } });
+    const req = httpRequest(OMLX + '/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }, timeout: 30000 }, (r) => {
+      let out = ''; r.on('data', (d) => (out += d));
+      r.on('end', () => { try { resolve(JSON.parse(out).choices?.[0]?.message?.content ?? ''); } catch { resolve(''); } });
+    });
+    req.on('error', () => resolve('')); req.on('timeout', () => { req.destroy(); resolve(''); });
+    req.end(body);
+  });
+}
+
+// LFM3 pode devolver JSON ou linhas — extrai lista de strings defensivamente
+function parseList(raw) {
+  const m = raw.match(/\[[\s\S]*\]/);
+  if (m) { try { const a = JSON.parse(m[0]); if (Array.isArray(a)) return a.map(String).map((s) => s.trim()).filter(Boolean).slice(0, 6); } catch { /* cai p/ linhas */ } }
+  return raw.split('\n').map((s) => s.replace(/^[-*\d.\s]+/, '').trim()).filter((s) => s.length > 1 && s.length < 80).slice(0, 6);
+}
+
+async function extractPoints(text) {
+  const raw = await omlxChat([
+    { role: 'system', content: 'Você extrai pontos-chave de documentos para preparar uma entrevista técnica. Responda APENAS com um array JSON de até 3 strings curtas em português.' },
+    { role: 'user', content: 'Extraia até 3 pontos-chave deste documento:\n\n' + text.slice(0, 6000) },
+  ], 200);
+  return parseList(raw);
+}
+
+// PDF → texto via pdftotext (poppler, já instalado) — zero dependência nova
+function pdfToText(buf) {
+  return new Promise((resolve) => {
+    const tmp = join(tmpdir(), `falador-doc-${Date.now()}.pdf`);
+    writeFileSync(tmp, buf);
+    const child = spawn('pdftotext', [tmp, '-'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let out = ''; child.stdout.on('data', (d) => (out += d));
+    const done = (txt) => { try { unlinkSync(tmp); } catch { /* já removido */ } resolve(txt); };
+    child.on('exit', () => done(out));
+    child.on('error', () => done(''));
+  });
+}
 
 function json(res, code, body) {
   const data = JSON.stringify(body);
@@ -183,6 +234,33 @@ async function handleApi(req, res, pathname) {
     currentRun.stopRequested = true;
     currentRun.child.kill('SIGTERM');
     return json(res, 200, { ok: true }), true;
+  }
+  if (pathname === '/api/context' && req.method === 'GET') {
+    return json(res, 200, { docs: loadDocs().map((d) => ({ name: d.name, points: d.points, chars: d.text.length })) }), true;
+  }
+  if (pathname === '/api/context/doc' && req.method === 'POST') {
+    const body = await readBody(req);
+    if (!body.name) return json(res, 400, { error: 'name obrigatório' }), true;
+    const text = body.pdfB64 ? await pdfToText(Buffer.from(body.pdfB64, 'base64')) : String(body.text ?? '');
+    if (!text.trim()) return json(res, 400, { error: 'documento vazio (PDF sem camada de texto ou arquivo vazio)' }), true;
+    const points = await extractPoints(text);
+    const docs = loadDocs().filter((d) => d.name !== body.name);
+    docs.push({ name: body.name, text, points });
+    saveDocs(docs);
+    return json(res, 200, { name: body.name, points, chars: text.length }), true;
+  }
+  if (pathname === '/api/context/remove' && req.method === 'POST') {
+    const body = await readBody(req);
+    saveDocs(loadDocs().filter((d) => d.name !== body.name));
+    return json(res, 200, { ok: true }), true;
+  }
+  if (pathname === '/api/context/topics' && req.method === 'POST') {
+    const body = await readBody(req);
+    const raw = await omlxChat([
+      { role: 'system', content: 'Você detecta tópicos técnicos numa fala de entrevista. Responda APENAS com um array JSON de 3 a 5 strings curtas (1-2 palavras).' },
+      { role: 'user', content: 'Detecte os tópicos técnicos desta fala:\n\n' + String(body.text ?? '').slice(0, 2000) },
+    ], 120);
+    return json(res, 200, { topics: parseList(raw) }), true;
   }
   return false;
 }

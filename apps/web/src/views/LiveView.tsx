@@ -1,12 +1,12 @@
 // Tela de EXECUÇÃO — layout do dono: LIVE MODE + latência + Pausar/Encerrar;
 // transcrição do entrevistador; DROPDOWN POR ETAPA do workflow (troca a config real
 // de cada nó); sugestão hero (o que o dono lê pra falar) + Regerar/Editar/Aprovar;
-// sidebar Contexto & Cheatsheet. Dados reais; RAG/tópicos marcados como não conectados.
-import { useMemo, useState } from 'react';
+// sidebar Contexto & Cheatsheet com RAG leve REAL (docs + pontos + tópicos ao vivo).
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Dropdown, Tag, TextArea } from '@carbon/react';
-import { Pause, Play, Stop, Renew, Edit, Checkmark, Document, Warning, Information, Microphone } from '@carbon/icons-react';
+import { Pause, Play, Stop, Renew, Edit, Checkmark, Document, Warning, Information, Microphone, Add, TrashCan } from '@carbon/icons-react';
 import type { Runner } from '../useRunner';
-import type { Flow } from '../api';
+import { fetchTopics, type Flow, type ContextDoc } from '../api';
 import { deriveStages, classifySinks, shortModel, type Stage } from '../live-utils';
 
 interface Props {
@@ -15,6 +15,10 @@ interface Props {
   scenarioName: string;
   models: { omlx: string[]; cache: string[] };
   apps: string[];
+  contextDocs: ContextDoc[];
+  onUploadDoc: (file: File) => void;
+  onRemoveDoc: (name: string) => void;
+  onStart: (flow: Flow) => void;
   onUpdateStage: (nodeId: string, param: string, value: unknown) => void;
   onRegenerate: () => void;
   onExit: () => void;
@@ -36,11 +40,13 @@ function stageItems(stage: Stage, models: { omlx: string[]; cache: string[] }, a
   return items.length ? items : [{ id: stage.value || '—', label: stage.value || '—' }];
 }
 
-export function LiveView({ runner, flow, scenarioName, models, apps, onUpdateStage, onRegenerate, onExit }: Props) {
+export function LiveView({ runner, flow, scenarioName, models, apps, contextDocs, onUploadDoc, onRemoveDoc, onStart, onUpdateStage, onRegenerate, onExit }: Props) {
   const stages = useMemo(() => deriveStages(flow), [flow]);
   const sinks = useMemo(() => classifySinks(flow), [flow]);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
+  const [topics, setTopics] = useState<string[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const lastOf = (set: Set<string>) => [...runner.captions].reverse().find((c) => set.has(c.nodeId));
   const transcription = lastOf(sinks.transcription)?.text ?? '';
@@ -50,6 +56,13 @@ export function LiveView({ runner, flow, scenarioName, models, apps, onUpdateSta
 
   const approve = () => { if (gate) runner.gate(gate.nodeId, editing ? draft : suggestion); setEditing(false); };
   const startEdit = () => { setDraft(suggestion); setEditing(true); };
+
+  // tópicos ao vivo: detecta da transcrição do entrevistador (debounce 2,5 s)
+  useEffect(() => {
+    if (!runner.running || transcription.trim().length < 20) return;
+    const t = setTimeout(() => { fetchTopics(transcription).then((tp) => { if (tp.length) setTopics(tp); }).catch(() => {}); }, 2500);
+    return () => clearTimeout(t);
+  }, [transcription, runner.running]);
 
   return (
     <div className="live2">
@@ -61,7 +74,7 @@ export function LiveView({ runner, flow, scenarioName, models, apps, onUpdateSta
         </div>
         <Tag type="green" size="md" className="latency-pill">Latência: {runner.latency != null ? `${Math.round(runner.latency)}ms` : '—'}</Tag>
         <div className="live2-top-actions">
-          <Button kind="secondary" size="sm" renderIcon={runner.running ? Pause : Play} onClick={() => (runner.running ? runner.stop() : runner.start(flow))}>
+          <Button kind="secondary" size="sm" renderIcon={runner.running ? Pause : Play} onClick={() => (runner.running ? runner.stop() : onStart(flow))}>
             {runner.running ? 'Pausar' : 'Retomar'}
           </Button>
           <Button kind="danger" size="sm" renderIcon={Stop} onClick={onExit}>Encerrar Sessão</Button>
@@ -125,17 +138,39 @@ export function LiveView({ runner, flow, scenarioName, models, apps, onUpdateSta
         <aside className="live2-side">
           <div className="live2-side-title">Contexto &amp; Cheatsheet</div>
 
-          <div className="ctx-doc ctx-doc--empty">
-            <Document size={18} />
-            <div>
-              <div className="ctx-doc-name">Currículo / Job Description</div>
-              <div className="ctx-doc-sub">RAG de documentos — não conectado ainda</div>
+          <input
+            ref={fileRef} type="file" accept=".pdf,.txt,.md,.markdown" hidden
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) onUploadDoc(f); e.target.value = ''; }}
+          />
+          <Button kind="ghost" size="sm" renderIcon={Add} onClick={() => fileRef.current?.click()}>Carregar documento</Button>
+          {contextDocs.map((d) => (
+            <div key={d.name} className="ctx-doc">
+              <Document size={18} />
+              <div className="ctx-doc-body">
+                <div className="ctx-doc-name">{d.name}</div>
+                <div className="ctx-doc-sub ctx-doc-sub--ok"><Checkmark size={12} /> {d.points.length} pontos-chave extraídos</div>
+                {d.points.length > 0 && <ul className="ctx-points">{d.points.map((p, i) => <li key={i}>{p}</li>)}</ul>}
+              </div>
+              <button className="ctx-doc-remove" onClick={() => onRemoveDoc(d.name)} title="Remover documento"><TrashCan size={14} /></button>
             </div>
-          </div>
+          ))}
+          {contextDocs.length === 0 && (
+            <div className="ctx-doc ctx-doc--empty">
+              <Document size={18} />
+              <div>
+                <div className="ctx-doc-name">Currículo / Job Description</div>
+                <div className="ctx-doc-sub">Carregue um PDF ou TXT — os pontos informam a sugestão</div>
+              </div>
+            </div>
+          )}
 
           <div className="ctx-block">
             <div className="ctx-block-title">Tópicos detectados</div>
-            <div className="ctx-chips"><span className="ctx-empty">detecção automática em breve</span></div>
+            <div className="ctx-chips">
+              {topics.length
+                ? topics.map((t, i) => <Tag key={i} type="purple" size="sm">{t}</Tag>)
+                : <span className="ctx-empty">{runner.running ? 'detectando…' : 'aparecem durante a fala'}</span>}
+            </div>
           </div>
 
           <div className="ctx-block">

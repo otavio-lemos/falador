@@ -168,6 +168,11 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 .ctx-doc { display: flex; gap: $spacing-03; align-items: flex-start; padding: $spacing-03; background: $bg-card; border: 1px solid $border-1; border-radius: 6px; color: $txt-2; }
 .ctx-doc-name { @include type-style('body-01'); color: $txt-1; }
 .ctx-doc-sub { @include type-style('helper-text-01'); color: #6f6f6f; }
+.ctx-doc-sub--ok { color: #4ade80; display: flex; align-items: center; gap: 4px; }
+.ctx-doc-body { flex: 1; min-width: 0; }
+.ctx-points { margin: $spacing-02 0 0; padding-left: $spacing-04; @include type-style('helper-text-01'); color: $txt-2; display: flex; flex-direction: column; gap: 2px; }
+.ctx-doc-remove { background: none; border: none; color: #6f6f6f; cursor: pointer; padding: 2px; flex-shrink: 0; }
+.ctx-doc-remove:hover { color: #da1e28; }
 .ctx-block { display: flex; flex-direction: column; gap: $spacing-02; }
 .ctx-block-title { @include type-style('productive-heading-01'); color: $txt-1; display: flex; align-items: center; gap: $spacing-02; }
 .ctx-block--warn .ctx-block-title { color: #f59e0b; }

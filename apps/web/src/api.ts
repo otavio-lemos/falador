@@ -54,6 +54,23 @@ export async function fetchApps(): Promise<string[]> {
   const j = await (await fetch('/api/apps')).json();
   return [...new Set((j.apps as { name: string }[]).map((a) => a.name).filter((n) => n && n.trim() && !n.startsWith('Open and Save Panel Service')))];
 }
+
+// ---- Contexto & Cheatsheet (RAG leve) ----
+export interface ContextDoc { name: string; points: string[]; chars: number }
+export async function fetchContext(): Promise<ContextDoc[]> {
+  return (await fetch('/api/context')).json().then((j) => j.docs);
+}
+export async function uploadDoc(name: string, payload: { text?: string; pdfB64?: string }): Promise<ContextDoc> {
+  const r = await fetch('/api/context/doc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, ...payload }) });
+  if (!r.ok) throw new Error((await r.json()).error ?? 'falha no upload');
+  return r.json();
+}
+export async function removeDoc(name: string): Promise<void> {
+  await fetch('/api/context/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+}
+export async function fetchTopics(text: string): Promise<string[]> {
+  return (await fetch('/api/context/topics', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })).json().then((j) => j.topics);
+}
 export async function stopRun(): Promise<void> {
   await fetch('/api/stop', { method: 'POST' });
 }
