@@ -23,6 +23,11 @@ import {
   HeaderName,
   IconButton,
   SkipToContent,
+  Tab,
+  TabList,
+  TabPanel,
+  TabPanels,
+  Tabs,
   TextInput,
   Theme,
   ToastNotification,
@@ -116,6 +121,7 @@ export function App() {
   const [profiles, setProfiles] = useState<FlowProfiles>({}); // perfis de Run (W8) — persistem no flow JSON
   const [stopWhenSourcesDone, setStopWhenSourcesDone] = useState(false); // flag do flow — preservada no save/run
   const [toast, setToast] = useState<string | null>(null); // erro de save → ToastNotification
+  const [rightTab, setRightTab] = useState(1); // 0 = Nó (Inspector), 1 = Run
   const rfWrap = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -302,39 +308,13 @@ export function App() {
       <Header aria-label="Falador" className="app-header">
         <SkipToContent href="#main-content" />
         <HeaderName href="#" prefix="">Falador</HeaderName>
-        <div className="header-controls">
-          <div className="flow-select" title={currentDesc}>
-            <Dropdown
-              id="flow-select"
-              size="sm"
-              titleText="Flow"
-              hideLabel
-              label="Selecione o flow"
-              items={flowList}
-              itemToString={(f) => (f ? `${f.name}${f.description ? ` — ${f.description}` : ''}` : '')}
-              selectedItem={flowList.find((f) => f.name === currentName) ?? null}
-              onChange={({ selectedItem }) => {
-                if (selectedItem) void doLoad(selectedItem.name);
-              }}
-            />
-          </div>
-          <IconButton kind="ghost" size="sm" label="renomear / descrever este flow" onClick={() => setEditingMeta((v) => !v)}>
-            <Edit size={16} />
-          </IconButton>
-          <Button kind="primary" size="sm" renderIcon={Save} onClick={() => void doSave()}>
-            Salvar
-          </Button>
-          {!editingMeta && currentDesc && (
-            <span className="header-desc" title={currentDesc}>{currentDesc.slice(0, 80)}</span>
-          )}
-        </div>
         <HeaderGlobalBar>
           <HeaderGlobalAction aria-label="atualizar modelos" tooltipAlignment="end" onClick={doRefreshModels} isActive={showModels}>
             <Renew size={20} />
           </HeaderGlobalAction>
         </HeaderGlobalBar>
       </Header>
-      {editingMeta && (
+      {editingMeta ? (
         <div className="meta-bar">
           <div className="meta-name">
             <TextInput
@@ -352,7 +332,7 @@ export function App() {
               id="flow-desc-input"
               size="sm"
               labelText="descrição do cenário"
-              placeholder="o que este cenário faz (aparece no seletor)"
+              placeholder="o que este cenário faz (aparece abaixo do header)"
             />
           </div>
           <Button
@@ -369,6 +349,36 @@ export function App() {
           <IconButton kind="ghost" size="sm" label="cancelar edição de nome/descrição" onClick={() => setEditingMeta(false)}>
             <Close size={16} />
           </IconButton>
+        </div>
+      ) : (
+        <div className="page-header">
+          <div className="page-header-info">
+            <h1 className="page-header-title">{currentName}</h1>
+            {currentDesc && <p className="page-header-desc" title={currentDesc}>{currentDesc}</p>}
+          </div>
+          <div className="page-header-actions">
+            <div className="flow-select">
+              <Dropdown
+                id="flow-select"
+                size="sm"
+                titleText="Flow"
+                hideLabel
+                label="Selecione o flow"
+                items={flowList}
+                itemToString={(f) => (f ? f.name : '')}
+                selectedItem={flowList.find((f) => f.name === currentName) ?? null}
+                onChange={({ selectedItem }) => {
+                  if (selectedItem) void doLoad(selectedItem.name);
+                }}
+              />
+            </div>
+            <Button kind="tertiary" size="sm" renderIcon={Edit} onClick={() => setEditingMeta(true)}>
+              nome/descrição
+            </Button>
+            <Button kind="primary" size="sm" renderIcon={Save} onClick={() => void doSave()}>
+              Salvar
+            </Button>
+          </div>
         </div>
       )}
       <main id="main-content" className="app-body">
@@ -413,7 +423,7 @@ export function App() {
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             nodeTypes={nodeTypes}
-            onNodeClick={(_, n) => setSelectedId(n.id)}
+            onNodeClick={(_, n) => { setSelectedId(n.id); setRightTab(0); }}
             onPaneClick={() => setSelectedId(null)}
             fitView
           >
@@ -423,15 +433,25 @@ export function App() {
           </ReactFlow>
         </div>
         <div className="mainbar">
-          <div className="inspector-pane">
-            {selected ? (
-              <Inspector node={selected} onUpdate={(d) => updateNode(selected.id, d)} onDuplicate={() => duplicateNode(selected.id)} onDelete={() => deleteNode(selected.id)} availableModels={modelsInfo?.omlx} fetchViaParam={doFetchViaParam} modelsVia={modelsVia} metrics={metrics[selected.id]} />
-            ) : (
-              <div className="empty-hint">Selecione um nó para editar parâmetros, modelo (RECOMENDADO + "?"→GitHub) e enabled.</div>
-            )}
-          </div>
-          <div className="run-pane">
-            <RunPanel flowGetter={getFlow} profiles={profiles} onMetrics={setMetrics} onSaveProfile={(name) => void doSaveProfile(name)} />
+          <div className="mainbar-tabs">
+          <Tabs selectedIndex={rightTab} onChange={({ selectedIndex }) => setRightTab(selectedIndex)}>
+            <TabList aria-label="Painel direito" contained fullWidth size="sm">
+              <Tab>Nó</Tab>
+              <Tab>Run</Tab>
+            </TabList>
+            <TabPanels>
+              <TabPanel className="pane-tab">
+                {selected ? (
+                  <Inspector node={selected} onUpdate={(d) => updateNode(selected.id, d)} onDuplicate={() => duplicateNode(selected.id)} onDelete={() => deleteNode(selected.id)} availableModels={modelsInfo?.omlx} fetchViaParam={doFetchViaParam} modelsVia={modelsVia} metrics={metrics[selected.id]} />
+                ) : (
+                  <div className="empty-hint">Selecione um nó para editar parâmetros, modelo (RECOMENDADO + "?"→GitHub) e enabled.</div>
+                )}
+              </TabPanel>
+              <TabPanel className="pane-tab">
+                <RunPanel flowGetter={getFlow} profiles={profiles} onMetrics={setMetrics} onSaveProfile={(name) => void doSaveProfile(name)} />
+              </TabPanel>
+            </TabPanels>
+          </Tabs>
           </div>
         </div>
       </main>

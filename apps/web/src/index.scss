@@ -28,27 +28,51 @@ body,
   flex-shrink: 0;
 }
 
-.header-controls {
+// Page header (padrão Carbon): título + descrição do flow à esquerda, ações à direita.
+// UIShell fica só com marca + ações globais.
+.page-header {
   display: flex;
-  flex: 1;
+  flex-shrink: 0;
   align-items: center;
-  gap: $spacing-03;
+  justify-content: space-between;
+  gap: $spacing-05;
+  padding: $spacing-03 $spacing-05;
+  border-bottom: 1px solid $border-subtle-01;
+  background: $layer-01;
+}
+
+.page-header-info {
+  flex: 1;
   min-width: 0;
-  padding-inline: $spacing-03;
 }
 
-.flow-select {
-  width: 22rem;
-  max-width: 45%;
-}
-
-.header-desc {
-  @include type-style('body-01');
+.page-header-title {
+  @include type-style('productive-heading-03');
+  margin: 0;
   overflow: hidden;
-  max-width: 20rem;
+  color: $text-primary;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-header-desc {
+  @include type-style('body-01');
+  margin: 0;
+  overflow: hidden;
   color: $text-secondary;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.page-header-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: $spacing-03;
+}
+
+.flow-select {
+  width: 16rem;
 }
 
 .meta-bar {
@@ -65,7 +89,8 @@ body,
 }
 
 .meta-desc {
-  width: 22rem;
+  flex: 1;
+  min-width: 12rem;
 }
 
 .app-body {
@@ -102,17 +127,17 @@ body,
   border-left: 1px solid $border-subtle-01;
 }
 
-.inspector-pane {
-  flex: 1 1 50%;
+// Painel direito: Tabs Carbon (Nó | Run), cada painel com scroll próprio.
+.mainbar-tabs {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
   min-height: 0;
-  padding: $spacing-03 $spacing-05;
-  overflow-y: auto;
-  border-bottom: 1px solid $border-subtle-01;
 }
 
-.run-pane {
-  flex: 1 1 50%;
-  min-height: 0;
+.pane-tab {
+  // shell fixo: header 3rem + page-header ~4rem + tablist 2rem
+  height: calc(100vh - 9.5rem);
   padding: $spacing-03 $spacing-05;
   overflow-y: auto;
 }

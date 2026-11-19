@@ -77,8 +77,10 @@ export function RunPanel({ flowGetter, profiles, onMetrics, onSaveProfile }: {
           return;
         }
         if (ev.type === 'node_error') {
-          const msg = String((ev as { message?: string }).message ?? '');
-          push(`[${String(ev.nodeId ?? '?')}] ${msg}`, 'err');
+          const e = ev as { nodeId?: string; code?: string; message?: string };
+          // log_info/log_warn do motor chegam como node_error code log_* — não são erro
+          const isLog = (e.code ?? '').startsWith('log_') && e.code !== 'log_error';
+          push(`[${e.nodeId ?? '?'}] ${e.message ?? ''}`, isLog ? 'ev' : 'err');
           return;
         }
         // legendas ao vivo: eventos edge com payload {text, final} do ASR/LLM
@@ -92,8 +94,8 @@ export function RunPanel({ flowGetter, profiles, onMetrics, onSaveProfile }: {
             setCaption(lastParcial);
           }
         }
-        const t = JSON.stringify(ev);
-        push(t.length > 160 ? t.slice(0, 160) + '…' : t);
+        const line = formatEvent(ev);
+        if (line) push(line);
       },
       (code) => {
         setRunning(false);
@@ -203,6 +205,24 @@ export function RunPanel({ flowGetter, profiles, onMetrics, onSaveProfile }: {
       )}
     </div>
   );
+}
+
+// eventos do runner → linhas legíveis (nada de JSON cru na tela)
+function formatEvent(ev: RunnerEvent): string | null {
+  switch (ev.type) {
+    case 'run_stopped':
+      return `■ run parado (${String((ev as { reason?: string }).reason ?? '')})`;
+    case 'edge_overflow':
+      return `⚠ overflow em ${String((ev as { edge?: string }).edge ?? '?')} — ${String((ev as { dropped?: number }).dropped ?? 0)} descartada(s)`;
+    case 'edge_expired':
+      return `⚠ ${String((ev as { count?: number }).count ?? 0)} mensagem(ns) expirada(s) em ${String((ev as { edge?: string }).edge ?? '?')}`;
+    case 'cancelled':
+      return '✕ cancelamento propagado';
+    case 'summary':
+      return '— summary: métricas finais atualizadas —';
+    default:
+      return null; // node_started/stopped, metrics, caption, gate: tratados ou ruído
+  }
 }
 
 // extrai {text, final} do evento do runner (edge_message / node_result; frame completo separa portas)
