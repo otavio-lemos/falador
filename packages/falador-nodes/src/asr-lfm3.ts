@@ -1,7 +1,8 @@
 // falador-nodes — asr.lfm3: transcrição+TRADUÇÃO NATIVA por utterance (LFM3-Audio task='chat').
 // Diferença do asr.realtime (Voxtral): Voxtral não traduz (medido, AGENTS.md §4);
 // LFM3-Audio traduz via messages com áudio tipado — mas NÃO é streaming.
-// ENTRADA:  in (audio_chunk): Uint8Array s16le mono (capture.ffmpeg) OU {format:'wav',data}.
+// ENTRADA:  in (pcm16k): Uint8Array s16le mono 16 kHz (capture.ffmpeg) — o nó embrulha em WAV
+//           antes do POST; envelope {format:'wav',data} também é tolerado em runtime (defensivo).
 // SAÍDA:    out (tokens_parcial): {text, final:true} por janela de flush.
 // Endpoint: POST /asr-translate no sts-sidecar (:8091) — ver services/sts-sidecar.py.
 import type { Envelope, NodeCtx, NodeRuntime, NodeTypeDef } from '../../falador-graph/src/index.ts';
@@ -14,7 +15,7 @@ const DEFAULT_INSTRUCTION =
 export const asrLfm3: NodeTypeDef = {
   type: 'asr.lfm3',
   paramNames: ['url', 'instruction', 'sampleRateHz', 'flushSec', 'timeoutMs', 'maxTranslateChars'],
-  inputs: [{ name: 'in', type: 'audio_chunk' }],
+  inputs: [{ name: 'in', type: 'pcm16k' }],
   outputs: [{ name: 'out', type: 'tokens_parcial' }],
   validateParams: (p) => {
     const errs: { path: string; code: string; message: string }[] = [];

@@ -99,6 +99,7 @@ App local (macOS, Apple Silicon M4 Pro 48 GB) que traduz conversas de conferênc
 - **L3** — ler CÓDIGO do port/lib, não só README/issues (streaming parcial existia escondido).
 - **L4** — não expandir catálogo de alternativas sem aprovação do dono; foco no desenho.
 - **L5** — inventário antes de construir: checar o que já existe no repo/máquina/ecossistema e REUTILIZAR (ver §2).
+- **L6** — tipo de porta declarado = contrato REAL do formato consumido. `asr.lfm3` declarava `audio_chunk` mas consumes PCM16k cru (embrulha em WAV ele mesmo) → PORT_TYPE_MISMATCH no flow cenario1-lfm3. Validar TODOS os flows com um run headless seguinte a qualquer mudança de spec de nó.
 
 ## 6. Estado atual (atualizar SEMPRE)
 
@@ -150,4 +151,5 @@ App local (macOS, Apple Silicon M4 Pro 48 GB) que traduz conversas de conferênc
 1. Novo fato medido → §4. Nova decisão → ADR + linha em §3. Nova lição → §5.
 2. Mudança de estado (servidor, setup do usuário, gate) → §6.
 3. Anotação de algo JÁ EXISTENTE que passamos a utilizar → §2.
-4. Regra de ouro: se um agente do futuro precisar redesenhar o projeto só lendo este arquivo + ADRs, nós falhamos. Escreva pra esse padrão.
+4. Regra de ouro: se um agente do futuro precisar redesenhar o projeto só lendo este arquivo + ADRs, nós falhamos. Escreva pra esse padrão.- **RODADA E2E-WEB (2026-11-19)**: suítes 12/12 + falador-nodes fail 0 (1 skip = gate mic). Flow `cenario1-lfm3` tinha PORT_TYPE_MISMATCH (asr.lfm3 declarava `audio_chunk`, consome `pcm16k`) — corrigido no nó; run pelo host web `/api/run` PASSA (validação→start→stop limpo). demo-live pelo `/api/run`: omlx→TTS sidecar→sink com WAV 24kHz 1,1 MB, parada natural "fontes esgotadas". d1-2B AINDA não baixado (download é do dono); decision.d1 não será nó novo — `decision.llm` + modelo d1 servido no omlx cobre (não duplicar).
+
