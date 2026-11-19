@@ -75,6 +75,9 @@ App local (macOS, Apple Silicon M4 Pro 48 GB) que traduz conversas de conferênc
 - **Prior art entrevista técnica (referência UX, NÃO copiar código)**: interview-coder (~4,4k★), SevaSk/ecoute, natively-cluely, elias-soykat/interview-copilot, ericwang915/interview-copilot — TODOS dependem de API em nuvem (OpenAI/Deepgram/GPT-4o); nosso diferencial = 100% on-device. Ideias a beber na fase de UI: janela discreta/stealth (interview-coder), gatilho por pausa de fala=VAD (elias-soykat), separação mic×áudio do sistema (ericwang915), RAG de documentos (natively).
 - `audio.cpp` (0xShug0) tem LFM3-Audio em GGUF com streaming — runtime alternativo NÃO VERIFICADO, anotado como ponte futura caso precisemos de STT+tradução streaming nativa.
 
+- **UI web fase 2 INICIADA E E2E VERDE (2026-11-19)**: `apps/web` (Vite+React+@xyflow/react+@carbon/react) + **host zero-dep `apps/web-server.mjs`** (:8787) — `/api/catalog` (spawn run-flow --catalog), `/api/flows` (save/load JSON), `/api/run` (spawn runner + NDJSON→SSE), `/api/stop`. Canvas React Flow com nós custom do catálogo, paleta drag&drop, param editor + registro de modelos (RECOMENDADO + "?"→HF) + enabled, salvar/carregar flows (mesmo schema do runner). **Legendas do runner agora saem como eventos NDJSON `caption`** (auto-binding `__onCaption` para sink.captions sem binding; flow PT usa mode callback). E2E via SSE com mídia real: parciais + final PT chegando. **Pendente**: verificação visual no browser pelo usuário (`node apps/web-server.mjs` → http://127.0.0.1:8787).
+- **Silêncio transitório do pipeline (2026-11-19)**: 2-3 E2E seguidos saíram sem nenhum delta do ASR/legenda (ASR saudável, omlx saudável, captura com sinal): causa provável = contenção de GPU/unified memory com testes Python que carregavam LFM3-Audio/Voxtral ao mesmo tempo. Recuperou sozinho. **Lição: não rodar testes .py que carregam modelo junto de E2E de áudio.**
+
 ## 5. Lições de processo (não repetir o mesmo erro)
 
 - **L1** — pegada de instalação/dependências de runtime auditar na arquitetura ANTES (omlx: brew tap 254 MB + LLVM >300 MB).
@@ -119,6 +122,7 @@ App local (macOS, Apple Silicon M4 Pro 48 GB) que traduz conversas de conferênc
 7. **Git**: repositório INICIALIZADO (2026-11-19, commit inicial `62e948c` com 44 arquivos); a cada conquista, commit.
 8. ~~Cenário 1 E2E~~ → **FEITO (2026-11-19)**: `cenario1-pt.json` PASSOU com mídia real (afplay → BlackHole → Voxtral ASR → omlx tradução → legenda PT streaming). Tradução nativa do STT: NÃO streaming; LFM3 `chat`+audio TIPADO traduz nado-nado (potencial nó futuro `asr.lfm3` p/ utterance).
 9. **Fase 2 — UI web (React Flow + Carbon)** desenhada pelo usuário no canvas (ADR-003 "nada fixo"); + nó tradução nativa (`asr.lfm3` chat+audio) como opção do catálogo.
+10. **UI web** → INICIADA (2026-11-19, ver §6). Próximas sub-etapas: (a) confirmação visual pelo usuário em http://127.0.0.1:8787; (b) refino do Inspector (textarea/params complexos, edição fino do LLM template); (c) Cenário 2 no canvas (asr → llm sujestão → tts.fala com playback gear); (d) nó `asr.lfm3` tradução nativa por utterance.
 
 ## 8. Protocolo de atualização deste arquivo
 

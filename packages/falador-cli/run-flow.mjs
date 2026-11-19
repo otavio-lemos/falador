@@ -58,6 +58,18 @@ async function main() {
     flow.bindings[id] = { ...(flow.bindings[id] ?? {}), __collect: holder };
   }
 
+  // binding automático de legenda: sink.captions sem __onCaption emite eventos NDJSON
+  // {"type":"caption","nodeId","text","final"} — assim a TUI/web recebem a legenda ao vivo
+  // mesmo rodando headless (sem poluir o stdout servido para o host).
+  for (const n of flow.nodes ?? []) {
+    if (n.type === 'sink.captions' && !(flow.bindings[n.id]?.__onCaption)) {
+      flow.bindings[n.id] = {
+        ...(flow.bindings[n.id] ?? {}),
+        __onCaption: (cap) => line({ type: 'caption', nodeId: n.id, ...cap }),
+      };
+    }
+  }
+
   const line = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
   // --run-seconds N: fonte contínua (mic/BlackHole) não "esgota" — o host pede stop programático
   const runSecondsArg = args.find((a) => a === '--run-seconds');
