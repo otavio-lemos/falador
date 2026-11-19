@@ -61,6 +61,7 @@ App local (macOS, Apple Silicon M4 Pro 48 GB) que traduz conversas de conferênc
 | G3b: streaming vs offline (mesmo modelo/áudio) | texto IDÊNTICO (WER 0 EN e 0,087 PT nos DOIS caminhos — erros são do TTS de referência); 1º delta ~1,1 s; `completed` < duração do áudio (7,8 s < 8,5 s) |
 | Tradução nativa c/ janela CORTADA no meio da frase | LFM3-Audio TRANSCREVE o fragmento em vez de traduzir (áudio 4,64 s, janela 3 s → "O Quick Brown Fox" cru; áudio INTEIRO → PT completo). flushSec ≥ duração da utterance |
 | Injeção de teste sounddevice→BlackHole DIRETO | PortAudio NÃO faz SRC no macOS (24 k em device 48 k = fala 2×); mesmo resample, ffmpeg avfoundation captura só ~25% dos samples (drops por burst). Caminho de teste fiel = afplay com output default = Multi-Output (laço G1) |
+| **ffmpeg 9.0.2 avfoundation QUEBRADO nesta máquina (2026-11-19)** | captura só ~25% dos samples em QUALQUER device (BlackHole :0 e mic :1; afplay CoreAudio-paced idem). PortAudio (sounddevice `sd.rec` 48k) captura 100%: frase completa 5–13 s, tradução direta PT PERFEITA ("Olá, este é um teste ao vivo da pipeline de tradução. O rápido cão marrom salta sobre o cão preguiçoso."). G1/E2E de 11-18 passaram com ffmpeg — regressão surgiu depois (ffmpeg 9.0.2 / macOS 27.2.1). **capture.ffmpeg não é confiável hoje; backend PortAudio é o caminho** |
 
 **Armadilhas descobertas na prática:**
 - LFM3-1.7B pensa por padrão → usar `enable_thinking: false` (`chat_template_kwargs`) — descoberto porque o `content` vinha vazio e só saía `reasoning_content`.
