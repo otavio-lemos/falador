@@ -60,5 +60,5 @@
       "overflow": "drop_oldest"
     }
   ],
-  "description": "Cenário 1: fala EN da call (BlackHole) → ASR Voxtral streaming → tradução via omlx → legenda PT ~1,1 s"
+  "description": "Cenário 1: fala EN da call → captura SCK do app (Teams/Zoom/Chrome) → ASR Voxtral streaming → tradução via omlx → legenda PT (~1,1 s)"
 }
