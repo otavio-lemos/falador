@@ -119,6 +119,8 @@ EOF
 - Paleta à esquerda: arraste os nós para o canvas (catálogo dinâmico — sempre reflete os nós registrados, incluindo `asr.lfm3` e `decision.llm`).
 - Clique num nó → **Inspector**: `enabled`, params (promopts em textarea, `template`/`options` como JSON), dropdown de modelos do registro (★ RECOMENDADO = medido; "?" abre o GitHub/HF do modelo selecionado).
 - **Run** → eventos ao vivo (legendas parciais/finais). Gate `human.approve` abre card com sugestão editável → Aprovar/Rejeitar.
+- **Métricas por nó ao vivo (fase 3)**: durante o run, cada nó mostra badge `↓in ↑out · p50ms` (azul, monospace); clique no nó → Inspector → "Métricas do run" com timers/counters nomeados (`llm.omlx.ttftMs`, `tts.sts.ms`, `decision.llm.<opção>`…). Snapshot final também vai no `summary`.
+- **Perfis de Run (W8)**: seletor `perfil:` acima do ▶ Capturar. `✚` fotografa os params atuais de todos os nós como perfil nomeado (persiste em `profiles:` no flow JSON). Ao rodar com perfil, os overrides são aplicados SÓ naquela execução — o grafo salvo não muda. `(padrão do grafo)` = sem override.
 - Salvar/carregar flows: `apps/tui/flows/*.json` (o host lista via `/api/flows`).
 
 ### 4b. Fluxos prontos
@@ -153,7 +155,7 @@ cd apps/tui && ../../.venv/bin/python smoke.py   # TUI (Textual) smoke
 
 ## 6. Entrada de áudio (BlackHole)
 
-- Saída do sistema deve ser o **"Dispositivo com Saída Múltipla"** (Alto-falantes + BlackHole, clock = Alto-falantes) — configurado no Audio MIDI Setup (provado com mídia real, AGENTS.md §2/§4).
+- Saída do sistema deve ser o **"Dispositivo com Saída Múltipla"** (Alto-falantes + BlackHole, clock = Alto-falantes) — configurado no Audio MIDI Setup (provado com mídia real, AGENTS.md §2/§4). **ATENÇÃO (2026-11-19): o output default driftou p/ "Alto-falantes (MacBook Pro)"** — Multi-Output existe mas está só como "Default System Output"; assim o BlackHole fica mudo e a captura não recebe a conferência. Restaurar em Ajustes → Som → Saída (ou Audio MIDI Setup). Conferir: `system_profiler SPAudioDataType | grep -B1 "Default Output Device: Yes"`.
 - Índice AVFoundation em uso: **`:0` = BlackHole 2ch**, `:1` = mic MBP. Para conferir os índices atuais: `ffmpeg -f avfoundation -list_devices true -i ""`.
 - Cenário 2 em call real: o áudio do entrevistador entra pelo BlackHole (laço do sistema), igual ao Cenário 1.
 

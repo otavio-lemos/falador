@@ -1,6 +1,6 @@
 // FlowNode — representação visual de um nó do catálogo no canvas.
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
-import type { CatalogEntry } from '../api';
+import type { CatalogEntry, NodeMetrics } from '../api';
 
 export type FaladorNodeData = {
   type: string;
@@ -10,6 +10,7 @@ export type FaladorNodeData = {
   outputs: { name: string; type: string }[];
   params: Record<string, unknown>;
   enabled: boolean;
+  metrics?: NodeMetrics; // ao vivo durante o run (overlay do App, não persiste no flow)
   [k: string]: unknown;
 };
 
@@ -54,6 +55,13 @@ export function FlowNode({ data, selected }: NodeProps<FaladorNode>) {
       </div>
       {paramCount > 0 && (
         <div style={{ padding: '0 8px 6px', color: '#8d8d8d', fontSize: 11 }}>{paramCount} param(s)</div>
+      )}
+      {data.metrics && (
+        <div className="fnode-metrics">
+          <span>↓{data.metrics.in} ↑{data.metrics.out}</span>
+          {data.metrics.procMsP50 != null && <span>· {Math.round(data.metrics.procMsP50)}ms</span>}
+          {data.metrics.errors > 0 && <span style={{ color: '#ff8389' }}>⚠{data.metrics.errors}</span>}
+        </div>
       )}
     </div>
   );

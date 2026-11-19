@@ -431,7 +431,10 @@ test('N10: asr.lfm3 tradução nativa EN→PT ao vivo dentro do engine', async (
     stopWhenSourcesDone: true,
     nodes: [
       { id: 'voz', type: 'produtor.en', params: {} },
-      { id: 'asr3', type: 'asr.lfm3', params: { url: 'http://127.0.0.1:8091', flushSec: 3, sampleRateHz: sampleRate } },
+      // flushSec 10: a janela precisa caber a utterance INTEIRA — corte no meio da frase
+      // faz o LFM3-Audio transcrever o fragmento em vez de traduzir (medido 2026-11-19:
+      // áudio 4,64 s, janela 3 s → "O Quick Brown Fox" sem traduzir; inteiro → PT completo).
+      { id: 'asr3', type: 'asr.lfm3', params: { url: 'http://127.0.0.1:8091', flushSec: 10, sampleRateHz: sampleRate } },
       { id: 'snk', type: 'sink.collect' },
     ],
     edges: [

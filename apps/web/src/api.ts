@@ -19,6 +19,31 @@ export interface Flow {
   nodes: FlowNode[];
   edges: FlowEdge[];
   bindings?: Record<string, Record<string, unknown>>;
+  /** Perfis de Run (ADR-003 W8): nome → nodeId → override de params, aplicado só na execução. */
+  profiles?: FlowProfiles;
+}
+export type FlowProfiles = Record<string, Record<string, Record<string, unknown>>>;
+
+// Métricas por nó (snapshot do motor — mesmos campos de falador-graph/types.ts).
+export interface TimerStat { count: number; lastMs: number; avgMs: number; minMs: number; maxMs: number; }
+export interface NodeMetrics {
+  started: boolean;
+  errored: boolean;
+  in: number;
+  out: number;
+  dropped: number;
+  expired: number;
+  errors: number;
+  procMsP50: number | null;
+  procMsP95: number | null;
+  counters: Record<string, number>;
+  timers: Record<string, TimerStat>;
+}
+export interface RunSnapshot {
+  runId: string;
+  stopped: boolean;
+  nodes: Record<string, NodeMetrics>;
+  edges: Record<string, { depth: number; dropped: number; expired: number }>;
 }
 
 export interface CatalogEntry {
@@ -64,6 +89,7 @@ export function openRun(flow: Flow, onEvent: (ev: RunnerEvent) => void, onEnd: (
       const reader = r.body.getReader();
       const dec = new TextDecoder();
       let buf = '';
+      let ended = false;
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -78,9 +104,11 @@ export function openRun(flow: Flow, onEvent: (ev: RunnerEvent) => void, onEnd: (
           const ev = evLine?.slice(7) ?? 'message';
           const data = JSON.parse(dataLine.slice(6));
           if (ev === 'runner') onEvent(data as RunnerEvent);
-          else if (ev === 'ended') onEnd((data as { code: number }).code);
+          else if (ev === 'ended') { ended = true; onEnd((data as { code: number }).code); }
         }
       }
+      // stream fechou sem 'ended' (host morreu/409): não deixa o botão preso em "running"
+      if (!ended) onEnd(-1);
     })
     .catch(() => onEnd(-1));
   return ctl;

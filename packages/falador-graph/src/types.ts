@@ -126,6 +126,13 @@ export type RunEvent =
   | { type: 'cancelled'; scope: ControlScope; by?: string }
   | { type: 'run_stopped'; runId: string; reason: string };
 
+export interface TimerStat {
+  count: number;
+  lastMs: number;
+  avgMs: number;
+  minMs: number;
+  maxMs: number;
+}
 export interface NodeMetrics {
   started: boolean;
   errored: boolean;
@@ -136,6 +143,10 @@ export interface NodeMetrics {
   errors: number;
   procMsP50: number | null;
   procMsP95: number | null;
+  /** Contadores nomeados pelo nó (ctx.metrics.counter) — ex.: capture.ffmpeg.chunks. */
+  counters: Record<string, number>;
+  /** Timers nomeados pelo nó (ctx.metrics.timer) — ex.: llm.omlx.ttftMs. */
+  timers: Record<string, TimerStat>;
 }
 
 export interface EdgeMetrics {

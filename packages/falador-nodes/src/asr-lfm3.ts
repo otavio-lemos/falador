@@ -66,7 +66,7 @@ export const asrLfm3: NodeTypeDef = {
       return out;
     }
 
-    async function flush(): Promise<void> {
+    async function flush(fromStop = false): Promise<void> {
       if (stopped || inFlight || pending.byteLength === 0) return;
       const pcm = pending;
       pending = new Uint8Array(0);
@@ -80,7 +80,10 @@ export const asrLfm3: NodeTypeDef = {
           `${url}/asr-translate`,
           { audioB64: b64, instruction, sample_rate: sampleRateHz },
           timeoutMs,
-          ctx.signal,
+          // no flush do stop() o signal do run JÁ está abortado (motor aborta antes do
+          // stop() dos nós) — fetch próprio limitado por timeoutMs, senão a última
+          // janela pendente sempre se perde.
+          fromStop ? undefined : ctx.signal,
         );
         ctx.metrics.timer('asr.lfm3.ms', Date.now() - t0);
         ctx.metrics.counter('asr.lfm3.seconds', seconds);
@@ -129,9 +132,11 @@ export const asrLfm3: NodeTypeDef = {
         if (pending.byteLength / 2 / sampleRateHz >= flushSec) await flush();
       },
       async stop() {
-        // fim da fonte: traduz o resto pendente antes de encerrar
-        if (ctx.signal.aborted) { stopped = true; return; }
-        await flush();
+        // fim da fonte: traduz o resto pendente antes de encerrar.
+        // ponytail: espera polling de 20 ms o flush em curso assentar (limitado pelo
+        // timeoutMs do fetch); upgrade = evento/condvar se isso virar caminho quente.
+        while (inFlight) await new Promise((r) => setTimeout(r, 20));
+        await flush(true);
         stopped = true;
       },
     };

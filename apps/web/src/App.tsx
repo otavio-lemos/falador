@@ -18,7 +18,7 @@ import { FlowNode, type FaladorNode, type FaladorNodeData } from './components/F
 import { Inspector } from './components/Inspector';
 import { RunPanel } from './components/RunPanel';
 import { NODE_DESCRIPTIONS } from './node-descriptions';
-import { fetchCatalog, fetchFlow, fetchFlowList, fetchModels, saveFlow, type CatalogEntry, type Flow, type FlowInfo } from './api';
+import { fetchCatalog, fetchFlow, fetchFlowList, fetchModels, saveFlow, type CatalogEntry, type Flow, type FlowInfo, type FlowProfiles, type NodeMetrics } from './api';
 
 const nodeTypes = { falador: FlowNode };
 
@@ -59,13 +59,14 @@ function flowToRf(flow: Flow, catalog: CatalogMap): { nodes: FaladorNode[]; edge
   return { nodes, edges };
 }
 
-function rfToFlow(nodes: FaladorNode[], edges: RFEdge[], description?: string): Flow {
+function rfToFlow(nodes: FaladorNode[], edges: RFEdge[], description?: string, profiles?: FlowProfiles, stopWhenSourcesDone?: boolean): Flow {
   nodes.sort((a, b) => a.id.localeCompare(b.id));
   edges.sort((a, b) => a.id.localeCompare(b.id));
   return {
     version: 1,
-    stopWhenSourcesDone: false,
+    stopWhenSourcesDone: stopWhenSourcesDone === true,
     ...(description !== undefined ? { description } : {}),
+    ...(profiles && Object.keys(profiles).length ? { profiles } : {}),
     nodes: nodes.map((n) => ({
       id: n.id,
       type: n.data.type,
@@ -97,6 +98,9 @@ export function App() {
   const [showModels, setShowModels] = useState(false);
   const [modelsVia, setModelsVia] = useState<string | undefined>(undefined);
   const [paletteOpen, setPaletteOpen] = useState<string | null>(null); // item de paleta expandido
+  const [metrics, setMetrics] = useState<Record<string, NodeMetrics>>({}); // ao vivo (SSE do runner)
+  const [profiles, setProfiles] = useState<FlowProfiles>({}); // perfis de Run (W8) — persistem no flow JSON
+  const [stopWhenSourcesDone, setStopWhenSourcesDone] = useState(false); // flag do flow — preservada no save/run
   const rfWrap = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -118,6 +122,9 @@ export function App() {
         setNodes(n);
         setEdges(e);
         setCurrentDesc(f.description ?? '');
+        setProfiles(f.profiles ?? {});
+        setMetrics({});
+        setStopWhenSourcesDone(f.stopWhenSourcesDone === true);
       })
       .catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -198,21 +205,21 @@ export function App() {
   );
 
   const doSave = useCallback(async () => {
-    const flow = rfToFlow(nodes as FaladorNode[], edges, currentDesc);
+    const flow = rfToFlow(nodes as FaladorNode[], edges, currentDesc, profiles, stopWhenSourcesDone);
     await saveFlow(currentName, flow);
     fetchFlowList().then(setFlowList).catch(() => undefined);
     setEditingMeta(false);
-  }, [nodes, edges, currentName, currentDesc]);
+  }, [nodes, edges, currentName, currentDesc, profiles, stopWhenSourcesDone]);
 
   const doSaveAs = useCallback(async (newName: string, newDesc: string) => {
-    const flow = rfToFlow(nodes as FaladorNode[], edges, newDesc);
+    const flow = rfToFlow(nodes as FaladorNode[], edges, newDesc, profiles, stopWhenSourcesDone);
     // rename: servidor apaga o arquivo antigo quando renameFrom ≠ name
     await saveFlow(newName, flow, currentName !== newName ? currentName : undefined);
     fetchFlowList().then(setFlowList).catch(() => undefined);
     setCurrentName(newName);
     setCurrentDesc(newDesc);
     setEditingMeta(false);
-  }, [nodes, edges, currentName]);
+  }, [nodes, edges, currentName, profiles, stopWhenSourcesDone]);
 
   const doLoad = useCallback(async (name: string) => {
     const f = await fetchFlow(name);
@@ -221,7 +228,21 @@ export function App() {
     setEdges(e);
     setCurrentName(name);
     setCurrentDesc(f.description ?? '');
+    setProfiles(f.profiles ?? {});
+    setMetrics({});
+    setStopWhenSourcesDone(f.stopWhenSourcesDone === true);
   }, [catalog, setNodes, setEdges]);
+
+  // Perfil de Run (W8): fotografa os params ATUAIS de cada nó; aplicado como override só no Run.
+  const doSaveProfile = useCallback(async (name: string) => {
+    const snap: Record<string, Record<string, unknown>> = {};
+    for (const n of nodes) {
+      if (Object.keys(n.data.params ?? {}).length) snap[n.id] = { ...n.data.params };
+    }
+    const next = { ...profiles, [name]: snap };
+    setProfiles(next);
+    await saveFlow(currentName, rfToFlow(nodes as FaladorNode[], edges, currentDesc, next, stopWhenSourcesDone));
+  }, [nodes, edges, currentName, currentDesc, profiles, stopWhenSourcesDone]);
 
   const doRefreshModels = useCallback(() => {
     fetchModels().then((m) => {
@@ -241,7 +262,13 @@ export function App() {
 
   const selected = useMemo(() => nodes.find((n) => n.id === selectedId) as FaladorNode | undefined, [nodes, selectedId]);
 
-  const getFlow = useCallback(() => rfToFlow(nodes as FaladorNode[], edges), [nodes, edges]);
+  const getFlow = useCallback(() => rfToFlow(nodes as FaladorNode[], edges, undefined, profiles, stopWhenSourcesDone), [nodes, edges, profiles, stopWhenSourcesDone]);
+
+  // overlay de métricas ao vivo nos nós do canvas (não muta o estado do grafo nem o flow salvo)
+  const displayNodes = useMemo(
+    () => nodes.map((n) => (metrics[n.id] ? { ...n, data: { ...n.data, metrics: metrics[n.id] } } : n)),
+    [nodes, metrics],
+  );
 
   return (
     <div className="app">
@@ -350,7 +377,7 @@ export function App() {
         </aside>
         <div className="canvas-wrap" ref={rfWrap} onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
           <ReactFlow
-            nodes={nodes}
+            nodes={displayNodes}
             edges={edges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
@@ -367,13 +394,13 @@ export function App() {
         </div>
         <div className="mainbar">
           {selected ? (
-            <Inspector node={selected} onUpdate={(d) => updateNode(selected.id, d)} onDuplicate={() => duplicateNode(selected.id)} onDelete={() => deleteNode(selected.id)} availableModels={modelsInfo?.omlx} fetchViaParam={doFetchViaParam} modelsVia={modelsVia} />
+            <Inspector node={selected} onUpdate={(d) => updateNode(selected.id, d)} onDuplicate={() => duplicateNode(selected.id)} onDelete={() => deleteNode(selected.id)} availableModels={modelsInfo?.omlx} fetchViaParam={doFetchViaParam} modelsVia={modelsVia} metrics={metrics[selected.id]} />
           ) : (
             <div style={{ color: '#8d8d8d', fontSize: 13 }}>Selecione um nó para editar parâmetros, modelo (RECOMENDADO + "?"→GitHub) e enabled.</div>
           )}
         </div>
       </div>
-      <RunPanel flowGetter={getFlow} />
+      <RunPanel flowGetter={getFlow} profiles={profiles} onMetrics={setMetrics} onSaveProfile={(name) => void doSaveProfile(name)} />
     </div>
   );
 }

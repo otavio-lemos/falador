@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { MODEL_REGISTRY } from '../model-registry';
 import type { FaladorNode } from './FlowNode';
+import type { NodeMetrics } from '../api';
 
 // Params longos (prompt/instruções) ganham textarea em vez de input de 1 linha.
 const TEXTAREA_PARAMS = new Set(['system', 'prompt', 'instructions', 'text']);
@@ -88,7 +89,7 @@ function modelsForNode(nodeType: string, modelName: string, availableModels?: st
   return merged.sort((a, b) => (a.verified === b.verified ? 0 : a.verified ? -1 : 1));
 }
 
-export function Inspector({ node, onUpdate, onDuplicate, onDelete, availableModels, fetchViaParam, modelsVia }: {
+export function Inspector({ node, onUpdate, onDuplicate, onDelete, availableModels, fetchViaParam, modelsVia, metrics }: {
   node: FaladorNode;
   onUpdate: (d: Partial<FaladorNode['data']>) => void;
   onDuplicate: () => void;
@@ -96,6 +97,7 @@ export function Inspector({ node, onUpdate, onDuplicate, onDelete, availableMode
   availableModels?: string[]; // ids vindos do omlx /v1/models (botão ⟳ na toolbar)
   fetchViaParam?: (param: string) => void;
   modelsVia?: string;       // param sendo "via" — dispara o fetch λ no host
+  metrics?: NodeMetrics;    // métricas ao vivo do último run (snapshot do motor)
 }) {
   const { type, params, enabled } = node.data;
   const paramNames = node.data.paramNames ?? [];
@@ -259,6 +261,28 @@ export function Inspector({ node, onUpdate, onDuplicate, onDelete, availableMode
           </div>
         );
       })}
+
+      {metrics && (
+        <div style={{ marginTop: 8 }}>
+          <div className="section-title">Métricas do run</div>
+          <div style={{ fontSize: 11, color: '#c6c6c6', fontFamily: "'IBM Plex Mono', monospace" }}>
+            ↓{metrics.in} ↑{metrics.out} · erros {metrics.errors}
+            {metrics.procMsP50 != null && <> · proc p50 {Math.round(metrics.procMsP50)}ms / p95 {Math.round(metrics.procMsP95 ?? 0)}ms</>}
+            {metrics.dropped > 0 && <> · drops {metrics.dropped}</>}
+            {metrics.expired > 0 && <> · expiradas {metrics.expired}</>}
+          </div>
+          {Object.entries(metrics.timers).map(([k, t]) => (
+            <div key={k} style={{ fontSize: 11, color: '#78a9ff', fontFamily: "'IBM Plex Mono', monospace" }}>
+              {k}: último {Math.round(t.lastMs)}ms · méd {Math.round(t.avgMs)}ms · n={t.count}
+            </div>
+          ))}
+          {Object.entries(metrics.counters).map(([k, v]) => (
+            <div key={k} style={{ fontSize: 11, color: '#a8a8a8', fontFamily: "'IBM Plex Mono', monospace" }}>
+              {k}: {v}
+            </div>
+          ))}
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
         <button onClick={onDuplicate} style={{ flex: 1, background: '#393939', color: '#f4f4f4', border: '1px solid #525252', padding: 6, borderRadius: 4, cursor: 'pointer' }}>Duplicar</button>

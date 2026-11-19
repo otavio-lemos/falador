@@ -337,3 +337,51 @@ test('C8: V7 binding ausente = MISSING_BINDING; erro em start() vira node_error'
   assert.equal(ne.nodeId, 'bad');
   assert.equal(rg.snapshot().nodes.bad.errored, true, 'nó marcado como erroedo/isolado');
 });
+
+test('C9: ctx.metrics.counter/timer NOMEADOS chegam ao snapshot (fase 3 — antes eram no-op)', async () => {
+  const reg = baseRegistry().register({
+    type: 'pipe.metrics',
+    inputs: [{ name: 'in', type: 'phrase' }],
+    outputs: [{ name: 'out', type: 'phrase' }],
+    create: (ctx) => ({
+      async start() {},
+      async onInput(_port, msg) {
+        ctx.metrics.counter('pipe.metrics.msgs', 1);
+        ctx.metrics.counter('pipe.metrics.bytes', 10);
+        ctx.metrics.timer('pipe.metrics.workMs', 5);
+        ctx.metrics.timer('pipe.metrics.workMs', 15);
+        await ctx.emit('out', msg.payload);
+      },
+      async stop() {},
+    }),
+  });
+  const collected = { received: [] as Array<{ seq: number }> };
+  const rg = await runGraph(
+    {
+      version: 1,
+      stopWhenSourcesDone: true,
+      nodes: [
+        { id: 'src', type: 'source.tone', params: { count: 2 } },
+        { id: 'm', type: 'pipe.metrics', params: {} },
+        { id: 'snk', type: 'sink.collect' },
+      ],
+      edges: [
+        { from: 'src.out', to: 'm.in', capacity: 8, overflow: 'block' },
+        { from: 'm.out', to: 'snk.phrase', capacity: 8, overflow: 'block' },
+      ],
+      bindings: { snk: { __collect: collected } },
+    },
+    reg,
+  );
+  await rg.done;
+  const nm = rg.snapshot().nodes.m;
+  assert.equal(nm.counters['pipe.metrics.msgs'], 2, 'counter acumula por chamada');
+  assert.equal(nm.counters['pipe.metrics.bytes'], 20, 'delta respeitado');
+  const t = nm.timers['pipe.metrics.workMs'];
+  assert.equal(t.count, 4, '2 msgs × 2 timers');
+  assert.equal(t.lastMs, 15);
+  assert.equal(t.avgMs, 10);
+  assert.equal(t.minMs, 5);
+  assert.equal(t.maxMs, 15);
+  assert.deepEqual(rg.snapshot().nodes.src.counters, {}, 'nó que não chama metrics fica vazio');
+});

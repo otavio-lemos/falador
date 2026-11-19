@@ -1,6 +1,7 @@
 // RunPanel — executa o fluxo atual via host (SSE do runner NDJSON), legenda ao vivo.
+// Perfis de Run (W8): override de params por nó aplicado SÓ na execução; o grafo não muda.
 import { useCallback, useRef, useState } from 'react';
-import { gateAction, openRun, stopRun, type Flow, type RunnerEvent } from '../api';
+import { gateAction, openRun, stopRun, type Flow, type FlowProfiles, type NodeMetrics, type RunSnapshot, type RunnerEvent } from '../api';
 
 interface Line {
   t: number;
@@ -8,12 +9,18 @@ interface Line {
   kind: 'ev' | 'err';
 }
 
-export function RunPanel({ flowGetter }: { flowGetter: () => Flow }) {
+export function RunPanel({ flowGetter, profiles, onMetrics, onSaveProfile }: {
+  flowGetter: () => Flow;
+  profiles: FlowProfiles;
+  onMetrics: (m: Record<string, NodeMetrics>) => void;
+  onSaveProfile: (name: string) => void;
+}) {
   const [running, setRunning] = useState(false);
   const [lines, setLines] = useState<Line[]>([]);
   const [caption, setCaption] = useState('');
   const [pending, setPending] = useState<{ nodeId: string; text: string } | null>(null);
   const [edited, setEdited] = useState('');
+  const [profile, setProfile] = useState('');
   const ctlRef = useRef<AbortController | null>(null);
 
   const push = useCallback((text: string, kind: Line['kind'] = 'ev') => {
@@ -22,6 +29,9 @@ export function RunPanel({ flowGetter }: { flowGetter: () => Flow }) {
 
   const onStart = useCallback(() => {
     const flow = flowGetter();
+    const ov = profile ? profiles[profile] : undefined;
+    if (ov) flow.nodes = flow.nodes.map((n) => (ov[n.id] ? { ...n, params: { ...n.params, ...ov[n.id] } } : n));
+    onMetrics({});
     setLines([]);
     setCaption('');
     let lastParcial = '';
@@ -29,6 +39,14 @@ export function RunPanel({ flowGetter }: { flowGetter: () => Flow }) {
     ctlRef.current = openRun(
       flow,
       (ev: RunnerEvent) => {
+        if (ev.type === 'metrics') {
+          onMetrics((ev as unknown as { snapshot: RunSnapshot }).snapshot.nodes);
+          return;
+        }
+        if (ev.type === 'summary') {
+          const m = (ev as unknown as { summary?: { metrics?: RunSnapshot } }).summary?.metrics;
+          if (m) onMetrics(m.nodes);
+        }
         if (ev.type === 'gate') {
           const g = ev as { type: 'gate'; nodeId: string; text: string };
           setPending({ nodeId: g.nodeId, text: g.text });
@@ -69,11 +87,34 @@ export function RunPanel({ flowGetter }: { flowGetter: () => Flow }) {
         push('— run started —');
       }
     );
-  }, [flowGetter, push]);
+  }, [flowGetter, push, profile, profiles, onMetrics]);
 
   return (
     <div>
       <div className="section-title">Run</div>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 8, alignItems: 'center' }}>
+        <select
+          value={profile}
+          onChange={(e) => setProfile(e.target.value)}
+          title="Perfil de Run (W8): overrides de params por nó, aplicados só na execução — o grafo salvo não muda"
+          style={{ flex: 1, background: '#262626', color: '#f4f4f4', border: '1px solid #393939', padding: '4px 6px', borderRadius: 4 }}
+        >
+          <option value="">perfil: (padrão do grafo)</option>
+          {Object.keys(profiles).map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </select>
+        <button
+          onClick={() => {
+            const name = window.prompt('Nome do perfil — fotografa os params atuais de todos os nós:');
+            if (name?.trim()) onSaveProfile(name.trim());
+          }}
+          title="Salvar os params atuais como perfil de Run (persiste no flow JSON)"
+          style={{ background: '#393939', color: '#f4f4f4', border: '1px solid #525252', padding: '4px 8px', borderRadius: 4, cursor: 'pointer' }}
+        >
+          ✚
+        </button>
+      </div>
       <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
         <button
           onClick={onStart}

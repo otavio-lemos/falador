@@ -125,6 +125,9 @@ async function main() {
     line({ type: 'flow_invalid', error: String(err?.message ?? err) });
     process.exit(1);
   }
+  // fase 3: métricas por nó AO VIVO (1 Hz) — o snapshot final também vai no summary.
+  const metricsTimer = setInterval(() => line({ type: 'metrics', snapshot: rg.snapshot() }), 1000);
+  metricsTimer.unref?.();
   if (runSeconds > 0) {
     setTimeout(() => { rejectPendingGates(); void rg.stop(`run-seconds ${runSeconds}`); }, runSeconds * 1000).unref?.();
   }
@@ -134,6 +137,7 @@ async function main() {
     } catch { /* stop encerra o iterador */ }
   })();
   const summary = await rg.done.catch((e) => ({ error: String(e?.message ?? e) }));
+  clearInterval(metricsTimer);
   const results = {};
   for (const [id, holder] of collected) {
     results[id] = holder.received
@@ -141,7 +145,7 @@ async function main() {
       .filter((p) => p !== undefined)
       .map((p) => (p instanceof Uint8Array ? `<bytes:${p.byteLength}>` : truncate(p)));
   }
-  line({ type: 'summary', summary: { stopped: summary?.stopped ?? true }, results });
+  line({ type: 'summary', summary: { stopped: summary?.stopped ?? true, metrics: rg.snapshot() }, results });
 }
 
 function truncate(p) {

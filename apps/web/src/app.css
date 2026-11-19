@@ -15,6 +15,7 @@ html, body, #root { height: 100%; margin: 0; }
 .fnode-port.out { justify-content: flex-end; }
 .fnode-handles { position: relative; }
 .badge-rec { background: #42be65; color: #161616; font-weight: 600; border-radius: 3px; padding: 0 4px; font-size: 10px; }
+.fnode-metrics { display: flex; gap: 6px; padding: 4px 8px; border-top: 1px solid #393939; font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #78a9ff; }
 .runlog { background: #161616; border: 1px solid #393939; padding: 8px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow-y: auto; }
 .live-caption { background: #002d9c; border-radius: 4px; padding: 10px; font-size: 14px; min-height: 44px; line-height: 1.45; }
 .toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid #393939; }

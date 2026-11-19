@@ -42,6 +42,8 @@ interface NodeMetricsInternal {
   out: number;
   errors: number;
   proc: number[];
+  counters: Record<string, number>;
+  timers: Record<string, { count: number; sum: number; last: number; min: number; max: number }>;
 }
 
 function percentile(sorted: number[], p: number): number | null {
@@ -130,8 +132,19 @@ export class RunningGraph {
       bindings: vn.bindings,
       signal: self.abort.signal,
       metrics: {
-        counter: () => {}, // 'out' é contado pelo emit do motor; hooks futuros por porta
-        timer: () => {},
+        // 'in/out' são contados pelo motor; aqui vão os contadores/timers NOMEADOS dos nós
+        // (llm.omlx.ttftMs, tts.sts.ms, decision.llm.<opção>…) — agregados no snapshot().
+        counter: (name, delta = 1) => {
+          state.metrics.counters[name] = (state.metrics.counters[name] ?? 0) + delta;
+        },
+        timer: (name, ms) => {
+          const t = (state.metrics.timers[name] ??= { count: 0, sum: 0, last: 0, min: Infinity, max: -Infinity });
+          t.count++;
+          t.sum += ms;
+          t.last = ms;
+          if (ms < t.min) t.min = ms;
+          if (ms > t.max) t.max = ms;
+        },
       },
       log: (level, msg) => {
         self.emitEvent({ type: 'node_error', nodeId: vn.id, code: `log_${level}`, message: msg });
@@ -203,7 +216,7 @@ export class RunningGraph {
         id,
         runtime: null as unknown as NodeRuntime,
         ctx: null as unknown as NodeCtx,
-        metrics: { in: 0, out: 0, errors: 0, proc: [] },
+        metrics: { in: 0, out: 0, errors: 0, proc: [], counters: {}, timers: {} },
         errored: false,
         started: false,
         startPromise: null,
@@ -386,6 +399,13 @@ export class RunningGraph {
         errors: st.metrics.errors,
         procMsP50: percentile(sorted, 50),
         procMsP95: percentile(sorted, 95),
+        counters: { ...st.metrics.counters },
+        timers: Object.fromEntries(
+          Object.entries(st.metrics.timers).map(([k, t]) => [
+            k,
+            { count: t.count, lastMs: t.last, avgMs: t.sum / t.count, minMs: t.min, maxMs: t.max },
+          ]),
+        ),
       };
     }
     for (const { e, q } of this.edges.values()) {
