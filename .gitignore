@@ -9,3 +9,6 @@ __pycache__/
 apps/tui/flows/.web-run.tmp.json
 .venv
 services/capture-sck
+
+# artefatos de build da UI
+apps/web/dist/
