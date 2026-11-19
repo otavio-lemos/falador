@@ -50,6 +50,7 @@ App local (macOS, Apple Silicon M4 Pro 48 GB) que traduz conversas de conferênc
 | TTFT omlx solo / 2 concorrentes | 30 / 60 ms (p50, warm) |
 | Carga fria de modelo | 1,5–1,8 s → **serviços residentes obrigatórios** |
 | Captura BlackHole (G1) | max_volume −1,8 dB; laço sistema→ASR provado com mídia real |
+| G3b: streaming vs offline (mesmo modelo/áudio) | texto IDÊNTICO (WER 0 EN e 0,087 PT nos DOIS caminhos — erros são do TTS de referência); 1º delta ~1,1 s; `completed` < duração do áudio (7,8 s < 8,5 s) |
 
 **Armadilhas descobertas na prática:**
 - LFM3-1.7B pensa por padrão → usar `enable_thinking: false` (`chat_template_kwargs`) — descoberto porque o `content` vinha vazio e só saía `reasoning_content`.
@@ -77,7 +78,7 @@ App local (macOS, Apple Silicon M4 Pro 48 GB) que traduz conversas de conferênc
 - F0 **FECHADA** (2026-11-18): G1 PASS · G2 PASS · G3 PASS-COM-MODIFICAÇÃO — detalhes em `docs/adr/research/F0-resultados.md`.
 - Servidor omlx no ar: porta 8080, modelo LFM3-1.7B-MLX-4bit (processo de fundo da sessão).
 - Pendente menor do G1: confirmar com o usuário se ouviu a frase `afplay` durante a captura (não foi transcrita — possível corrida; midia real provou o laço).
-- G3b pendente: qualidade do decode incremental (janelas vs decode completo).
+- ~~G3b pendente~~ → FEITO 2026-11-19 (ver §7 e `docs/adr/research/G3b-resultados.md`).
 - **Motor `falador-graph` IMPLEMENTADO (2026-11-18, ordem "vai até o fim")**:
   - Spec v1.1 em `docs/adr/spec-falador-graph.md` — passou por 3 revisões adversariais (salvas em `docs/adr/reviews/spec-rev-{tempo,api,validacao}.md`); achados principais: emit async (backpressure `block` real), cancel por seq com escopo de PORTA, ciclo de vida de start(), validação V0–V7 endurecida.
   - Código em `packages/falador-graph/` (Node 26, type-stripping nativo, **zero dependencies**): types/queue/spec/registry/runtime + nós sintéticos.
@@ -101,10 +102,11 @@ App local (macOS, Apple Silicon M4 Pro 48 GB) que traduz conversas de conferênc
 
 1. ~~Especificação do motor `falador-graph`~~ → **FEITO**: spec v1.1 + 3 revisões adversariais + implementação com 8/8 testes verdes (2026-11-18).
 2. ~~Adaptadores de nós reais~~ → **FEITO (r2-r5, 2026-11-19)**: `llm.omlx`, `tts.sts`, `asr.realtime`, `capture.ffmpeg`, `sink.captions`, `sink.playback` — **7/7 testes verdes, inclusive ASR ao vivo (N6) e mic real com sinal (N7, `FALADOR_MIC_TEST=1`)**.
-3. G3b (qualidade do decode incremental) antes de fechar o formato da porta de áudio (`audio_chunk`).
+3. ~~G3b (qualidade do decode incremental)~~ → **FEITO (2026-11-19)**: streaming == offline em qualidade (EN WER 0; PT WER 0,087 idêntico nos dois) — `docs/adr/research/G3b-resultados.md`; formato `audio_chunk` FECHADO.
 4. ~~TUI Textual (r4) fase 1~~ → **FEITO (2026-11-19)**: `apps/tui/falador_tui.py` (Textual 8.2.8): DataTable de nós com toggle `enabled` (persistido no flow JSON), paleta do catálogo, reorder ↑↓, run com eventos NDJSON ao vivo; **runner headless `packages/falador-cli/run-flow.mjs`** (`--catalog` JSON + eventos NDJSON + summary com payloads truncados, binding automático para sink.collect). Smoke headless: `apps/tui/smoke.py` (textual pilot) — VERDE. Fluxos: `apps/tui/flows/demo-engine.json` (sintético) e `demo-live.json` (omlx+sidecar, e2e OK). canvas de nós = fase web.
 5. **UI web fase 2**: React Flow + componentes Carbon in-node; registro de modelos (dropdown local + badge RECOMENDADO + "?"→GitHub); perfis de execução no Run. O runner NDJSON (`falador-cli`) é o host que a web vai usar.
 6. Limpar server-dbg (:8092) e scripts de debug em /tmp — **FEITO (2026-11-19)**: processo parado, arquivos removidos.
+7. **Git**: repositório INICIALIZADO (2026-11-19, commit inicial `62e948c` com 44 arquivos); a cada conquista, commit.
 
 ## 8. Protocolo de atualização deste arquivo
 
