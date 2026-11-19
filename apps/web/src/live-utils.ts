@@ -52,6 +52,9 @@ export function classifySinks(flow: Flow): { transcription: Set<string>; suggest
 
 export function shortModel(id: string): string {
   if (!id) return '—';
+  // path do cache HF: .../models--org--nome/snapshots/hash → org/nome (legível)
+  const m = id.match(/models--([^/]+)/);
+  if (m) return m[1].replace(/--/g, '/');
   const base = id.split('/').pop() ?? id;
   return base.replace(/^models--/, '').replace(/--/g, '/');
 }
