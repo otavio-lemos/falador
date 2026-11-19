@@ -7,8 +7,9 @@
       "id": "pipasist",
       "type": "capture.ffmpeg",
       "params": {
-        "input": ":0",
-        "chunkMs": 80
+        "input": "BlackHole",
+        "chunkMs": 80,
+        "backend": "sounddevice"
       }
     },
     {

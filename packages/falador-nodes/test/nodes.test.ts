@@ -463,7 +463,7 @@ test('N10: asr.lfm3 tradução nativa EN→PT ao vivo dentro do engine', async (
   );
 });
 
-test('N7: capture.ffmpeg — mic real produz frames pcm16k contínuos (avfoundation)', { skip: !N7_UP }, async () => {
+test('N7: capture.ffmpeg backend sounddevice — mic real produz frames pcm16k contínuos', { skip: !N7_UP }, async () => {
   const collected = { received: [] as Array<{ payload: unknown }> };
   const counter: NodeTypeDef = {
     type: 'contador.pcm',
@@ -482,7 +482,7 @@ test('N7: capture.ffmpeg — mic real produz frames pcm16k contínuos (avfoundat
   const registry = createRegistry().register(captureFfmpeg).register(counter);
   const flow: FlowSpec = {
     version: 1,
-    nodes: [{ id: 'mic', type: 'capture.ffmpeg', params: { input: ':1', chunkMs: 80 } }, { id: 'cnt', type: 'contador.pcm' }],
+    nodes: [{ id: 'mic', type: 'capture.ffmpeg', params: { input: 'Microfone', backend: 'sounddevice', chunkMs: 80 } }, { id: 'cnt', type: 'contador.pcm' }],
     edges: [{ from: 'mic.out', to: 'cnt.in', capacity: 256, overflow: 'drop_oldest' }],
   };
   const rg = await runGraph(flow, registry, { stopWhenSourcesDone: false });

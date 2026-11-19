@@ -155,8 +155,9 @@ cd apps/tui && ../../.venv/bin/python smoke.py   # TUI (Textual) smoke
 
 ## 6. Entrada de áudio (BlackHole)
 
-- Saída do sistema deve ser o **"Dispositivo com Saída Múltipla"** (Alto-falantes + BlackHole, clock = Alto-falantes) — configurado no Audio MIDI Setup (provado com mídia real, AGENTS.md §2/§4). **ATENÇÃO (2026-11-19): o output default driftou p/ "Alto-falantes (MacBook Pro)"** — Multi-Output existe mas está só como "Default System Output"; assim o BlackHole fica mudo e a captura não recebe a conferência. Restaurar em Ajustes → Som → Saída (ou Audio MIDI Setup). Conferir: `system_profiler SPAudioDataType | grep -B1 "Default Output Device: Yes"`.
+- Saída do sistema deve ser o **"Dispositivo com Saída Múltipla"** (Alto-falantes + BlackHole, clock = Alto-falantes) — configurado no Audio MIDI Setup (provado com mídia real, AGENTS.md §2/§4). **Restaurado pelo dono em 2026-11-19** (havia driftado p/ Alto-falantes; E2E dos cenários 1+2 passou depois disso). Routing drifta com updates/mudanças de device — reconferir no início de cada sessão de áudio: `system_profiler SPAudioDataType | grep -B1 "Default Output Device: Yes"`.
 - Índice AVFoundation em uso: **`:0` = BlackHole 2ch**, `:1` = mic MBP. Para conferir os índices atuais: `ffmpeg -f avfoundation -list_devices true -i ""`.
+- **Captura: backend `sounddevice` (PortAudio) é o confiável** — ffmpeg 9.0.2 avfoundation perde ~75% dos samples nesta máquina (AGENTS §4). Os flows já usam `backend: 'sounddevice'` + `input: 'BlackHole'` (nome; índices PortAudio ≠ avfoundation). O nó spawn `services/capture-sidecar.py` com o `.venv` do repo (sounddevice+numpy). Mic: `input: 'Microfone'`.
 - Cenário 2 em call real: o áudio do entrevistador entra pelo BlackHole (laço do sistema), igual ao Cenário 1.
 
 ---

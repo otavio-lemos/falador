@@ -1,32 +1,45 @@
-// falador-nodes — capture.ffmpeg: fonte de áudio real via avfoundation (macOS), PCM16 mono 16k.
+// falador-nodes — capture.ffmpeg: fonte de áudio real (macOS), PCM16 mono 16k.
 // SAÍDA: out (pcm16k) chunks crus de N ms (default 80 ms ⇒ 2560 bytes @16k).
 //
-// Seleção do dispositivo: params.input é o spec do avfoundation SEM vídeo, ex.:
-//   ':0'  → primeiro dispositivo de áudio do sistema (built-in mic, geralmente)
-//   ':1'  → segundo dispositivo de áudio (BlackHole costuma ser índice alto)
-// Liste com: ffmpeg -f avfoundation -list_devices true -i ""
-//   (linha "AVFoundation audio device ... [N]")
+// Backends (params.backend):
+//   'ffmpeg' (default histórico): avfoundation, input ':N' (índice de ÁUDIO do
+//     ffmpeg — liste com `ffmpeg -f avfoundation -list_devices true -i ""`).
+//     ⚠ ffmpeg 9.0.2/macOS 27 perde ~75% dos samples (medido 2026-11-19, AGENTS §4).
+//   'sounddevice': services/capture-sidecar.py (PortAudio) — captura 100%.
+//     input = NOME do device (substring, ex. 'BlackHole', 'Microfone') ou índice
+//     PortAudio de entrada (≠ índice avfoundation!). Requer .venv com sounddevice.
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { NodeCtx, NodeRuntime, NodeTypeDef } from '../../falador-graph/src/index.ts';
+
+// defaults de caminho ancorados NO REPO (não no cwd do runner — testes rodam de
+// packages/falador-nodes, o host da raiz; ambos precisam achar o sidecar).
+const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
 export const captureFfmpeg: NodeTypeDef = {
   type: 'capture.ffmpeg',
   sourceOnly: true,
-  paramNames: ['input', 'sampleRate', 'chunkMs', 'ffmpegPath'],
+  paramNames: ['input', 'sampleRate', 'chunkMs', 'ffmpegPath', 'backend', 'pythonPath', 'sidecarPath'],
   inputs: [],
   outputs: [{ name: 'out', type: 'pcm16k' }],
   validateParams: (p) => {
     const errs: { path: string; code: string; message: string }[] = [];
     if (p.input !== undefined && typeof p.input !== 'string') {
-      errs.push({ path: 'params.input', code: 'INVALID_PARAM', message: 'input deve ser string (ex. ":0")' });
+      errs.push({ path: 'params.input', code: 'INVALID_PARAM', message: 'input deve ser string (ex. ":0" ffmpeg, "BlackHole" sounddevice)' });
     }
     for (const k of ['sampleRate', 'chunkMs'] as const) {
       if (p[k] !== undefined && (typeof p[k] !== 'number' || p[k] <= 0)) {
         errs.push({ path: `params.${k}`, code: 'INVALID_PARAM', message: `${k} deve ser número > 0` });
       }
     }
-    if (p.ffmpegPath !== undefined && typeof p.ffmpegPath !== 'string') {
-      errs.push({ path: 'params.ffmpegPath', code: 'INVALID_PARAM', message: 'ffmpegPath deve ser string' });
+    for (const k of ['ffmpegPath', 'pythonPath', 'sidecarPath'] as const) {
+      if (p[k] !== undefined && typeof p[k] !== 'string') {
+        errs.push({ path: `params.${k}`, code: 'INVALID_PARAM', message: `${k} deve ser string` });
+      }
+    }
+    if (p.backend !== undefined && p.backend !== 'ffmpeg' && p.backend !== 'sounddevice') {
+      errs.push({ path: 'params.backend', code: 'INVALID_PARAM', message: "backend deve ser 'ffmpeg' ou 'sounddevice'" });
     }
     return errs;
   },
@@ -35,6 +48,9 @@ export const captureFfmpeg: NodeTypeDef = {
     const sampleRate = (ctx.params.sampleRate as number | undefined) ?? 16000;
     const chunkMs = (ctx.params.chunkMs as number | undefined) ?? 80;
     const ffmpegPath = (ctx.params.ffmpegPath as string | undefined) ?? '/opt/homebrew/bin/ffmpeg';
+    const backend = (ctx.params.backend as string | undefined) ?? 'ffmpeg';
+    const pythonPath = (ctx.params.pythonPath as string | undefined) ?? join(REPO_ROOT, '.venv/bin/python');
+    const sidecarPath = (ctx.params.sidecarPath as string | undefined) ?? join(REPO_ROOT, 'services/capture-sidecar.py');
 
     const bytesPerChunk = Math.round((sampleRate * chunkMs) / 1000) * 2; // s16le mono
     let child: ChildProcessWithoutNullStreams | null = null;
@@ -43,22 +59,27 @@ export const captureFfmpeg: NodeTypeDef = {
 
     return {
       async start() {
-        const args = [
-          '-f', 'avfoundation',
-          '-i', input,
-          '-vn',                      // ignore o vídeo do dispositivo
-          '-f', 's16le',
-          '-acodec', 'pcm_s16le',
-          '-ac', '1',
-          '-ar', String(sampleRate),
-          '-loglevel', 'error',
-          'pipe:1',
-        ];
+        // sounddevice: PortAudio via sidecar Python (ffmpeg 9.0.2 perde ~75% dos
+        // samples nesta máquina — AGENTS §4). Mesmo contrato: stdout = PCM cru.
+        const args = backend === 'sounddevice'
+          ? [sidecarPath, '--device', input.replace(/^:/, ''), '--rate', String(sampleRate), '--chunk-ms', String(chunkMs)]
+          : [
+            '-f', 'avfoundation',
+            '-i', input,
+            '-vn',                      // ignore o vídeo do dispositivo
+            '-f', 's16le',
+            '-acodec', 'pcm_s16le',
+            '-ac', '1',
+            '-ar', String(sampleRate),
+            '-loglevel', 'error',
+            'pipe:1',
+          ];
+        const cmd = backend === 'sounddevice' ? pythonPath : ffmpegPath;
         await new Promise<void>((resolve, reject) => {
-          child = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+          child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
           child.stderr.on('data', (d: Buffer) => {
             const s = d.toString().trim();
-            if (s) ctx.log('warn', `ffmpeg: ${s.slice(0, 300)}`);
+            if (s) ctx.log('warn', `capture: ${s.slice(0, 300)}`);
           });
           child.on('error', reject);
           child.on('spawn', () => resolve());

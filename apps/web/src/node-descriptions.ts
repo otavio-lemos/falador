@@ -1,7 +1,7 @@
 // Descrições PT dos nós — honestas, baseadas nos fatos medidos (AGENTS.md §4).
 export const NODE_DESCRIPTIONS: Record<string, string> = {
   'capture.ffmpeg':
-    'CAPTURA de áudio. pega o som do sistema (BlackHole :0 = o que você ouve na call) ou do mic (:1). Emite frames brutos de audio (s16le).',
+    'CAPTURA de áudio. Pega o som do sistema (BlackHole = o que você ouve na call) ou do mic. Emite frames brutos de audio (s16le). backend sounddevice (PortAudio, recomendado — ffmpeg 9 perde samples) ou ffmpeg; input = nome do device (sounddevice) ou :N (ffmpeg).',
   'asr.realtime':
     'TRANSCRIÇÃO em STREAMING (WS /v1/realtime do server mlx-audio, Voxtral). Texto vai saindo palavra a palavra. NÃO traduz — lang do audio é detectada, texto sai no idioma falado.',
   'asr.lfm3':

@@ -7,3 +7,4 @@ __pycache__/
 *.log
 .omlx/
 apps/tui/flows/.web-run.tmp.json
+.venv
