@@ -1,6 +1,8 @@
-// FlowNode — representação visual de um nó do catálogo no canvas.
+// FlowNode — representação visual de um nó do catálogo no canvas (React Flow, ADR-003).
+// Classes tokenizadas Carbon (index.scss); sem inline styles.
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
-import type { CatalogEntry, NodeMetrics } from '../api';
+import { Tag } from '@carbon/react';
+import type { NodeMetrics } from '../api';
 
 export type FaladorNodeData = {
   type: string;
@@ -23,30 +25,28 @@ export function FlowNode({ data, selected }: NodeProps<FaladorNode>) {
       <div className="fnode-head">
         <span>{data.type}</span>
         {!data.enabled && (
-          <span className="badge-rec" style={{ background: '#da1e28', color: '#fff' }}>
-            OFF
-          </span>
+          <Tag type="red" size="sm">OFF</Tag>
         )}
       </div>
       {(data.inputs ?? []).map((p) => (
-        <Handle key={`in-${p.name}`} id={p.name} type="target" position={Position.Left} style={{ top: 12 }} />
+        <Handle key={`in-${p.name}`} id={p.name} type="target" position={Position.Left} className="fnode-handle" />
       ))}
       {(data.outputs ?? []).map((p) => (
-        <Handle key={`out-${p.name}`} id={p.name} type="source" position={Position.Right} style={{ top: 12 }} />
+        <Handle key={`out-${p.name}`} id={p.name} type="source" position={Position.Right} className="fnode-handle" />
       ))}
       <div className="fnode-ports">
         {(data.inputs ?? []).map((p) => (
           <div key={p.name} className="fnode-port">
             <span className="dot" />
             <span>
-              {p.name} <span style={{ opacity: 0.6 }}>· {p.type}</span>
+              {p.name} <span className="fnode-port-type">· {p.type}</span>
             </span>
           </div>
         ))}
         {(data.outputs ?? []).map((p) => (
           <div key={p.name} className="fnode-port out">
             <span>
-              <span style={{ opacity: 0.6 }}>{p.type} · </span>
+              <span className="fnode-port-type">{p.type} · </span>
               {p.name}
             </span>
             <span className="dot" />
@@ -54,13 +54,13 @@ export function FlowNode({ data, selected }: NodeProps<FaladorNode>) {
         ))}
       </div>
       {paramCount > 0 && (
-        <div style={{ padding: '0 8px 6px', color: '#8d8d8d', fontSize: 11 }}>{paramCount} param(s)</div>
+        <div className="fnode-paramcount">{paramCount} param(s)</div>
       )}
       {data.metrics && (
         <div className="fnode-metrics">
           <span>↓{data.metrics.in} ↑{data.metrics.out}</span>
           {data.metrics.procMsP50 != null && <span>· {Math.round(data.metrics.procMsP50)}ms</span>}
-          {data.metrics.errors > 0 && <span style={{ color: '#ff8389' }}>⚠{data.metrics.errors}</span>}
+          {data.metrics.errors > 0 && <span className="fnode-metrics-err">⚠{data.metrics.errors}</span>}
         </div>
       )}
     </div>

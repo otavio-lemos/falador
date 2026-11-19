@@ -1,6 +1,9 @@
 // RunPanel — executa o fluxo atual via host (SSE do runner NDJSON), legenda ao vivo.
 // Perfis de Run (W8): override de params por nó aplicado SÓ na execução; o grafo não muda.
+// Camada visual Carbon v11; lógica de run/gate/captions preservada 1:1.
 import { useCallback, useRef, useState } from 'react';
+import { Button, Dropdown, IconButton, TextArea, ToastNotification } from '@carbon/react';
+import { Add, PlayFilled, StopFilled } from '@carbon/icons-react';
 import { gateAction, openRun, stopRun, type Flow, type FlowProfiles, type NodeMetrics, type RunSnapshot, type RunnerEvent } from '../api';
 
 interface Line {
@@ -8,6 +11,8 @@ interface Line {
   text: string;
   kind: 'ev' | 'err';
 }
+
+const DEFAULT_PROFILE = '';
 
 export function RunPanel({ flowGetter, profiles, onMetrics, onSaveProfile }: {
   flowGetter: () => Flow;
@@ -22,6 +27,7 @@ export function RunPanel({ flowGetter, profiles, onMetrics, onSaveProfile }: {
   const [edited, setEdited] = useState('');
   const [suggestion, setSuggestion] = useState(''); // sugestão do LLM (fixa até a próxima)
   const [profile, setProfile] = useState('');
+  const [runToast, setRunToast] = useState<string | null>(null); // erro de run → ToastNotification
   const ctlRef = useRef<AbortController | null>(null);
   const transcriptIds = useRef<Set<string>>(new Set()); // sinks de legenda ligados direto ao ASR
 
@@ -92,6 +98,8 @@ export function RunPanel({ flowGetter, profiles, onMetrics, onSaveProfile }: {
       (code) => {
         setRunning(false);
         push(`— run terminou (code ${code}) —`);
+        // null = SIGKILL normal do host após o summary; -1 = stream morreu sem 'ended'
+        if (typeof code === 'number' && code !== 0) setRunToast(`o run terminou com code ${code} — veja o log abaixo`);
       },
       () => {
         setRunning(true);
@@ -100,96 +108,99 @@ export function RunPanel({ flowGetter, profiles, onMetrics, onSaveProfile }: {
     );
   }, [flowGetter, push, profile, profiles, onMetrics]);
 
+  const profileItems = [DEFAULT_PROFILE, ...Object.keys(profiles)];
+
   return (
     <div>
       <div className="section-title">Run</div>
-      <div style={{ display: 'flex', gap: 6, marginBottom: 8, alignItems: 'center' }}>
-        <select
-          value={profile}
-          onChange={(e) => setProfile(e.target.value)}
-          title="Perfil de Run (W8): overrides de params por nó, aplicados só na execução — o grafo salvo não muda"
-          style={{ flex: 1, background: '#262626', color: '#f4f4f4', border: '1px solid #393939', padding: '4px 6px', borderRadius: 4 }}
-        >
-          <option value="">perfil: (padrão do grafo)</option>
-          {Object.keys(profiles).map((name) => (
-            <option key={name} value={name}>{name}</option>
-          ))}
-        </select>
-        <button
+      <div className="run-controls">
+        <div className="run-profile" title="Perfil de Run (W8): overrides de params por nó, aplicados só na execução — o grafo salvo não muda">
+          <Dropdown
+            id="run-profile"
+            size="sm"
+            titleText="Perfil de Run (W8)"
+            hideLabel
+            label="perfil de Run"
+            items={profileItems}
+            itemToString={(name) => (name ? name : 'perfil: (padrão do grafo)')}
+            selectedItem={profile}
+            onChange={({ selectedItem }) => setProfile(selectedItem ?? '')}
+          />
+        </div>
+        <IconButton
+          kind="ghost"
+          size="sm"
+          label="Salvar os params atuais como perfil de Run (persiste no flow JSON)"
           onClick={() => {
             const name = window.prompt('Nome do perfil — fotografa os params atuais de todos os nós:');
             if (name?.trim()) onSaveProfile(name.trim());
           }}
-          title="Salvar os params atuais como perfil de Run (persiste no flow JSON)"
-          style={{ background: '#393939', color: '#f4f4f4', border: '1px solid #525252', padding: '4px 8px', borderRadius: 4, cursor: 'pointer' }}
         >
-          ✚
-        </button>
+          <Add size={16} />
+        </IconButton>
       </div>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-        <button
-          onClick={onStart}
-          disabled={running}
-          style={{ flex: 1, background: '#24a148', color: '#161616', border: 'none', padding: 8, borderRadius: 4, fontWeight: 600, cursor: running ? 'default' : 'pointer', opacity: running ? 0.5 : 1 }}
-        >
-          ▶ Capturar
-        </button>
-        <button
-          onClick={() => stopRun()}
-          disabled={!running}
-          style={{ flex: 1, background: '#da1e28', color: '#fff', border: 'none', padding: 8, borderRadius: 4, fontWeight: 600, cursor: running ? 'pointer' : 'default', opacity: running ? 1 : 0.5 }}
-        >
-          ■ Parar
-        </button>
+      <div className="run-buttons">
+        <Button kind="primary" size="md" renderIcon={PlayFilled} onClick={onStart} disabled={running}>
+          Capturar
+        </Button>
+        <Button kind="danger" size="md" renderIcon={StopFilled} onClick={() => stopRun()} disabled={!running}>
+          Parar
+        </Button>
       </div>
-      <div className="live-caption">{caption || <span style={{ opacity: 0.6 }}>legenda ao vivo…</span>}</div>
+      <div className="live-caption">{caption || <span className="live-caption-empty">legenda ao vivo…</span>}</div>
       {suggestion && (
-        <div style={{ marginTop: 8, border: '1px solid #24a148', borderRadius: 6, padding: 10, background: '#1a2e1a' }}>
-          <div className="section-title" style={{ marginTop: 0 }}>💡 Sugestão — leia e responda com suas palavras</div>
-          <div style={{ fontSize: 14, lineHeight: 1.45 }}>{suggestion}</div>
+        <div className="suggestion-box">
+          <div className="section-title">💡 Sugestão — leia e responda com suas palavras</div>
+          <div className="suggestion-text">{suggestion}</div>
         </div>
       )}
       {pending && (
-        <div style={{ marginTop: 10, border: '1px solid #4589ff', borderRadius: 6, padding: 10, background: '#1e2933' }}>
-          <div className="section-title" style={{ marginTop: 0 }}>
+        <div className="gate-box">
+          <div className="section-title">
             ✍️ Sugestão do LLM — edite e aprove
           </div>
-          <textarea
+          <TextArea
+            id="gate-text"
+            labelText="Sugestão do LLM (editável)"
+            hideLabel
+            rows={4}
             value={edited}
             onChange={(e) => setEdited(e.target.value)}
-            rows={4}
-            style={{ width: '100%', boxSizing: 'border-box', background: '#262626', color: '#f4f4f4', border: '1px solid #525252', borderRadius: 4, padding: 6, fontSize: 13 }}
           />
-          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-            <button
+          <div className="gate-actions">
+            <Button
+              kind="primary"
+              size="md"
               onClick={() => {
                 gateAction(pending.nodeId, edited);
                 setPending(null);
               }}
-              style={{ flex: 1, background: '#24a148', color: '#161616', border: 'none', padding: 8, borderRadius: 4, fontWeight: 600, cursor: 'pointer' }}
             >
-              ✔ Aprovar
-            </button>
-            <button
+              Aprovar
+            </Button>
+            <Button
+              kind="danger"
+              size="md"
               onClick={() => {
                 gateAction(pending.nodeId, null);
                 setPending(null);
               }}
-              style={{ flex: 1, background: '#da1e28', color: '#fff', border: 'none', padding: 8, borderRadius: 4, fontWeight: 600, cursor: 'pointer' }}
             >
-              ✖ Rejeitar
-            </button>
+              Rejeitar
+            </Button>
           </div>
         </div>
       )}
-      <div style={{ height: 10 }} />
       <div className="runlog" id="runlog">
         {lines.map((l, i) => (
-          <div key={i} style={{ color: l.kind === 'err' ? '#ff8389' : '#a8a8a8' }}>
+          <div key={i} className={l.kind === 'err' ? 'runlog-line--err' : 'runlog-line'}>
             {l.text}
           </div>
         ))}
       </div>
+      {runToast && (
+        <ToastNotification className="falador-toast" kind="error" title="Erro no run" subtitle={runToast} timeout={5000} onClose={() => setRunToast(null)} />
+      )}
     </div>
   );
 }
