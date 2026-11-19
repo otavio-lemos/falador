@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "stopWhenSourcesDone": false,
+  "nodes": [
+    { "id": "pipasist", "type": "capture.ffmpeg", "params": { "input": ":0", "chunkMs": 80 } },
+    { "id": "asr", "type": "asr.realtime", "params": { "model": "/Users/otaviolemos/.cache/huggingface/hub/models--mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit/snapshots/fdebf7b2af834a1db4b8a3c99ab7480b333adf9e", "serverVad": true, "inputRate": 16000 } },
+    { "id": "legenda", "type": "sink.captions", "params": { "mode": "stdout", "showParcials": true } }
+  ],
+  "edges": [
+    { "from": "pipasist.out", "to": "asr.in", "capacity": 128, "overflow": "block" },
+    { "from": "asr.out", "to": "legenda.in", "capacity": 16, "overflow": "drop_oldest" }
+  ]
+}

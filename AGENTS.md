@@ -65,6 +65,16 @@ App local (macOS, Apple Silicon M4 Pro 48 GB) que traduz conversas de conferênc
 - Node fetch (undici) mantém sockets keep-alive: runner de teste fica preso no fim do arquivo — usar `--test-force-exit`.
 - O server do mlx-audio aceita carregar snapshot LOCAL por PATH (evita HFValidationError de `--` no repo_id), mas o modelo carregado precisa implementar o contrato de streaming para o WS realtime.
 
+**Tradução EN→PT (2026-11-19, PROVADO com código+execução):**
+- LFM3-Audio-2B `task='asr'` + `language='pt'` → NÃO traduz (sai EN, 0,39–0,53s). `language` aqui é só hint.
+- Voxtral Realtime `generate(language='pt')` → texto idêntico em EN (5,3s offline). Language = idioma de origem.
+- Server mlx-audio `/v1/realtime` nem aceita `language` (código: só temperature/delay no streaming session).
+- **LFM3-Audio TRADUZ nativamente via `messages` com bloco `{"type":"audio"}` TIPADO + instrução no texto do user** (task='chat') → "Até caching e engines de inferência eficazes dependem do comprimento do prefill…" — mas NÃO-streaming (sem create_streaming_session; contrato só em voxtral_realtime/nemotron_asr).
+- LFM3 `system_prompt` SUBSTITUINDO o prompt default do task → resultado VAZIO (2 testes). Não usar para tradução.
+- Fluxo E2E `apps/tui/flows/cenario1-pt.json` (capture → asr.realtime → llm.omlx tradutor → sink.captions) PASSOU com mídia real: afplay EN → legenda PT streaming ao vivo (parciais com \r+erase).
+- **Prior art entrevista técnica (referência UX, NÃO copiar código)**: interview-coder (~4,4k★), SevaSk/ecoute, natively-cluely, elias-soykat/interview-copilot, ericwang915/interview-copilot — TODOS dependem de API em nuvem (OpenAI/Deepgram/GPT-4o); nosso diferencial = 100% on-device. Ideias a beber na fase de UI: janela discreta/stealth (interview-coder), gatilho por pausa de fala=VAD (elias-soykat), separação mic×áudio do sistema (ericwang915), RAG de documentos (natively).
+- `audio.cpp` (0xShug0) tem LFM3-Audio em GGUF com streaming — runtime alternativo NÃO VERIFICADO, anotado como ponte futura caso precisemos de STT+tradução streaming nativa.
+
 ## 5. Lições de processo (não repetir o mesmo erro)
 
 - **L1** — pegada de instalação/dependências de runtime auditar na arquitetura ANTES (omlx: brew tap 254 MB + LLVM >300 MB).
@@ -107,6 +117,8 @@ App local (macOS, Apple Silicon M4 Pro 48 GB) que traduz conversas de conferênc
 5. **UI web fase 2**: React Flow + componentes Carbon in-node; registro de modelos (dropdown local + badge RECOMENDADO + "?"→GitHub); perfis de execução no Run. O runner NDJSON (`falador-cli`) é o host que a web vai usar.
 6. Limpar server-dbg (:8092) e scripts de debug em /tmp — **FEITO (2026-11-19)**: processo parado, arquivos removidos.
 7. **Git**: repositório INICIALIZADO (2026-11-19, commit inicial `62e948c` com 44 arquivos); a cada conquista, commit.
+8. ~~Cenário 1 E2E~~ → **FEITO (2026-11-19)**: `cenario1-pt.json` PASSOU com mídia real (afplay → BlackHole → Voxtral ASR → omlx tradução → legenda PT streaming). Tradução nativa do STT: NÃO streaming; LFM3 `chat`+audio TIPADO traduz nado-nado (potencial nó futuro `asr.lfm3` p/ utterance).
+9. **Fase 2 — UI web (React Flow + Carbon)** desenhada pelo usuário no canvas (ADR-003 "nada fixo"); + nó tradução nativa (`asr.lfm3` chat+audio) como opção do catálogo.
 
 ## 8. Protocolo de atualização deste arquivo
 

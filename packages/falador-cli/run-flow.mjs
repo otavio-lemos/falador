@@ -59,12 +59,18 @@ async function main() {
   }
 
   const line = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
+  // --run-seconds N: fonte contínua (mic/BlackHole) não "esgota" — o host pede stop programático
+  const runSecondsArg = args.find((a) => a === '--run-seconds');
+  const runSeconds = runSecondsArg ? Number(args[args.indexOf('--run-seconds') + 1]) : 0;
   let rg;
   try {
     rg = await runGraph(flow, registry);
   } catch (err) {
     line({ type: 'flow_invalid', error: String(err?.message ?? err) });
     process.exit(1);
+  }
+  if (runSeconds > 0) {
+    setTimeout(() => void rg.stop(`run-seconds ${runSeconds}`), runSeconds * 1000).unref?.();
   }
   (async () => {
     try {
