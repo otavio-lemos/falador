@@ -118,7 +118,7 @@ EOF
 - **Abrir:** <http://127.0.0.1:8787>
 - Paleta à esquerda: arraste os nós para o canvas (catálogo dinâmico — sempre reflete os nós registrados, incluindo `asr.lfm3` e `decision.llm`).
 - Clique num nó → **Inspector**: `enabled`, params (promopts em textarea, `template`/`options` como JSON), dropdown de modelos do registro (★ RECOMENDADO = medido; "?" abre o GitHub/HF do modelo selecionado).
-- **Run** → eventos ao vivo (legendas parciais/finais). Gate `human.approve` abre card com sugestão editável → Aprovar/Rejeitar.
+- **Run** → eventos ao vivo. **Transcrição** (azul, ao vivo) e **sugestão do assistente** (verde, fixa até a próxima — "leia e responda com suas palavras") em caixas separadas. Gate `human.approve` abre card editável → Aprovar/Rejeitar.
 - **Métricas por nó ao vivo (fase 3)**: durante o run, cada nó mostra badge `↓in ↑out · p50ms` (azul, monospace); clique no nó → Inspector → "Métricas do run" com timers/counters nomeados (`llm.omlx.ttftMs`, `tts.sts.ms`, `decision.llm.<opção>`…). Snapshot final também vai no `summary`.
 - **Perfis de Run (W8)**: seletor `perfil:` acima do ▶ Capturar. `✚` fotografa os params atuais de todos os nós como perfil nomeado (persiste em `profiles:` no flow JSON). Ao rodar com perfil, os overrides são aplicados SÓ naquela execução — o grafo salvo não muda. `(padrão do grafo)` = sem override.
 - Salvar/carregar flows: `apps/tui/flows/*.json` (o host lista via `/api/flows`).
@@ -127,10 +127,12 @@ EOF
 
 | Flow | O que é |
 |---|---|
-| `cenario1-pt.json` | Cenário 1 estrutura: BlackHole → Voxtral streaming → tradução via omlx → legendas (~1,1 s) |
-| `cenario1-lfm3.json` | Cenário 1 nativo: BlackHole → `asr.lfm3` (janela 12 s) → legendas PT (~15× rt, NÃO streaming) |
-| `cenario2-auto.json` | Cenário 2: ASR → assistente LLM → decisão auto/humano → TTS EN → playback; gate humano na UI |
+| `cenario1-pt.json` | Cenário 1 estrutura: captura SCK do app da call → Voxtral streaming → tradução via omlx → legendas (~1,1 s) |
+| `cenario1-lfm3.json` | Cenário 1 nativo: captura SCK → `asr.lfm3` (janela 12 s) → legendas PT (~15× rt, NÃO streaming) |
+| `cenario2-auto.json` | **Cenário 2 SÓ-TEXTO (ADR-005)**: captura SCK → ASR → assistente LLM → votação d1 auto/humano → sugestão na tela (auto) ou card editável (humano). **Você fala.** Sem TTS = sem eco |
 | `demo-engine` / `demo-live` | smoke sintético / integração omlx+sidecar |
+
+> Captura nos flows: `backend: 'sck'`, `input: 'Teams'` — **troque pro seu app da call** no Inspector (zoom.us, Chrome p/ Meet…). SCK ouve SÓ esse app; precisa de permissão de Gravação de Tela (Ajustes → Privacidade e Segurança). O app pode ser aberto DEPOIS do run (o helper espera 30 s).
 
 ### 4c. Runner headless (sem UI)
 
@@ -153,12 +155,12 @@ cd apps/tui && ../../.venv/bin/python smoke.py   # TUI (Textual) smoke
 
 ---
 
-## 6. Entrada de áudio (BlackHole)
+## 6. Entrada de áudio (captura)
 
-- Saída do sistema deve ser o **"Dispositivo com Saída Múltipla"** (Alto-falantes + BlackHole, clock = Alto-falantes) — configurado no Audio MIDI Setup (provado com mídia real, AGENTS.md §2/§4). **Restaurado pelo dono em 2026-11-19** (havia driftado p/ Alto-falantes; E2E dos cenários 1+2 passou depois disso). Routing drifta com updates/mudanças de device — reconferir no início de cada sessão de áudio: `system_profiler SPAudioDataType | grep -B1 "Default Output Device: Yes"`.
-- Índice AVFoundation em uso: **`:0` = BlackHole 2ch**, `:1` = mic MBP. Para conferir os índices atuais: `ffmpeg -f avfoundation -list_devices true -i ""`.
-- **Captura: backend `sounddevice` (PortAudio) é o confiável** — ffmpeg 9.0.2 avfoundation perde ~75% dos samples nesta máquina (AGENTS §4). Os flows já usam `backend: 'sounddevice'` + `input: 'BlackHole'` (nome; índices PortAudio ≠ avfoundation). O nó spawn `services/capture-sidecar.py` com o `.venv` do repo (sounddevice+numpy). Mic: `input: 'Microfone'`.
-- Cenário 2 em call real: o áudio do entrevistador entra pelo BlackHole (laço do sistema), igual ao Cenário 1.
+- **Oficial (ADR-005): ScreenCaptureKit por app** — `backend: 'sck'`, input = nome do app da call. Sem Multi-Output, sem BlackHole, sem mudar routing; o dono apagou o Multi-Output em 2026-11-19. Permissão: **Gravação de Tela** (TCC) pro processo que roda o helper. Binário `services/capture-sck` compilado sob demanda do `.swift` (swiftc/CLT).
+- Alternativas no mesmo nó: `backend: 'sounddevice'` (PortAudio; input = nome do device, ex. 'BlackHole', 'Microfone' — precisa de algo tocando NO device, ex. Multi-Output) e `backend: 'ffmpeg'` (avfoundation :N — **ffmpeg 9.0.2 perde ~75% dos samples nesta máquina**, AGENTS §4).
+- BlackHole 2ch continua instalado — útil p/ injeção de teste ou se a voz na call voltar (playback-sidecar.py pronto, não fiado).
+- Cenário 2 em call real: o áudio do entrevistador entra pelo SCK direto do app da call; você lê a sugestão e responde com sua voz.
 
 ---
 

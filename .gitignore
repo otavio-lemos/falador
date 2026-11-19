@@ -8,3 +8,4 @@ __pycache__/
 .omlx/
 apps/tui/flows/.web-run.tmp.json
 .venv
+services/capture-sck

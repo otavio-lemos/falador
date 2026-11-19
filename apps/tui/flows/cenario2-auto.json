@@ -6,9 +6,9 @@
       "id": "pipasist",
       "type": "capture.ffmpeg",
       "params": {
-        "input": "BlackHole",
+        "input": "Teams",
         "chunkMs": 80,
-        "backend": "sounddevice"
+        "backend": "sck"
       }
     },
     {
@@ -61,30 +61,20 @@
       "params": {}
     },
     {
-      "id": "voz-auto",
-      "type": "tts.sts",
+      "id": "sugestao",
+      "type": "sink.captions",
       "params": {
-        "url": "http://127.0.0.1:8091",
-        "language": "en"
+        "mode": "callback",
+        "showParcials": true
       }
     },
     {
-      "id": "som-auto",
-      "type": "sink.playback",
-      "params": {}
-    },
-    {
-      "id": "voz-gate",
-      "type": "tts.sts",
+      "id": "editada",
+      "type": "sink.captions",
       "params": {
-        "url": "http://127.0.0.1:8091",
-        "language": "en"
+        "mode": "callback",
+        "showParcials": true
       }
-    },
-    {
-      "id": "som-gate",
-      "type": "sink.playback",
-      "params": {}
     }
   ],
   "edges": [
@@ -113,35 +103,23 @@
       "overflow": "block"
     },
     {
-      "from": "porta.auto",
-      "to": "voz-auto.in",
-      "capacity": 8,
-      "overflow": "block"
-    },
-    {
-      "from": "voz-auto.out",
-      "to": "som-auto.in",
-      "capacity": 8,
-      "overflow": "block"
-    },
-    {
       "from": "porta.humano",
       "to": "gate.in",
       "capacity": 8,
       "overflow": "block"
     },
     {
-      "from": "gate.out",
-      "to": "voz-gate.phrase",
+      "from": "porta.auto",
+      "to": "sugestao.in",
       "capacity": 8,
       "overflow": "block"
     },
     {
-      "from": "voz-gate.out",
-      "to": "som-gate.in",
+      "from": "gate.out",
+      "to": "editada.phrase",
       "capacity": 8,
       "overflow": "block"
     }
   ],
-  "description": "Cenário 2 (auto): entrevista — LLM sugere resposta, decisão CALIBRADA d1-2B (~40 ms) roteia auto/humano, TTS EN fala direto no lane auto"
+  "description": "Cenário 2 (só texto): entrevista — ASR streaming → LLM sugere resposta PT → votação d1-2B (~40 ms) auto/humano → sugestão NA TELA (auto) ou card editável (humano). VOCÊ fala. Sem TTS = sem eco. captura SCK por app (input = nome do app da call)"
 }

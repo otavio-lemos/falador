@@ -1,7 +1,7 @@
 // Descrições PT dos nós — honestas, baseadas nos fatos medidos (AGENTS.md §4).
 export const NODE_DESCRIPTIONS: Record<string, string> = {
   'capture.ffmpeg':
-    'CAPTURA de áudio. Pega o som do sistema (BlackHole = o que você ouve na call) ou do mic. Emite frames brutos de audio (s16le). backend sounddevice (PortAudio, recomendado — ffmpeg 9 perde samples) ou ffmpeg; input = nome do device (sounddevice) ou :N (ffmpeg).',
+    'CAPTURA de áudio. backend sck (ScreenCaptureKit, RECOMENDADO): ouve só o app da call (input = nome, ex. Teams/zoom.us/Chrome), sem Multi-Output nem BlackHole, sem eco; precisa de permissão de Gravação de Tela. backend sounddevice (PortAudio): input = nome do device (BlackHole/Microfone). backend ffmpeg: input :N (perde samples no ffmpeg 9). Emite frames s16le.',
   'asr.realtime':
     'TRANSCRIÇÃO em STREAMING (WS /v1/realtime do server mlx-audio, Voxtral). Texto vai saindo palavra a palavra. NÃO traduz — lang do audio é detectada, texto sai no idioma falado.',
   'asr.lfm3':

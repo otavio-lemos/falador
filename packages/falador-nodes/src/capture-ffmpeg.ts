@@ -8,9 +8,16 @@
 //   'sounddevice': services/capture-sidecar.py (PortAudio) — captura 100%.
 //     input = NOME do device (substring, ex. 'BlackHole', 'Microfone') ou índice
 //     PortAudio de entrada (≠ índice avfoundation!). Requer .venv com sounddevice.
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+//   'sck': ScreenCaptureKit (services/capture-sck.swift, compilado sob demanda) —
+//     captura o áudio RENDERIZADO pelo app, SEM Multi-Output/BlackHole/routing.
+//     input = NOME do app da call (ex. 'Teams', 'zoom.us', 'Chrome'); vazio = todos.
+//     Filtro por app = TTS de outro processo NÃO entra → sem eco digital.
+//     Requer permissão de Gravação de Tela (TCC). macOS 13+ (audio-only na prática).
+import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import type { NodeCtx, NodeRuntime, NodeTypeDef } from '../../falador-graph/src/index.ts';
 
 // defaults de caminho ancorados NO REPO (não no cwd do runner — testes rodam de
@@ -20,7 +27,7 @@ const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 export const captureFfmpeg: NodeTypeDef = {
   type: 'capture.ffmpeg',
   sourceOnly: true,
-  paramNames: ['input', 'sampleRate', 'chunkMs', 'ffmpegPath', 'backend', 'pythonPath', 'sidecarPath'],
+  paramNames: ['input', 'sampleRate', 'chunkMs', 'ffmpegPath', 'backend', 'pythonPath', 'sidecarPath', 'sckPath'],
   inputs: [],
   outputs: [{ name: 'out', type: 'pcm16k' }],
   validateParams: (p) => {
@@ -33,13 +40,13 @@ export const captureFfmpeg: NodeTypeDef = {
         errs.push({ path: `params.${k}`, code: 'INVALID_PARAM', message: `${k} deve ser número > 0` });
       }
     }
-    for (const k of ['ffmpegPath', 'pythonPath', 'sidecarPath'] as const) {
+    for (const k of ['ffmpegPath', 'pythonPath', 'sidecarPath', 'sckPath'] as const) {
       if (p[k] !== undefined && typeof p[k] !== 'string') {
         errs.push({ path: `params.${k}`, code: 'INVALID_PARAM', message: `${k} deve ser string` });
       }
     }
-    if (p.backend !== undefined && p.backend !== 'ffmpeg' && p.backend !== 'sounddevice') {
-      errs.push({ path: 'params.backend', code: 'INVALID_PARAM', message: "backend deve ser 'ffmpeg' ou 'sounddevice'" });
+    if (p.backend !== undefined && p.backend !== 'ffmpeg' && p.backend !== 'sounddevice' && p.backend !== 'sck') {
+      errs.push({ path: 'params.backend', code: 'INVALID_PARAM', message: "backend deve ser 'ffmpeg' | 'sounddevice' | 'sck'" });
     }
     return errs;
   },
@@ -51,6 +58,7 @@ export const captureFfmpeg: NodeTypeDef = {
     const backend = (ctx.params.backend as string | undefined) ?? 'ffmpeg';
     const pythonPath = (ctx.params.pythonPath as string | undefined) ?? join(REPO_ROOT, '.venv/bin/python');
     const sidecarPath = (ctx.params.sidecarPath as string | undefined) ?? join(REPO_ROOT, 'services/capture-sidecar.py');
+    const sckPath = (ctx.params.sckPath as string | undefined) ?? join(REPO_ROOT, 'services/capture-sck');
 
     const bytesPerChunk = Math.round((sampleRate * chunkMs) / 1000) * 2; // s16le mono
     let child: ChildProcessWithoutNullStreams | null = null;
@@ -59,22 +67,28 @@ export const captureFfmpeg: NodeTypeDef = {
 
     return {
       async start() {
-        // sounddevice: PortAudio via sidecar Python (ffmpeg 9.0.2 perde ~75% dos
-        // samples nesta máquina — AGENTS §4). Mesmo contrato: stdout = PCM cru.
+        // sck: ScreenCaptureKit por app (sem routing). Binário compilado sob demanda
+        // do .swift ao lado (swiftc dos Command Line Tools; ~10 s na primeira vez).
+        if (backend === 'sck' && !existsSync(sckPath)) {
+          ctx.log('info', 'compilando capture-sck.swift (primeira vez)…');
+          await promisify(execFile)('swiftc', ['-O', `${sckPath}.swift`, '-o', sckPath]);
+        }
         const args = backend === 'sounddevice'
           ? [sidecarPath, '--device', input.replace(/^:/, ''), '--rate', String(sampleRate), '--chunk-ms', String(chunkMs)]
-          : [
-            '-f', 'avfoundation',
-            '-i', input,
-            '-vn',                      // ignore o vídeo do dispositivo
-            '-f', 's16le',
-            '-acodec', 'pcm_s16le',
-            '-ac', '1',
-            '-ar', String(sampleRate),
-            '-loglevel', 'error',
-            'pipe:1',
-          ];
-        const cmd = backend === 'sounddevice' ? pythonPath : ffmpegPath;
+          : backend === 'sck'
+            ? ['--app', input.replace(/^:/, ''), '--rate', String(sampleRate)]
+            : [
+              '-f', 'avfoundation',
+              '-i', input,
+              '-vn',                      // ignore o vídeo do dispositivo
+              '-f', 's16le',
+              '-acodec', 'pcm_s16le',
+              '-ac', '1',
+              '-ar', String(sampleRate),
+              '-loglevel', 'error',
+              'pipe:1',
+            ];
+        const cmd = backend === 'sounddevice' ? pythonPath : backend === 'sck' ? sckPath : ffmpegPath;
         await new Promise<void>((resolve, reject) => {
           child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
           child.stderr.on('data', (d: Buffer) => {

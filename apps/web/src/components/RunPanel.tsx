@@ -20,8 +20,10 @@ export function RunPanel({ flowGetter, profiles, onMetrics, onSaveProfile }: {
   const [caption, setCaption] = useState('');
   const [pending, setPending] = useState<{ nodeId: string; text: string } | null>(null);
   const [edited, setEdited] = useState('');
+  const [suggestion, setSuggestion] = useState(''); // sugestão do LLM (fixa até a próxima)
   const [profile, setProfile] = useState('');
   const ctlRef = useRef<AbortController | null>(null);
+  const transcriptIds = useRef<Set<string>>(new Set()); // sinks de legenda ligados direto ao ASR
 
   const push = useCallback((text: string, kind: Line['kind'] = 'ev') => {
     setLines((ls) => [...ls.slice(-200), { t: Date.now(), text, kind }]);
@@ -31,9 +33,18 @@ export function RunPanel({ flowGetter, profiles, onMetrics, onSaveProfile }: {
     const flow = flowGetter();
     const ov = profile ? profiles[profile] : undefined;
     if (ov) flow.nodes = flow.nodes.map((n) => (ov[n.id] ? { ...n, params: { ...n.params, ...ov[n.id] } } : n));
+    // transcrição = sink.captions alimentado DIRETO por um nó asr.*; os demais = sugestão
+    const asrIds = new Set(flow.nodes.filter((n) => n.type.startsWith('asr')).map((n) => n.id));
+    const capIds = new Set(flow.nodes.filter((n) => n.type === 'sink.captions').map((n) => n.id));
+    transcriptIds.current = new Set(
+      flow.edges
+        .filter((e) => asrIds.has(e.from.split('.')[0]) && capIds.has(e.to.split('.')[0]))
+        .map((e) => e.to.split('.')[0]),
+    );
     onMetrics({});
     setLines([]);
     setCaption('');
+    setSuggestion('');
     let lastParcial = '';
     let lastFinal = '';
     ctlRef.current = openRun(
@@ -54,9 +65,9 @@ export function RunPanel({ flowGetter, profiles, onMetrics, onSaveProfile }: {
           return;
         }
         if (ev.type === 'caption') {
-          const c = ev as { type: 'caption'; text: string; final: boolean };
-          if (c.final) setCaption(c.text);
-          else setCaption(c.text);
+          const c = ev as { type: 'caption'; nodeId: string; text: string; final: boolean };
+          if (transcriptIds.current.has(c.nodeId)) setCaption(c.text);
+          else setSuggestion(c.text); // sugestão do assistente — fixa até a próxima
           return;
         }
         if (ev.type === 'node_error') {
@@ -132,6 +143,12 @@ export function RunPanel({ flowGetter, profiles, onMetrics, onSaveProfile }: {
         </button>
       </div>
       <div className="live-caption">{caption || <span style={{ opacity: 0.6 }}>legenda ao vivo…</span>}</div>
+      {suggestion && (
+        <div style={{ marginTop: 8, border: '1px solid #24a148', borderRadius: 6, padding: 10, background: '#1a2e1a' }}>
+          <div className="section-title" style={{ marginTop: 0 }}>💡 Sugestão — leia e responda com suas palavras</div>
+          <div style={{ fontSize: 14, lineHeight: 1.45 }}>{suggestion}</div>
+        </div>
+      )}
       {pending && (
         <div style={{ marginTop: 10, border: '1px solid #4589ff', borderRadius: 6, padding: 10, background: '#1e2933' }}>
           <div className="section-title" style={{ marginTop: 0 }}>
@@ -151,7 +168,7 @@ export function RunPanel({ flowGetter, profiles, onMetrics, onSaveProfile }: {
               }}
               style={{ flex: 1, background: '#24a148', color: '#161616', border: 'none', padding: 8, borderRadius: 4, fontWeight: 600, cursor: 'pointer' }}
             >
-              ✔ Aprovar (falar EN)
+              ✔ Aprovar
             </button>
             <button
               onClick={() => {
