@@ -19,6 +19,9 @@ interface Props {
   onUploadDoc: (file: File) => void;
   onRemoveDoc: (name: string) => void;
   onStart: (flow: Flow) => void;
+  flows: { name: string; description: string }[];
+  currentFlow: string;
+  onSwitchFlow: (name: string) => void;
   onUpdateStage: (nodeId: string, param: string, value: unknown) => void;
   onRegenerate: () => void;
   onExit: () => void;
@@ -44,7 +47,7 @@ function stageItems(stage: Stage, models: { omlx: string[]; cache: string[] }, a
   return items.length ? items : [{ id: stage.value || '—', label: stage.value || '—' }];
 }
 
-export function LiveView({ runner, flow, scenarioName, models, apps, contextDocs, onUploadDoc, onRemoveDoc, onStart, onUpdateStage, onRegenerate, onExit }: Props) {
+export function LiveView({ runner, flow, scenarioName, models, apps, contextDocs, onUploadDoc, onRemoveDoc, onStart, flows, currentFlow, onSwitchFlow, onUpdateStage, onRegenerate, onExit }: Props) {
   const stages = useMemo(() => deriveStages(flow), [flow]);
   const sinks = useMemo(() => classifySinks(flow), [flow]);
   const [editing, setEditing] = useState(false);
@@ -57,6 +60,15 @@ export function LiveView({ runner, flow, scenarioName, models, apps, contextDocs
   const gate = runner.gates[0];
   const suggestion = gate ? gate.text : (lastOf(sinks.suggestion)?.text ?? '');
   const captureApp = stages.find((s) => s.kind === 'app')?.value ?? '—';
+  // NADA FIXO: painéis e botões derivam dos nós que existem no workflow.
+  const hasGate = flow.nodes.some((n) => n.type === 'human.approve');
+  const hasTTS = flow.nodes.some((n) => n.type === 'tts.sts');
+  const hasLLM = flow.nodes.some((n) => n.type === 'llm.omlx');
+  const isInterview = flow.nodes.some((n) => n.type === 'decision.llm' || n.type === 'human.approve');
+  const allSinks = new Set([...sinks.transcription, ...sinks.suggestion]);
+  // entrevista: hero = sugestão do assistente; tradução: hero = a própria tradução
+  const heroText = isInterview ? (gate ? gate.text : (lastOf(sinks.suggestion)?.text ?? '')) : (lastOf(allSinks)?.text ?? '');
+  const heroLabel = isInterview ? 'Sugestão de resposta (para você falar)' : 'Tradução ao vivo';
   // erro real do run (não log_info) — pra falha não ser silenciosa
   const lastError = [...runner.events].reverse().find((e) => e.type === 'node_error' && !String((e as { code?: string }).code ?? '').startsWith('log_')) as { message?: string; nodeId?: string } | undefined;
 
@@ -77,6 +89,15 @@ export function LiveView({ runner, flow, scenarioName, models, apps, contextDocs
           <span className={`live-dot${runner.running ? ' live-dot--on' : ''}`} />
           <span className="live2-mode-label">LIVE MODE</span>
           <span className="live2-scenario">— {scenarioName}</span>
+          <div className="live-flow-select">
+            <Dropdown
+              id="live-flow" size="sm" titleText="Workflow" hideLabel label="Workflow"
+              items={flows.map((f) => ({ id: f.name, label: f.name }))}
+              itemToString={(it) => (it ? it.label : '')}
+              selectedItem={flows.map((f) => ({ id: f.name, label: f.name })).find((i) => i.id === currentFlow) ?? null}
+              onChange={({ selectedItem }) => selectedItem && onSwitchFlow(selectedItem.id)}
+            />
+          </div>
         </div>
         <Tag type="green" size="md" className="latency-pill">Latência: {runner.latency != null ? `${Math.round(runner.latency)}ms` : '—'}</Tag>
         <div className="live2-top-actions">
@@ -90,8 +111,12 @@ export function LiveView({ runner, flow, scenarioName, models, apps, contextDocs
       <div className="live2-body">
         <main className="live2-main">
           {lastError && <div className="live2-error">⚠ [{lastError.nodeId}] {lastError.message}</div>}
-          <div className="live2-label">Transcrição ao vivo (entrevistador)</div>
-          <div className="live2-transcription">{transcription || (runner.running ? 'Ouvindo o entrevistador…' : '—')}</div>
+          {isInterview && (
+            <>
+              <div className="live2-label">Transcrição ao vivo (entrevistador)</div>
+              <div className="live2-transcription">{transcription || (runner.running ? 'Ouvindo o entrevistador…' : '—')}</div>
+            </>
+          )}
 
           <div className="live2-stages">
             {stages.map((s) => {
@@ -110,35 +135,37 @@ export function LiveView({ runner, flow, scenarioName, models, apps, contextDocs
             })}
           </div>
 
-          <div className="live2-label">Sugestão de resposta (para você falar)</div>
+          <div className="live2-label">{heroLabel}</div>
           <div className="live2-suggestion">
-            {editing ? (
+            {editing && hasGate ? (
               <TextArea labelText="Editar sugestão" hideLabel rows={4} value={draft} onChange={(e) => setDraft(e.target.value)} />
             ) : (
               <div className="live2-suggestion-text">
-                {suggestion || (runner.running ? 'Gerando sugestão…' : 'Inicie a sessão para ver a sugestão.')}
+                {heroText || (runner.running ? (isInterview ? 'Gerando sugestão…' : 'Aguardando áudio…') : 'Inicie a sessão.')}
                 {runner.running && !editing && <span className="live-cursor" />}
               </div>
             )}
           </div>
-          <div className="live2-actions">
-            <Button kind="ghost" size="sm" renderIcon={Renew} onClick={onRegenerate}>Regerar</Button>
-            {editing ? (
-              <>
-                <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={approve} disabled={!gate}>Enviar editada</Button>
-                <Button kind="ghost" size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
-              </>
-            ) : (
-              <>
-                <Button kind="ghost" size="sm" renderIcon={Edit} onClick={startEdit} disabled={!suggestion}>Editar</Button>
-                <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve} disabled={!gate}>
-                  Aprovar &amp; Falar
-                </Button>
-              </>
-            )}
-          </div>
-          {!gate && runner.running && (
-            <p className="live2-hint">Roteamento automático — sem gate humano pendente. “Aprovar &amp; Falar” ativa quando o Gate está em Manual.</p>
+          {(hasLLM || hasGate) && (
+            <div className="live2-actions">
+              {hasLLM && <Button kind="ghost" size="sm" renderIcon={Renew} onClick={onRegenerate}>Regerar</Button>}
+              {hasGate && (editing ? (
+                <>
+                  <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={approve} disabled={!gate}>Enviar editada</Button>
+                  <Button kind="ghost" size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
+                </>
+              ) : (
+                <>
+                  <Button kind="ghost" size="sm" renderIcon={Edit} onClick={startEdit} disabled={!gate}>Editar</Button>
+                  <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve} disabled={!gate}>
+                    {hasTTS ? 'Aprovar & Falar' : 'Aprovar'}
+                  </Button>
+                </>
+              ))}
+            </div>
+          )}
+          {hasGate && !gate && runner.running && (
+            <p className="live2-hint">Roteamento automático — sem gate humano pendente.</p>
           )}
         </main>
 

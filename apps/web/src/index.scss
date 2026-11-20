@@ -135,6 +135,7 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 .live2-mode-label { @include type-style('productive-heading-01'); color: #22c55e; letter-spacing: 0.04em; }
 .live2-scenario { @include type-style('body-01'); color: $txt-2; }
+.live-flow-select { width: 13rem; margin-left: $spacing-03; }
 .live2-top-actions { display: flex; gap: $spacing-03; }
 
 .live2-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 300px; gap: $spacing-05; padding: $spacing-05; overflow-y: auto; }

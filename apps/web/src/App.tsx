@@ -8,7 +8,7 @@ import { TopBar } from './components/TopBar';
 import { BuilderView } from './views/BuilderView';
 import { LiveView } from './views/LiveView';
 import { useRunner } from './useRunner';
-import { fetchCatalog, fetchFlows, fetchModels, fetchApps, fetchContext, uploadDoc, removeDoc, type Catalog, type Flow, type ContextDoc } from './api';
+import { fetchCatalog, fetchFlows, fetchFlow, fetchModels, fetchApps, fetchContext, uploadDoc, removeDoc, type Catalog, type Flow, type ContextDoc } from './api';
 import { applyContext, sanitizeFlow } from './live-utils';
 
 function scenarioLabel(name: string): string {
@@ -73,6 +73,13 @@ export function App() {
   };
   const onRegenerate = () => { if (liveFlow) startWithContext(liveFlow); };
   const onExit = () => { runner.stop(); setView('builder'); };
+  // trocar de workflow NA tela de execução: carrega o flow, aplica contexto e reinicia
+  const onSwitchLiveFlow = async (name: string) => {
+    try {
+      const f = await fetchFlow(name);
+      setCurrentFlow(name); setLiveFlow(f); startWithContext(f);
+    } catch { setToast('Falha ao carregar o flow'); }
+  };
 
   const onUploadDoc = async (file: File) => {
     try {
@@ -123,6 +130,7 @@ export function App() {
               models={models} apps={apps}
               contextDocs={contextDocs} onUploadDoc={onUploadDoc} onRemoveDoc={onRemoveDoc}
               onStart={startWithContext}
+              flows={flows} currentFlow={currentFlow} onSwitchFlow={onSwitchLiveFlow}
               onUpdateStage={onUpdateStage} onRegenerate={onRegenerate} onExit={onExit}
             />
           )}
