@@ -129,7 +129,7 @@ EOF
 | `cenario1-pt.json` | Cenário 1 estrutura: captura SCK do app da call → Voxtral streaming → tradução via omlx → legendas (~1,1 s) |
 | `cenario1-lfm3.json` | Cenário 1 nativo: captura SCK → `asr.lfm3` (janela 12 s) → legendas PT (~15× rt, NÃO streaming) |
 | `cenario2-auto.json` | **Cenário 2 SÓ-TEXTO (ADR-005)**: captura SCK → ASR → assistente LLM → votação d1 auto/humano → sugestão na tela (auto) ou card editável (humano). **Você fala.** Sem TTS = sem eco |
-| `demo-engine` / `demo-live` | smoke sintético / integração omlx+sidecar |
+| `test/demo-engine` / `test/demo-live` | fixtures de smoke (sintético / integração omlx+sidecar) — em `flows/test/`, fora do dropdown |
 
 > Captura nos flows: `backend: 'sck'`, `input: 'Teams'` — **troque pro seu app da call** no Inspector (zoom.us, Chrome p/ Meet…). SCK ouve SÓ esse app; precisa de permissão de Gravação de Tela (Ajustes → Privacidade e Segurança). O app pode ser aberto DEPOIS do run (o helper espera 30 s).
 

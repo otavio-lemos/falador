@@ -12,3 +12,6 @@ services/capture-sck
 
 # artefatos de build da UI
 apps/web/dist/
+
+# dados runtime do RAG (documentos carregados pelo usuário)
+context/
