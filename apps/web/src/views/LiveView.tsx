@@ -207,15 +207,19 @@ export function LiveView({ runner, flow, scenarioName, models, apps, contextDocs
             </div>
           </div>
 
-          <div className="ctx-block">
-            <div className="ctx-block-title"><Information size={16} /> Dica de estrutura</div>
-            <p className="ctx-text">Use o método <strong>STAR</strong> (Situação, Tarefa, Ação, Resultado) para responder.</p>
-          </div>
+          {isInterview && (
+            <>
+              <div className="ctx-block">
+                <div className="ctx-block-title"><Information size={16} /> Dica de estrutura</div>
+                <p className="ctx-text">Use o método <strong>STAR</strong> (Situação, Tarefa, Ação, Resultado) para responder.</p>
+              </div>
 
-          <div className="ctx-block ctx-block--warn">
-            <div className="ctx-block-title"><Warning size={16} /> Pontos de atenção</div>
-            <p className="ctx-text">Não fale mal de monolitos — cite os trade-offs.</p>
-          </div>
+              <div className="ctx-block ctx-block--warn">
+                <div className="ctx-block-title"><Warning size={16} /> Pontos de atenção</div>
+                <p className="ctx-text">Não fale mal de monolitos — cite os trade-offs.</p>
+              </div>
+            </>
+          )}
 
           <div className="ctx-mic">
             <Microphone size={18} />
