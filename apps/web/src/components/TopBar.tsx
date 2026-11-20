@@ -42,14 +42,20 @@ export function TopBar(p: Props) {
       </div>
       <div className="topbar-right">
         {p.view === 'builder' ? (
-          <>
-            <Button kind="secondary" size="sm" renderIcon={Play} onClick={p.onTest} disabled={p.running}>
-              Testar Fluxo
+          p.running ? (
+            <Button kind="danger" size="sm" renderIcon={Stop} onClick={p.onStop}>
+              Parar
             </Button>
-            <Button kind="primary" size="sm" renderIcon={Play} onClick={p.onGoLive} disabled={p.running}>
-              Iniciar Live
-            </Button>
-          </>
+          ) : (
+            <>
+              <Button kind="secondary" size="sm" renderIcon={Play} onClick={p.onTest}>
+                Testar Fluxo
+              </Button>
+              <Button kind="primary" size="sm" renderIcon={Play} onClick={p.onGoLive}>
+                Iniciar Live
+              </Button>
+            </>
+          )
         ) : (
           <>
             <Button kind="secondary" size="sm" renderIcon={ArrowLeft} onClick={p.onGoBuilder}>

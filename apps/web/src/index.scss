@@ -39,7 +39,16 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 .topbar-right { display: flex; align-items: center; gap: $spacing-03; }
 
 // ---- builder: paleta + canvas ----
-.builder { flex: 1; min-width: 0; display: flex; }
+.builder-wrap { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.builder { flex: 1; min-height: 0; display: flex; }
+.builder-status {
+  display: flex; align-items: center; gap: $spacing-03; flex-shrink: 0;
+  padding: $spacing-02 $spacing-05; background: $bg-bar; border-top: 1px solid $border-1;
+  @include type-style('helper-text-01'); color: $txt-2;
+}
+.builder-status--err { color: #ff8389; }
+.builder-status-state { color: $txt-1; font-weight: 600; }
+.builder-status-msg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .palette {
   width: 280px; flex-shrink: 0; background: $bg-panel;

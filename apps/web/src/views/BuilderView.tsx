@@ -77,16 +77,30 @@ export function BuilderView({ catalog, currentFlow, runner, registerActions, onS
     registerActions({ getFlow: buildFlow, save: () => void doSave() });
   }, [buildFlow, doSave, registerActions]);
 
+  // feedback do run no builder: erro real ou último log (ex.: captura aguardando app)
+  const errEv = [...runner.events].reverse().find((e) => e.type === 'node_error' && !String((e as { code?: string }).code ?? '').startsWith('log_')) as { nodeId?: string; message?: string } | undefined;
+  const logEv = [...runner.events].reverse().find((e) => e.type === 'node_error' && String((e as { code?: string }).code ?? '').startsWith('log_')) as { nodeId?: string; message?: string } | undefined;
+  const statusMsg = errEv ? `[${errEv.nodeId}] ${errEv.message}` : logEv ? `[${logEv.nodeId}] ${logEv.message}` : '';
+
   return (
-    <div className="builder">
-      <Palette onAdd={(t) => onAddNode(t, { x: 120 + Math.random() * 80, y: 120 + Math.random() * 80 })} />
-      <FlowCanvas
-        nodes={nodes} edges={edges}
-        onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect}
-        selectedId={selectedId} onSelect={setSelectedId}
-        onParamsChange={onParamsChange} onAddNode={onAddNode}
-        metrics={runner.metrics} events={runner.events} running={runner.running}
-      />
+    <div className="builder-wrap">
+      <div className="builder">
+        <Palette onAdd={(t) => onAddNode(t, { x: 120 + Math.random() * 80, y: 120 + Math.random() * 80 })} />
+        <FlowCanvas
+          nodes={nodes} edges={edges}
+          onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect}
+          selectedId={selectedId} onSelect={setSelectedId}
+          onParamsChange={onParamsChange} onAddNode={onAddNode}
+          metrics={runner.metrics} events={runner.events} running={runner.running}
+        />
+      </div>
+      {(runner.running || statusMsg) && (
+        <div className={`builder-status${errEv ? ' builder-status--err' : ''}`}>
+          <span className={`live-dot${runner.running ? ' live-dot--on' : ''}`} />
+          <span className="builder-status-state">{runner.running ? 'Rodando' : 'Parado'}</span>
+          {statusMsg && <span className="builder-status-msg">{statusMsg}</span>}
+        </div>
+      )}
     </div>
   );
 }
