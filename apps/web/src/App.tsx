@@ -9,7 +9,7 @@ import { BuilderView } from './views/BuilderView';
 import { LiveView } from './views/LiveView';
 import { useRunner } from './useRunner';
 import { fetchCatalog, fetchFlows, fetchModels, fetchApps, fetchContext, uploadDoc, removeDoc, type Catalog, type Flow, type ContextDoc } from './api';
-import { applyContext } from './live-utils';
+import { applyContext, sanitizeFlow } from './live-utils';
 
 function scenarioLabel(name: string): string {
   if (name.startsWith('cenario2')) return 'Entrevista Técnica';
@@ -54,8 +54,8 @@ export function App() {
   const refreshFlows = useCallback(() => { fetchFlows().then(setFlows).catch(() => {}); }, []);
 
   const onTest = () => { const f = actionsRef.current?.getFlow(); if (f) runner.start(f); };
-  // inicia a sessão já com o contexto dos documentos injetado no assistente (RAG leve)
-  const startWithContext = (f: Flow) => runner.start(applyContext(f, contextDocs));
+  // inicia a sessão: saneia modelo de LLM inválido + injeta contexto dos documentos (RAG leve)
+  const startWithContext = (f: Flow) => runner.start(applyContext(sanitizeFlow(f), contextDocs));
   const onGoLive = () => {
     const f = actionsRef.current?.getFlow();
     if (!f) return;

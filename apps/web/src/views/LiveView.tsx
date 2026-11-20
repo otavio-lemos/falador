@@ -7,7 +7,7 @@ import { Button, Dropdown, Tag, TextArea } from '@carbon/react';
 import { Pause, Play, Stop, Renew, Edit, Checkmark, Document, Warning, Information, Microphone, Add, TrashCan } from '@carbon/icons-react';
 import type { Runner } from '../useRunner';
 import { fetchTopics, type Flow, type ContextDoc } from '../api';
-import { deriveStages, classifySinks, shortModel, type Stage } from '../live-utils';
+import { deriveStages, classifySinks, shortModel, isTextModel, type Stage } from '../live-utils';
 
 interface Props {
   runner: Runner;
@@ -27,14 +27,18 @@ interface Props {
 interface Item { id: string; label: string }
 
 function stageItems(stage: Stage, models: { omlx: string[]; cache: string[] }, apps: string[]): Item[] {
+  if (stage.kind === 'gate') return [{ id: 'humano', label: 'Manual' }, { id: 'auto', label: 'Auto' }];
+  if (stage.kind === 'voice') return [{ id: 'female', label: 'Feminino' }, { id: 'male', label: 'Masculino' }];
   let vals: string[] = [];
   if (stage.kind === 'app') vals = apps.length ? apps : [stage.value];
-  else if (stage.kind === 'model-asr') vals = models.cache.filter((m) => /voxtral|realtime/i.test(m));
-  else if (stage.kind === 'model-llm') vals = models.omlx;
-  else if (stage.kind === 'gate') return [{ id: 'humano', label: 'Manual' }, { id: 'auto', label: 'Auto' }];
-  else if (stage.kind === 'voice') return [{ id: 'female', label: 'Feminino' }, { id: 'male', label: 'Masculino' }];
+  // ASR: o param é o SNAPSHOT PATH real (não o nome do repo, que quebraria o load)
+  else if (stage.kind === 'model-asr') vals = stage.value ? [stage.value] : [];
+  // LLM de sugestão: SÓ modelos de texto (d1/áudio/VAD não geram resposta)
+  else if (stage.kind === 'model-llm') vals = models.omlx.filter(isTextModel);
   const items = vals.filter(Boolean).map((v) => ({ id: v, label: stage.kind.startsWith('model') ? shortModel(v) : v }));
-  if (stage.value && !items.some((i) => i.id === stage.value)) {
+  // só realça o valor atual se for válido pro tipo (não mantém um d1 num LLM de texto)
+  const validCurrent = stage.value && (stage.kind !== 'model-llm' || isTextModel(stage.value));
+  if (validCurrent && !items.some((i) => i.id === stage.value)) {
     items.unshift({ id: stage.value, label: stage.kind.startsWith('model') ? shortModel(stage.value) : stage.value });
   }
   return items.length ? items : [{ id: stage.value || '—', label: stage.value || '—' }];
@@ -53,6 +57,8 @@ export function LiveView({ runner, flow, scenarioName, models, apps, contextDocs
   const gate = runner.gates[0];
   const suggestion = gate ? gate.text : (lastOf(sinks.suggestion)?.text ?? '');
   const captureApp = stages.find((s) => s.kind === 'app')?.value ?? '—';
+  // erro real do run (não log_info) — pra falha não ser silenciosa
+  const lastError = [...runner.events].reverse().find((e) => e.type === 'node_error' && !String((e as { code?: string }).code ?? '').startsWith('log_')) as { message?: string; nodeId?: string } | undefined;
 
   const approve = () => { if (gate) runner.gate(gate.nodeId, editing ? draft : suggestion); setEditing(false); };
   const startEdit = () => { setDraft(suggestion); setEditing(true); };
@@ -83,6 +89,7 @@ export function LiveView({ runner, flow, scenarioName, models, apps, contextDocs
 
       <div className="live2-body">
         <main className="live2-main">
+          {lastError && <div className="live2-error">⚠ [{lastError.nodeId}] {lastError.message}</div>}
           <div className="live2-label">Transcrição ao vivo (entrevistador)</div>
           <div className="live2-transcription">{transcription || (runner.running ? 'Ouvindo o entrevistador…' : '—')}</div>
 

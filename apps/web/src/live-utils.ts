@@ -59,6 +59,27 @@ export function shortModel(id: string): string {
   return base.replace(/^models--/, '').replace(/--/g, '/');
 }
 
+// Modelo de TEXTO (gera resposta via chat/completions). d1 = decisão (systemone),
+// LFM3-Audio/Voxtral = áudio, silero = VAD — NENHUM desses gera texto de sugestão.
+export function isTextModel(id: string): boolean {
+  return !/d1|omni|audio|voxtral|silero|vad/i.test(id);
+}
+
+// Remove modelo de LLM inválido (não-texto) pra o nó usar o default de texto —
+// evita run silenciosamente quebrado quando um d1/áudio foi parar no assistente.
+export function sanitizeFlow(flow: Flow): Flow {
+  return {
+    ...flow,
+    nodes: flow.nodes.map((n) => {
+      if (n.type === 'llm.omlx' && typeof n.params.model === 'string' && !isTextModel(n.params.model)) {
+        const { model: _bad, ...rest } = n.params;
+        return { ...n, params: rest };
+      }
+      return n;
+    }),
+  };
+}
+
 // RAG leve: injeta os pontos-chave dos documentos no system prompt do assistente
 // (llm.omlx) — só em flows de entrevista (que têm decision.llm ou human.approve),
 // pra não contaminar um flow de tradução puro.
