@@ -5,8 +5,8 @@
 # com eventos NDJSON ao vivo e resultado final. Canvas visual = fase web (React Flow).
 #
 # Uso:
-#   .venv/bin/python apps/tui/falador_tui.py --flow apps/tui/flows/demo-engine.json
-#   .venv/bin/python apps/tui/falador_tui.py --flow apps/tui/flows/demo-live.json
+#   .venv/bin/python apps/tui/falador_tui.py --flow apps/tui/flows/test/demo-engine.json
+#   .venv/bin/python apps/tui/falador_tui.py --flow apps/tui/flows/test/demo-live.json
 # Teclas: espaço=toggle enabled · r=rodar · ↑/↓=mover nó · q=sair
 from __future__ import annotations
 

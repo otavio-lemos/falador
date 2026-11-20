@@ -9,7 +9,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from falador_tui import FaladorTUI, REPO  # noqa: E402
 
-FLOW = os.path.join(REPO, "apps", "tui", "flows", "demo-engine.json")
+FLOW = os.path.join(REPO, "apps", "tui", "flows", "test", "demo-engine.json")
 
 
 async def main() -> int:
