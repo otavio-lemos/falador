@@ -32,11 +32,18 @@ import {
   Terminal,
 } from '@carbon/icons-react';
 import type { Runner, Gate, AgentStep } from '../useRunner';
-import { exportSession, fetchTopics, resetHistory, type Flow, type ContextDoc } from '../api';
+import { exportSession, fetchLogs, fetchTopics, resetHistory, type Flow, type ContextDoc } from '../api';
 import { deriveStages, classifySinks, shortModel, isTextModel, isAsrModel, type Stage } from '../live-utils';
 import { LANGS } from '../data';
 
 const WEBHOOK_STORAGE_KEY = 'falador.webhookUrl';
+
+const LOG_SERVICES = [
+  { id: 'omlx', label: 'LLM (omlx :8080)' },
+  { id: 'asr', label: 'ASR (:8090)' },
+  { id: 'tts', label: 'TTS (:8091)' },
+  { id: 'web', label: 'Host/UI (:8787)' },
+];
 
 interface Props {
   runner: Runner;
@@ -159,6 +166,31 @@ export function LiveView({
     try { return localStorage.getItem(WEBHOOK_STORAGE_KEY) ?? ''; } catch { return ''; }
   });
   const fileRef = useRef<HTMLInputElement>(null);
+  const logsRef = useRef<HTMLPreElement>(null);
+  const [logService, setLogService] = useState('web');
+  const [logs, setLogs] = useState<string[]>([]);
+
+  // Logs dos 4 serviços residentes (logs/<nome>.log): poll do serviço selecionado no dropdown.
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetchLogs(logService, 300);
+        if (alive) setLogs(r.lines);
+      } catch {
+        if (alive) setLogs([`(falha ao ler logs/${logService}.log)`]);
+      }
+    };
+    void load();
+    const t = setInterval(() => void load(), 1500);
+    return () => { alive = false; clearInterval(t); };
+  }, [logService]);
+
+  // auto-scroll do terminal para o fim
+  useEffect(() => {
+    const el = logsRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [logs]);
 
   const lastOf = (set: Set<string>) => [...runner.captions].reverse().find((c) => set.has(c.nodeId));
   const transcription = lastOf(sinks.transcription)?.text ?? '';
@@ -616,6 +648,22 @@ export function LiveView({
           </div>
         </aside>
       </div>
+
+      <section className="logs-panel" aria-label="Logs dos serviços">
+        <div className="logs-panel-head">
+          <span className="logs-panel-title"><Terminal size={16} /> Logs dos serviços</span>
+          <Dropdown
+            id="logs-service-dd" size="sm" titleText="Serviço" hideLabel label="Serviço"
+            items={LOG_SERVICES}
+            itemToString={(it) => (it ? it.label : '')}
+            selectedItem={LOG_SERVICES.find((s) => s.id === logService) ?? LOG_SERVICES[0]}
+            onChange={({ selectedItem }) => setLogService(selectedItem?.id ?? 'web')}
+          />
+          <Tag type="green" size="sm">auto 1,5s</Tag>
+          <span className="logs-panel-hint">logs/&lt;serviço&gt;.log · estilo terminal</span>
+        </div>
+        <pre ref={logsRef} className="logs-terminal">{logs.length ? logs.join('\n') : 'sem linhas ainda...'}</pre>
+      </section>
 
       <Modal
         open={exportOpen}

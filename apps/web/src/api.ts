@@ -126,6 +126,20 @@ export async function exportSession(opts: ExportSessionOptions): Promise<ExportS
   if (!r.ok) throw new Error((await r.json()).error ?? 'falha ao exportar sessão');
   return r.json();
 }
+// ---- Logs dos serviços residentes (omlx/asr/tts/web) ----
+export interface LogsResult {
+  name: string;
+  path?: string;
+  lines: string[];
+  total?: number;
+  truncated?: boolean;
+  note?: string;
+}
+export async function fetchLogs(name: string, lines = 200): Promise<LogsResult> {
+  const r = await fetch(`/api/logs?name=${encodeURIComponent(name)}&lines=${lines}`);
+  if (!r.ok) throw new Error((await r.json()).error ?? 'falha ao ler logs');
+  return r.json();
+}
 export async function gateAction(nodeId: string, text: string | null): Promise<void> {
   await fetch('/api/gate', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
