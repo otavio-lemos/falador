@@ -347,6 +347,48 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   .cds--form-item { flex: 1; }
 }
 
+// ---- logs dos serviços residentes (terminal pequeno no rodapé do Live) ----
+.logs-panel {
+  margin: 0 $spacing-05 $spacing-05;
+  background: $bg-panel;
+  border: 1px solid $border-1;
+  border-radius: 8px;
+  padding: $spacing-03 $spacing-04;
+}
+.logs-panel-head {
+  display: flex;
+  align-items: center;
+  gap: $spacing-03;
+  margin-bottom: $spacing-02;
+  .cds--dropdown__wrapper { min-width: 200px; }
+}
+.logs-panel-title {
+  @include type-style('label-01');
+  color: $txt-1;
+  display: flex;
+  align-items: center;
+  gap: $spacing-02;
+}
+.logs-panel-hint {
+  @include type-style('label-01');
+  color: $txt-2;
+  margin-left: auto;
+}
+.logs-terminal {
+  margin: 0;
+  max-height: 170px;
+  overflow: auto;
+  background: #0b0e13;
+  color: #c6d0dc;
+  border-radius: 6px;
+  padding: $spacing-03;
+  font-family: 'IBM Plex Mono', 'Menlo', monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 // ADR-006 / ADR-007 — latência breakdown, card de comando, export modal, upload com tags
 .live2-metrics-bar { display: flex; align-items: center; gap: $spacing-03; }
 .latency-trigger { background: none; border: none; padding: 0; cursor: pointer; }

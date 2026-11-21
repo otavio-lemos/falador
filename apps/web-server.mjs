@@ -25,6 +25,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = join(ROOT, 'packages/falador-cli/run-flow.mjs');
 const FLOWS_DIR = join(ROOT, 'apps/tui/flows');
 const DIST = join(ROOT, 'apps/web/dist');
+const LOGS_DIR = process.env.FALADOR_LOGS_DIR || join(ROOT, 'logs');
 const PORT = Number(process.env.FALADOR_WEB_PORT ?? 8787);
 
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml' };
@@ -408,10 +409,17 @@ function startRun(flow, runSeconds, flowName) {
           try { if (child.exitCode === null) child.kill('SIGKILL'); } catch { /* race de exit */ }
         }, 300);
       }
+      if (ev.type === 'node_error' || ev.type === 'flow_invalid' || ev.type === 'edge_overflow' || ev.type === 'run_stopped') {
+        console.error(`[runner] ${JSON.stringify(ev).slice(0, 500)}`);
+      }
       broadcast('runner', ev);
     }
   });
-  child.stderr.on('data', (d) => broadcast('runner_stderr', { line: d.toString().trim() }));
+  child.stderr.on('data', (d) => {
+    const line = d.toString().trim();
+    if (line) console.error(`[runner stderr] ${line}`);
+    broadcast('runner_stderr', { line });
+  });
   child.on('exit', (code) => {
     sessionBuffer.endedAt = new Date().toISOString();
     broadcast('ended', { code });
@@ -489,6 +497,24 @@ async function handleApi(req, res, pathname) {
       } catch { return json(res, 200, { apps: [] }); }
     });
     return true;
+  }
+  if (pathname === '/api/logs' && req.method === 'GET') {
+    // Logs dos 4 serviços residentes (escritos por ./faladorctl em logs/<name>.log).
+    // Allowlist fixa de nomes: nunca lê caminho arbitrário.
+    const LOG_FILES = { omlx: 'omlx.log', asr: 'asr.log', tts: 'tts.log', web: 'web.log' };
+    const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
+    const name = String(u.searchParams.get('name') ?? 'web').toLowerCase();
+    const file = LOG_FILES[name];
+    if (!file) return json(res, 400, { error: `nome inválido (use: ${Object.keys(LOG_FILES).join(', ')})` }), true;
+    const maxLines = Math.min(Math.max(Number(u.searchParams.get('lines')) || 200, 1), 2000);
+    const p = join(LOGS_DIR, file);
+    if (!existsSync(p)) {
+      return json(res, 200, { name, path: p, lines: [], total: 0, truncated: false, note: 'log ainda não existe — suba os serviços com ./faladorctl start' }), true;
+    }
+    const all = readFileSync(p, 'utf-8').split(/\r?\n/);
+    while (all.length && all[all.length - 1] === '') all.pop();
+    const tail = all.slice(-maxLines);
+    return json(res, 200, { name, path: p, lines: tail, total: all.length, truncated: all.length > tail.length }), true;
   }
   if (pathname.startsWith('/api/flows/') && req.method === 'GET') {
     const name = decodeURIComponent(pathname.slice('/api/flows/'.length));

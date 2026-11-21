@@ -15,9 +15,12 @@ describe('apps/web-server.mjs — RAG genérico, reset-history e exportação p�
     const prevCtx = process.env.FALADOR_CONTEXT_DIR;
     const prevSess = process.env.FALADOR_SESSIONS_DIR;
     const prevOmlx = process.env.FALADOR_OMLX_URL;
+    const prevLogs = process.env.FALADOR_LOGS_DIR;
 
     process.env.FALADOR_CONTEXT_DIR = ctxDir;
     process.env.FALADOR_SESSIONS_DIR = sessDir;
+    const logsDir = join(tmpRoot, 'logs');
+    process.env.FALADOR_LOGS_DIR = logsDir;
     // Porta fechada para provar fallback silencioso de extractPoints -> [] sem depender do omlx real
     process.env.FALADOR_OMLX_URL = 'http://127.0.0.1:1';
 
@@ -159,6 +162,22 @@ describe('apps/web-server.mjs — RAG genérico, reset-history e exportação p�
         body: JSON.stringify({ text: 'Crie um workflow de transcrição' }),
       });
       assert.equal(chatNoRunRes.status, 409);
+
+      // 6) GET /api/logs — allowlist de serviços + tail de linhas
+      const { mkdirSync, writeFileSync } = await import('node:fs');
+      mkdirSync(logsDir, { recursive: true });
+      writeFileSync(join(logsDir, 'omlx.log'), 'linha1\nlinha2\nlinha3\n', 'utf-8');
+      const logsRes = await fetch(`${baseUrl}/api/logs?name=omlx&lines=2`);
+      assert.equal(logsRes.status, 200);
+      const logsBody = await logsRes.json();
+      assert.equal(logsBody.name, 'omlx');
+      assert.deepEqual(logsBody.lines, ['linha2', 'linha3']);
+      assert.equal(logsBody.truncated, true);
+      const missingLogs = await fetch(`${baseUrl}/api/logs?name=tts`);
+      assert.equal(missingLogs.status, 200);
+      assert.deepEqual((await missingLogs.json()).lines, []);
+      const badLogs = await fetch(`${baseUrl}/api/logs?name=${encodeURIComponent('../../etc/passwd')}`);
+      assert.equal(badLogs.status, 400);
     } finally {
       if (prevCtx === undefined) delete process.env.FALADOR_CONTEXT_DIR;
       else process.env.FALADOR_CONTEXT_DIR = prevCtx;
@@ -166,6 +185,8 @@ describe('apps/web-server.mjs — RAG genérico, reset-history e exportação p�
       else process.env.FALADOR_SESSIONS_DIR = prevSess;
       if (prevOmlx === undefined) delete process.env.FALADOR_OMLX_URL;
       else process.env.FALADOR_OMLX_URL = prevOmlx;
+      if (prevLogs === undefined) delete process.env.FALADOR_LOGS_DIR;
+      else process.env.FALADOR_LOGS_DIR = prevLogs;
       await new Promise((resolve) => server.close(() => resolve()));
       await new Promise((resolve) => webhookServer.close(() => resolve()));
       rmSync(tmpRoot, { recursive: true, force: true });
