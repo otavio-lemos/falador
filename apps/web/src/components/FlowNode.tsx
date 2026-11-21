@@ -12,6 +12,7 @@ export const PORT_COLOR: Record<string, string> = {
   tokens_parcial: '#a855f7', // roxo    — texto streaming
   phrase:         '#f59e0b', // âmbar   — texto completo
   audio_chunk:    '#22c55e', // verde   — áudio processado
+  tool:           '#0ea5e9', // azul    — conector de ferramenta (bidirecional)
 };
 const PORT_COLOR_DEFAULT = '#6b7280';
 

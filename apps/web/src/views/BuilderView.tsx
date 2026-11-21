@@ -70,7 +70,11 @@ export function BuilderView({
         ? { options: ['auto'] }
         : type === 'exec.command'
           ? { transport: 'local', mode: 'readonly', dryRun: true }
-          : {};
+          : type === 'tool.mcp'
+            ? { transport: 'stdio', dryRun: true, allowedTools: [] }
+            : type === 'agent.tools'
+              ? { approvalPolicy: 'always', maxSteps: 5, enableThinking: false }
+              : {};
     const node: FNode = {
       id, type: 'falador', position: pos,
       data: {

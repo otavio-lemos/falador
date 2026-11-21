@@ -130,7 +130,8 @@ EOF
 | `legendas-traducao-direta.json` | Tradução direta do áudio para PT via `asr.lfm3` (janela 12 s, sem nó LLM, menor uso de memória) |
 | `transcricao-ao-vivo.json` | Transcrição pura em tempo real (captura SCK → Voxtral streaming → legendas, menor latência) |
 | `tradutor-voz-en.json` | Pipeline completo de interpretação por voz: STT → Tradução PT→EN → Legenda + TTS EN → Alto-falante |
-| `revisao-servidor-ops.json` | **Ops / SRE (ADR-007):** voz → `turn.detector` (`d1`) → planejador LLM (`useContext: true` RAG BM25) → triagem `d1` (`leitura_segura` / `sensivel` / `bloqueado`) → `human.approve` → `exec.command` (`dryRun: true`, `mode: "readonly"`) → analista LLM → diagnóstico |
+| `revisao-servidor-ops.json` | **Ops / SRE single-shot (ADR-007):** voz → `turn.detector` (`d1`) → planejador LLM (`useContext: true` RAG BM25) → triagem `d1` (`leitura_segura` / `sensivel` / `bloqueado`) → `human.approve` → `exec.command` (`dryRun: true`, `mode: "readonly"`) → analista LLM → diagnóstico |
+| `agente-suporte-ops.json` | **Agente de Suporte multi-step (ADR-008):** voz → `turn.detector` → `agent.tools` (loop `tool_calls`, `approvalPolicy: "always"`, `maxSteps: 5`) conectado via porta bidirecional `tool` a `exec.command` (`dryRun: true`) e `rag.search` (BM25) → diagnóstico |
 | `test/demo-engine` / `test/demo-live` | fixtures de smoke (sintético / integração omlx+sidecar) — em `flows/test/`, fora do dropdown |
 
 > Captura nos flows: `backend: 'sck'`, `input: ''` — **escolha o app da call** no Inspector (Teams, zoom.us, Google Chrome…). SCK ouve SÓ esse app; precisa de permissão de Gravação de Tela (Ajustes → Privacidade e Segurança).
@@ -148,8 +149,8 @@ Eventos saem em NDJSON (`caption` com `trace`, `gate` com metadados estruturados
 ### 4d. Testes
 
 ```bash
-node --test --test-force-exit packages/falador-graph/test/*.test.ts   # motor: 18/18
-node --test --test-force-exit packages/falador-nodes/test/*.test.ts   # nós (incl. streaming, BM25, adversarial exec): 38/38 (+1 skip N7)
+node --test --test-force-exit packages/falador-graph/test/*.test.ts   # motor: 23/23 (incl. porta tool)
+node --test --test-force-exit packages/falador-nodes/test/*.test.ts   # nós (incl. streaming, BM25, exec, agent.tools, tool.mcp): 60/60 (+1 skip N7)
 node --test --test-force-exit apps/web-server.test.mjs                # host HTTP (RAG, reset-history, export .md/webhook): 1/1
 FALADOR_MIC_TEST=1 node --test --test-force-exit packages/falador-nodes/test/nodes.test.ts  # + N7 mic real
 cd apps/web && npx tsc --noEmit && npm run build                      # typecheck + build UI

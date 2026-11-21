@@ -12,6 +12,7 @@ import {
   type NodeRuntime,
   type RunEvent,
   type Snapshot,
+  type ToolProvider,
 } from './types.ts';
 
 const realClock: Clock = { now: () => Date.now() };
@@ -151,6 +152,19 @@ export class RunningGraph {
       },
       isCancelled(port, seq): boolean {
         return self.cancelledSeqs.get(vn.id)?.get(port)?.has(seq) ?? false;
+      },
+      getTools(port: string): ToolProvider[] {
+        const dp = vn.def.inputs.find((p) => p.name === port);
+        if (!dp || dp.type !== 'tool') return [];
+        const providers: ToolProvider[] = [];
+        for (const e of self.flow.edges) {
+          if (e.toNode !== vn.id || e.toPort !== port || e.portType !== 'tool') continue;
+          const srcState = self.nodeStates.get(e.fromNode);
+          if (srcState?.runtime?.toolProvider) {
+            providers.push(srcState.runtime.toolProvider);
+          }
+        }
+        return providers;
       },
       async emit(port, payload, emitOpts) {
         const vnode = self.flow.nodes.get(vn.id)!;

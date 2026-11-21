@@ -31,7 +31,7 @@ import {
   Reset,
   Terminal,
 } from '@carbon/icons-react';
-import type { Runner, Gate } from '../useRunner';
+import type { Runner, Gate, AgentStep } from '../useRunner';
 import { exportSession, fetchTopics, resetHistory, type Flow, type ContextDoc } from '../api';
 import { deriveStages, classifySinks, shortModel, isTextModel, isAsrModel, type Stage } from '../live-utils';
 import { LANGS } from '../data';
@@ -78,6 +78,7 @@ function stageItems(stage: Stage, models: { omlx: string[]; cache: string[] }, a
 
 function parseGateCommand(gate: Gate | undefined): {
   isCommand: boolean;
+  tool?: string;
   host: string;
   command: string;
   decision?: string;
@@ -85,12 +86,13 @@ function parseGateCommand(gate: Gate | undefined): {
 } {
   if (!gate) return { isCommand: false, host: 'local', command: '' };
   const meta = gate.meta;
+  let tool = meta?.tool;
   let host = meta?.host;
   let command = meta?.command;
   let decision = meta?.decision;
   let reason = meta?.reason;
 
-  if (!command) {
+  if (!command || !tool) {
     try {
       const trimmed = gate.text.trim();
       const candidate = trimmed.startsWith('{')
@@ -98,7 +100,8 @@ function parseGateCommand(gate: Gate | undefined): {
         : (trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim() ?? '');
       if (candidate.startsWith('{')) {
         const obj = JSON.parse(candidate) as Record<string, unknown>;
-        if (typeof obj.command === 'string') command = obj.command;
+        if (typeof obj.tool === 'string' && !tool) tool = obj.tool;
+        if (typeof obj.command === 'string' && !command) command = obj.command;
         if (typeof obj.host === 'string' && !host) host = obj.host;
         if (typeof obj.reason === 'string' && !reason) reason = obj.reason;
         if (typeof obj.decision === 'string' && !decision) decision = obj.decision;
@@ -106,14 +109,24 @@ function parseGateCommand(gate: Gate | undefined): {
     } catch { /* não é JSON */ }
   }
 
-  const isCommand = Boolean(command || meta?.host || meta?.command || meta?.reason);
+  const isCommand = Boolean(command || tool || meta?.host || meta?.command || meta?.reason || meta?.tool);
   return {
     isCommand,
+    tool,
     host: host || 'local',
     command: command ?? gate.text,
     decision,
     reason,
   };
+}
+
+function agentStepStatus(s: AgentStep): { label: string; tagType: 'blue' | 'green' | 'red' | 'magenta' | 'cyan' | 'warm-gray' } {
+  if (s.phase === 'calling') return { label: 'chamando', tagType: 'blue' };
+  if (s.phase === 'rejected') return { label: 'rejeitado', tagType: 'magenta' };
+  if (s.phase === 'repeated') return { label: 'repetido', tagType: 'warm-gray' };
+  if (s.dryRun) return { label: 'dry-run', tagType: 'cyan' };
+  if (s.ok === false) return { label: 'erro', tagType: 'red' };
+  return { label: 'ok', tagType: 'green' };
 }
 
 function riskTagType(decision?: string): 'green' | 'warm-gray' | 'red' | 'magenta' | 'purple' {
@@ -161,18 +174,23 @@ export function LiveView({
   const captureApp = stages.find((s) => s.kind === 'app')?.value ?? '—';
 
   // NADA FIXO: painéis e indicadores derivam dos nós presentes no workflow.
-  const hasGate = flow.nodes.some((n) => n.type === 'human.approve');
+  const hasGate = flow.nodes.some(
+    (n) => n.type === 'human.approve' || (n.type === 'agent.tools' && n.params.approvalPolicy !== 'never'),
+  );
   const hasTTS = flow.nodes.some((n) => n.type === 'tts.sts');
-  const hasLLM = flow.nodes.some((n) => n.type === 'llm.omlx');
-  const execNodes = flow.nodes.filter((n) => n.type === 'exec.command');
+  const hasLLM = flow.nodes.some((n) => n.type === 'llm.omlx' || n.type === 'agent.tools');
+  const execNodes = flow.nodes.filter((n) => n.type === 'exec.command' || n.type === 'tool.mcp');
   const hasExec = execNodes.length > 0;
   const execActive = execNodes.some((n) => n.params.dryRun === false);
-  const isAssisted = flow.nodes.some((n) => n.type === 'decision.llm' || n.type === 'human.approve' || n.type === 'exec.command');
-  const isInterview = flow.nodes.some((n) => (n.type === 'decision.llm' || n.type === 'human.approve')) && !hasExec;
+  const hasAgent = flow.nodes.some((n) => n.type === 'agent.tools');
+  const isAssisted = flow.nodes.some(
+    (n) => n.type === 'decision.llm' || n.type === 'human.approve' || n.type === 'exec.command' || n.type === 'agent.tools',
+  );
+  const isInterview = flow.nodes.some((n) => (n.type === 'decision.llm' || n.type === 'human.approve')) && !hasExec && !hasAgent;
   const allSinks = new Set([...sinks.transcription, ...sinks.suggestion]);
 
   const heroText = isAssisted ? (gate ? gate.text : (lastOf(sinks.suggestion)?.text ?? '')) : (lastOf(allSinks)?.text ?? '');
-  const heroLabel = hasExec
+  const heroLabel = hasExec || hasAgent
     ? 'Diagnóstico / Comando sugerido'
     : isInterview
       ? 'Sugestão de resposta (para você falar)'
@@ -350,6 +368,9 @@ export function LiveView({
               <div className="cmd-gate-head">
                 <span className="cmd-gate-title"><Terminal size={16} /> Aprovação de Comando ({gate.nodeId})</span>
                 <div className="cmd-gate-badges">
+                  {gateInfo.tool && (
+                    <Tag type="teal" size="sm">Tool: {gateInfo.tool}</Tag>
+                  )}
                   <Tag type="cyan" size="sm">Host: {gateInfo.host}</Tag>
                   {gateInfo.decision && (
                     <Tag type={riskTagType(gateInfo.decision)} size="sm">Risco d1: {gateInfo.decision}</Tag>
@@ -414,6 +435,27 @@ export function LiveView({
                 <p className="live2-hint">Roteamento automático — sem gate humano pendente.</p>
               )}
             </>
+          )}
+
+          {runner.agentSteps.length > 0 && (
+            <section className="agent-timeline" aria-label="Passos do agente">
+              <div className="live2-label">Passos do agente ({runner.agentSteps.length})</div>
+              <div className="agent-timeline-list">
+                {runner.agentSteps.map((s, idx) => {
+                  const st = agentStepStatus(s);
+                  return (
+                    <div key={`${s.nodeId}-${s.step}-${s.phase}-${idx}`} className="agent-step-row">
+                      <span className="agent-step-num">Passo {s.step}</span>
+                      <code className="agent-step-tool">{s.tool}</code>
+                      <Tag type={st.tagType} size="sm">{st.label}</Tag>
+                      {typeof s.durationMs === 'number' && (
+                        <span className="agent-step-dur">{Math.round(s.durationMs)} ms</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
           )}
         </main>
 

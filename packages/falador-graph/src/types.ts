@@ -7,7 +7,34 @@ export type PortType =
   | 'audio_chunk'
   | 'tokens_parcial'
   | 'phrase'
-  | 'control';
+  | 'control'
+  | 'tool';
+
+export interface ToolDef {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  readonly?: boolean;
+  sourceNodeId: string;
+}
+
+export interface ToolCallResult {
+  ok: boolean;
+  output: string;
+  exitCode?: number;
+  dryRun?: boolean;
+  durationMs: number;
+  meta?: Record<string, unknown>;
+}
+
+export interface ToolProvider {
+  listTools(): Promise<ToolDef[]> | ToolDef[];
+  invoke(
+    name: string,
+    args: Record<string, unknown>,
+    opts: { signal: AbortSignal; runId: string; callerNodeId: string },
+  ): Promise<ToolCallResult>;
+}
 
 export type OverflowPolicy = 'drop_oldest' | 'drop_newest' | 'block';
 export type NodeErrorPolicy = 'isolate' | 'stop_run';
@@ -99,6 +126,8 @@ export interface NodeCtx {
   log(level: 'debug' | 'info' | 'warn' | 'error', msg: string): void;
   /** Abortado no stop() do Run. */
   readonly signal: AbortSignal;
+  /** Retorna provedores conectados à porta de entrada `'tool'` na ordem das arestas (ADR-008). */
+  getTools?(port: string): ToolProvider[];
 }
 
 export interface NodeRuntime {
@@ -108,6 +137,8 @@ export interface NodeRuntime {
   stop(reason: string): Promise<void>;
   /** Default do motor: registra cancelamentos. Sobrescreva para reagir. */
   onControl?(c: ControlMsg): void;
+  /** Provedor de tools exposto por nós com porta de saída `'tool'` (ADR-008). */
+  toolProvider?: ToolProvider;
 }
 
 export interface MetricsSink {

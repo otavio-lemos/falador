@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "stopWhenSourcesDone": false,
+  "description": "Agente de Suporte Ops multi-step (ADR-008): captura a solicitação via SCK, transcreve com Voxtral, aguarda fim de turno com d1-2B e aciona agent.tools com busca RAG BM25 (rag.search) e diagnóstico local (exec.command readonly, dryRun=true) sujeito a aprovação humana (approvalPolicy=always).",
+  "nodes": [
+    {
+      "id": "captura",
+      "type": "capture.ffmpeg",
+      "params": {
+        "input": "",
+        "chunkMs": 80,
+        "backend": "sck"
+      }
+    },
+    {
+      "id": "asr",
+      "type": "asr.realtime",
+      "params": {
+        "model": "/Users/otaviolemos/.cache/huggingface/hub/models--mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit/snapshots/fdebf7b2af834a1db4b8a3c99ab7480b333adf9e",
+        "serverVad": true,
+        "inputRate": 16000,
+        "maxPendingMs": 2000,
+        "emitInterruptOnSpeech": false
+      }
+    },
+    {
+      "id": "transcricao",
+      "type": "sink.captions",
+      "params": {
+        "mode": "callback",
+        "showParcials": true
+      }
+    },
+    {
+      "id": "turno",
+      "type": "turn.detector",
+      "params": {
+        "mode": "systemone",
+        "model": "d1-2B-MLX-4bit",
+        "minWords": 3,
+        "completeThreshold": 0.65,
+        "maxWaitMs": 2200,
+        "maxMergedTurns": 4
+      }
+    },
+    {
+      "id": "exec_local",
+      "type": "exec.command",
+      "params": {
+        "transport": "local",
+        "mode": "readonly",
+        "dryRun": true,
+        "timeoutMs": 15000,
+        "maxOutputBytes": 32768
+      }
+    },
+    {
+      "id": "rag_docs",
+      "type": "rag.search",
+      "params": {
+        "topK": 3,
+        "maxChars": 2400
+      }
+    },
+    {
+      "id": "agente",
+      "type": "agent.tools",
+      "params": {
+        "approvalPolicy": "always",
+        "maxSteps": 5,
+        "enableThinking": false,
+        "historyMax": 4,
+        "historyCharBudget": 4000,
+        "system": "Você é um agente SRE/Ops de suporte técnico. Use search_docs para consultar runbooks locais e exec_local para diagnósticos somente-leitura. Ao final, devolva um diagnóstico objetivo em português (2-4 frases) destacando causa raiz e próximo passo."
+      }
+    },
+    {
+      "id": "diagnostico",
+      "type": "sink.captions",
+      "params": {
+        "mode": "callback",
+        "showParcials": true
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "captura.out",
+      "to": "asr.in",
+      "capacity": 32,
+      "overflow": "drop_oldest",
+      "ttlMs": 1500
+    },
+    {
+      "from": "asr.out",
+      "to": "transcricao.in",
+      "capacity": 16,
+      "overflow": "drop_oldest"
+    },
+    {
+      "from": "asr.out",
+      "to": "turno.in",
+      "capacity": 16,
+      "overflow": "drop_oldest"
+    },
+    {
+      "from": "turno.out",
+      "to": "agente.parcs",
+      "capacity": 16,
+      "overflow": "block"
+    },
+    {
+      "from": "exec_local.tool",
+      "to": "agente.tools",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "rag_docs.tool",
+      "to": "agente.tools",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "agente.out",
+      "to": "diagnostico.in",
+      "capacity": 16,
+      "overflow": "drop_oldest"
+    }
+  ]
+}

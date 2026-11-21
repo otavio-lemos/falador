@@ -52,6 +52,7 @@ function createEmptySession(flowName = 'sessao') {
     flowName,
     captions: [], // { ts, nodeId, kind, text, trace? }
     approved: [], // { ts, nodeId, text }
+    agentSteps: [], // { ts, nodeId, step, phase, tool, args?, ok?, durationMs?, dryRun? }
     topics: [],
     traces: [],
   };
@@ -259,6 +260,28 @@ function formatSessionMarkdown(session, latencySummary) {
   }
   lines.push('');
 
+  if (Array.isArray(session.agentSteps) && session.agentSteps.length > 0) {
+    lines.push('## Passos do Agente (Tools)');
+    lines.push('');
+    for (const s of session.agentSteps) {
+      const status =
+        s.phase === 'calling'
+          ? 'chamando'
+          : s.phase === 'rejected'
+            ? 'rejeitado'
+            : s.phase === 'repeated'
+              ? 'repetido'
+              : s.dryRun
+                ? 'dry-run'
+                : s.ok === false
+                  ? 'erro'
+                  : 'ok';
+      const dur = typeof s.durationMs === 'number' ? ` (${s.durationMs}ms)` : '';
+      lines.push(`- [${s.ts}] (${s.nodeId}) Passo ${s.step}: \`${s.tool}\` — ${status}${dur}`);
+    }
+    lines.push('');
+  }
+
   lines.push('## Resumo de Latência');
   lines.push('');
   const fmt = (stat) => (stat.p50 == null ? '—' : `p50=${stat.p50}ms / p95=${stat.p95}ms`);
@@ -363,6 +386,20 @@ function startRun(flow, runSeconds, flowName) {
           sessionBuffer.traces.push(ev.trace);
           if (sessionBuffer.traces.length > 500) sessionBuffer.traces.shift();
         }
+      }
+      if (ev.type === 'agent_step') {
+        sessionBuffer.agentSteps.push({
+          ts: new Date().toISOString(),
+          nodeId: String(ev.nodeId ?? ''),
+          step: typeof ev.step === 'number' ? ev.step : 0,
+          phase: String(ev.phase ?? ''),
+          tool: String(ev.tool ?? ''),
+          ...(ev.args && typeof ev.args === 'object' ? { args: ev.args } : {}),
+          ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : {}),
+          ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : {}),
+          ...(typeof ev.dryRun === 'boolean' ? { dryRun: ev.dryRun } : {}),
+        });
+        if (sessionBuffer.agentSteps.length > 500) sessionBuffer.agentSteps.shift();
       }
       // undici keep-alive: o child do runner pode não sair sozinho no fim do run
       // (lição §4) — emitido run_stopped/summary, encerra o child e libera o next run.

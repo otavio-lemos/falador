@@ -25,11 +25,25 @@ export interface LatencyBreakdown {
 }
 
 export interface GateMeta {
+  tool?: string;
   decision?: string;
   host?: string;
   command?: string;
   reason?: string;
+  args?: Record<string, unknown>;
+  step?: number;
   trace?: TraceMeta;
+}
+
+export interface AgentStep {
+  nodeId: string;
+  step: number;
+  phase: 'calling' | 'rejected' | 'result' | 'repeated';
+  tool: string;
+  args?: Record<string, unknown>;
+  ok?: boolean;
+  durationMs?: number;
+  dryRun?: boolean;
 }
 
 export interface Caption {
@@ -73,6 +87,7 @@ export function useRunner() {
   const [events, setEvents] = useState<RunnerEvent[]>([]);
   const [captions, setCaptions] = useState<Caption[]>([]);
   const [gates, setGates] = useState<Gate[]>([]);
+  const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
   const [latency, setLatency] = useState<number | null>(null);
   const [latencyBreakdown, setLatencyBreakdown] = useState<LatencyBreakdown | null>(null);
   const ctlRef = useRef<AbortController | null>(null);
@@ -94,6 +109,7 @@ export function useRunner() {
     setEvents([]);
     setCaptions([]);
     setGates([]);
+    setAgentSteps([]);
     setLatency(null);
     setLatencyBreakdown(null);
     ctlRef.current = openRun(
@@ -124,6 +140,25 @@ export function useRunner() {
           ]);
         } else if (ev.type === 'gate_cancelled') {
           setGates((g) => g.filter((x) => x.nodeId !== ev.nodeId));
+        } else if (ev.type === 'agent_step') {
+          const phaseRaw = String(ev.phase ?? 'calling');
+          const phase: AgentStep['phase'] =
+            phaseRaw === 'rejected' || phaseRaw === 'result' || phaseRaw === 'repeated'
+              ? phaseRaw
+              : 'calling';
+          setAgentSteps((s) => [
+            ...s.slice(-100),
+            {
+              nodeId: String(ev.nodeId ?? ''),
+              step: typeof ev.step === 'number' ? ev.step : 0,
+              phase,
+              tool: String(ev.tool ?? ''),
+              ...(ev.args && typeof ev.args === 'object' ? { args: ev.args as Record<string, unknown> } : {}),
+              ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : {}),
+              ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : {}),
+              ...(typeof ev.dryRun === 'boolean' ? { dryRun: ev.dryRun } : {}),
+            },
+          ]);
         }
       },
       () => setRunning(false),
@@ -136,6 +171,6 @@ export function useRunner() {
     void gateAction(nodeId, text);
     setGates((g) => g.filter((x) => x.nodeId !== nodeId));
   };
-  return { running, metrics, events, captions, gates, latency, latencyBreakdown, start, stop, gate };
+  return { running, metrics, events, captions, gates, agentSteps, latency, latencyBreakdown, start, stop, gate };
 }
 export type Runner = ReturnType<typeof useRunner>;
