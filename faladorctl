@@ -82,7 +82,7 @@ cmd_start() {
       ok=0
     fi
   done
-  [ "$ok" -eq 1 ] && echo "=> PRONTO — todos listados em ./faladorctl status" \
+  [ "$ok" -eq 1 ] && echo "=> tudo no ar. UI: http://127.0.0.1:8787" \
                   || { echo "=> FALHA PARCIAL — veja logs/"; exit 1; }
 }
 
