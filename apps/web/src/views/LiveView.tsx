@@ -2,13 +2,16 @@
 // Exportar sessão (.md / webhook) + card rico de aprovação (comandos/host/risco d1) +
 // sidebar de Documentos/Runbooks (RAG BM25 com tags e chunks).
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import {
   Button,
   Dropdown,
   Modal,
+  MultiSelect,
   Tag,
   TextArea,
   TextInput,
+  Toggle,
   Toggletip,
   ToggletipButton,
   ToggletipContent,
@@ -30,6 +33,8 @@ import {
   Download,
   Reset,
   Terminal,
+  ChevronDown,
+  ChevronUp,
 } from '@carbon/icons-react';
 import type { Runner, Gate, AgentStep } from '../useRunner';
 import { exportSession, fetchLogs, fetchTopics, resetHistory, type Flow, type ContextDoc } from '../api';
@@ -37,6 +42,9 @@ import { deriveStages, classifySinks, shortModel, isTextModel, isAsrModel, type 
 import { LANGS } from '../data';
 
 const WEBHOOK_STORAGE_KEY = 'falador.webhookUrl';
+const LOG_SERVICES_KEY = 'falador.logServices';
+const LOG_HEIGHT_KEY = 'falador.logsHeight';
+const LOG_COLLAPSED_KEY = 'falador.logsCollapsed';
 
 const LOG_SERVICES = [
   { id: 'omlx', label: 'LLM (omlx :8080)' },
@@ -44,6 +52,56 @@ const LOG_SERVICES = [
   { id: 'tts', label: 'TTS (:8091)' },
   { id: 'web', label: 'Host/UI (:8787)' },
 ];
+
+interface LogService { id: string; label: string }
+
+const LOG_MIN_HEIGHT = 160;
+const LOG_MAX_VH = 0.85;
+const LOG_DEFAULT_VH = 0.42;
+
+function viewportHeight(): number {
+  if (typeof window === 'undefined') return 900;
+  return window.innerHeight || 900;
+}
+
+// Altura em px, limitada a 85% da janela (o painel ocupa o espaço vertical livre).
+function clampLogHeight(h: number): number {
+  const max = Math.max(320, Math.round(viewportHeight() * LOG_MAX_VH));
+  if (!Number.isFinite(h)) return clampLogHeight(Math.round(viewportHeight() * LOG_DEFAULT_VH));
+  return Math.min(max, Math.max(LOG_MIN_HEIGHT, Math.round(h)));
+}
+
+// Seleção inicial: só `omlx` (tem log útil). Persistida para a próxima sessão.
+function readLogServices(): string[] {
+  try {
+    const raw = localStorage.getItem(LOG_SERVICES_KEY);
+    if (!raw) return ['omlx'];
+    const parsed: unknown = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      const ids = parsed.filter((v): v is string => typeof v === 'string');
+      return LOG_SERVICES.map((s) => s.id).filter((id) => ids.includes(id));
+    }
+  } catch { /* storage indisponível */ }
+  return ['omlx'];
+}
+
+function readLogHeight(): number {
+  try {
+    const raw = localStorage.getItem(LOG_HEIGHT_KEY);
+    if (raw !== null) return clampLogHeight(Number(raw));
+  } catch { /* storage indisponível */ }
+  // padrão grande (~42vh): ocupa o vazio vertical da tela de execução
+  return clampLogHeight(Math.round(viewportHeight() * LOG_DEFAULT_VH));
+}
+
+function readLogCollapsed(): boolean {
+  try {
+    const raw = localStorage.getItem(LOG_COLLAPSED_KEY);
+    if (raw === 'true') return true;
+    if (raw === 'false') return false;
+  } catch { /* storage indisponível */ }
+  return false;
+}
 
 interface Props {
   runner: Runner;
@@ -62,6 +120,8 @@ interface Props {
   onRegenerate: () => void;
   onRefreshApps: () => void;
   onNotify?: (msg: string) => void;
+  captureEnabled: boolean;
+  onToggleCapture: (next: boolean) => void;
   onExit: () => void;
 }
 
@@ -148,7 +208,8 @@ function riskTagType(decision?: string): 'green' | 'warm-gray' | 'red' | 'magent
 export function LiveView({
   runner, flow, scenarioName, models, apps, contextDocs,
   onUploadDoc, onRemoveDoc, onStart, flows, currentFlow,
-  onSwitchFlow, onUpdateStage, onRegenerate, onRefreshApps, onNotify, onExit,
+  onSwitchFlow, onUpdateStage, onRegenerate, onRefreshApps, onNotify,
+  captureEnabled, onToggleCapture, onExit,
 }: Props) {
   const stages = useMemo(() => deriveStages(flow), [flow]);
   const sinks = useMemo(() => classifySinks(flow), [flow]);
@@ -166,31 +227,90 @@ export function LiveView({
     try { return localStorage.getItem(WEBHOOK_STORAGE_KEY) ?? ''; } catch { return ''; }
   });
   const fileRef = useRef<HTMLInputElement>(null);
-  const logsRef = useRef<HTMLPreElement>(null);
-  const [logService, setLogService] = useState('web');
-  const [logs, setLogs] = useState<string[]>([]);
+  const logsRefs = useRef<Record<string, HTMLPreElement | null>>({});
+  const [logServices, setLogServices] = useState<string[]>(readLogServices);
+  const [logsByService, setLogsByService] = useState<Record<string, string[]>>({});
+  const [logsHeight, setLogsHeight] = useState<number>(readLogHeight);
+  const [logsCollapsed, setLogsCollapsed] = useState<boolean>(readLogCollapsed);
+  const logsHeightRef = useRef(logsHeight);
 
-  // Logs dos 4 serviços residentes (logs/<nome>.log): poll do serviço selecionado no dropdown.
+  // Logs dos serviços residentes (logs/<nome>.log): poll de TODOS os serviços selecionados
+  // a cada 1,5 s — vários terminais ao mesmo tempo, um por serviço.
   useEffect(() => {
+    if (!logServices.length) { setLogsByService({}); return; }
     let alive = true;
     const load = async () => {
-      try {
-        const r = await fetchLogs(logService, 300);
-        if (alive) setLogs(r.lines);
-      } catch {
-        if (alive) setLogs([`(falha ao ler logs/${logService}.log)`]);
-      }
+      const entries = await Promise.all(logServices.map(async (svc) => {
+        try {
+          const r = await fetchLogs(svc, 300);
+          return [svc, r.lines] as const;
+        } catch {
+          return [svc, [`(falha ao ler logs/${svc}.log)`]] as const;
+        }
+      }));
+      if (alive) setLogsByService(Object.fromEntries(entries));
     };
     void load();
     const t = setInterval(() => void load(), 1500);
     return () => { alive = false; clearInterval(t); };
-  }, [logService]);
+  }, [logServices]);
 
-  // auto-scroll do terminal para o fim
+  // auto-scroll de cada terminal para o fim (respeita o usuário que rolou para cima)
   useEffect(() => {
-    const el = logsRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [logs]);
+    for (const svc of logServices) {
+      const el = logsRefs.current[svc];
+      if (!el) continue;
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+      if (atBottom) el.scrollTop = el.scrollHeight;
+    }
+  }, [logsByService, logServices]);
+
+  const persistLogServices = (next: string[]) => {
+    setLogServices(next);
+    try { localStorage.setItem(LOG_SERVICES_KEY, JSON.stringify(next)); } catch { /* storage indisponível */ }
+  };
+  const onLogServicesChange = (selected: LogService[] | null) => {
+    const ids = (selected ?? []).map((s) => s.id);
+    persistLogServices(LOG_SERVICES.map((s) => s.id).filter((id) => ids.includes(id)));
+  };
+  const removeLogService = (id: string) => persistLogServices(logServices.filter((s) => s !== id));
+
+  const persistLogsHeight = (h: number) => {
+    try { localStorage.setItem(LOG_HEIGHT_KEY, String(clampLogHeight(h))); } catch { /* storage indisponível */ }
+  };
+  const applyLogsHeight = (h: number) => {
+    const next = clampLogHeight(h);
+    logsHeightRef.current = next;
+    setLogsHeight(next);
+  };
+  // Alça de resize no TOPO do painel: arrastar para cima aumenta a altura.
+  const onLogsResizeStart = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (logsCollapsed) return;
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = logsHeightRef.current;
+    const onMove = (ev: PointerEvent) => applyLogsHeight(startH + (startY - ev.clientY));
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      persistLogsHeight(logsHeightRef.current);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+  const onLogsResizeKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    e.preventDefault();
+    applyLogsHeight(logsHeightRef.current + (e.key === 'ArrowUp' ? 24 : -24));
+    persistLogsHeight(logsHeightRef.current);
+  };
+  const toggleLogsCollapsed = () => {
+    const next = !logsCollapsed;
+    setLogsCollapsed(next);
+    try { localStorage.setItem(LOG_COLLAPSED_KEY, String(next)); } catch { /* storage indisponível */ }
+  };
+
+  const totalLogLines = logServices.reduce((sum, svc) => sum + (logsByService[svc]?.length ?? 0), 0);
 
   const lastOf = (set: Set<string>) => [...runner.captions].reverse().find((c) => set.has(c.nodeId));
   const transcription = lastOf(sinks.transcription)?.text ?? '';
@@ -208,6 +328,7 @@ export function LiveView({
   const captureApp = stages.find((s) => s.kind === 'app')?.value ?? '—';
 
   // NADA FIXO: painéis e indicadores derivam dos nós presentes no workflow.
+  const hasCapture = flow.nodes.some((n) => n.type === 'capture.ffmpeg');
   const hasGate = flow.nodes.some(
     (n) => n.type === 'human.approve' || (n.type === 'agent.tools' && n.params.approvalPolicy !== 'never'),
   );
@@ -453,24 +574,44 @@ export function LiveView({
             </>
           )}
 
-          <div className="live2-stages">
-            {stages.map((s) => {
-              const items = stageItems(s, models, apps);
-              return (
-                <div key={s.key} className="stage-dd" style={{ ['--accent' as string]: s.accent }}>
-                  <span className="stage-dd-label">{s.label}</span>
-                  <Dropdown
-                    id={`stage-${s.key}`} size="sm" titleText={s.label} hideLabel label={s.label}
-                    items={items} itemToString={(it) => (it ? it.label : '')}
-                    selectedItem={items.find((i) => i.id === s.value) ?? items[0]}
-                    onChange={({ selectedItem }) => selectedItem && onUpdateStage(s.nodeId, s.param, selectedItem.id)}
-                  />
-                  {s.kind === 'app' && (
-                    <Button kind="ghost" size="sm" hasIconOnly renderIcon={Renew} iconDescription="Recarregar apps" tooltipPosition="bottom" onClick={onRefreshApps} />
-                  )}
-                </div>
-              );
-            })}
+          <div className="live2-stages-row">
+            {hasCapture && (
+              <div className="live2-capture">
+                <Toggle
+                  id="live-capture-toggle"
+                  size="sm"
+                  labelText="Captura de áudio"
+                  labelA="Desligada"
+                  labelB="Ligada"
+                  toggled={captureEnabled}
+                  onToggle={onToggleCapture}
+                />
+                <span className="live2-capture-hint">
+                  {captureEnabled
+                    ? (runner.running ? 'capturando' : 'aplicada ao iniciar')
+                    : (runner.running ? 'captura desligada' : 'será ignorada no run')}
+                </span>
+              </div>
+            )}
+            <div className="live2-stages">
+              {stages.map((s) => {
+                const items = stageItems(s, models, apps);
+                return (
+                  <div key={s.key} className="stage-dd" style={{ ['--accent' as string]: s.accent }}>
+                    <span className="stage-dd-label">{s.label}</span>
+                    <Dropdown
+                      id={`stage-${s.key}`} size="sm" titleText={s.label} hideLabel label={s.label}
+                      items={items} itemToString={(it) => (it ? it.label : '')}
+                      selectedItem={items.find((i) => i.id === s.value) ?? items[0]}
+                      onChange={({ selectedItem }) => selectedItem && onUpdateStage(s.nodeId, s.param, selectedItem.id)}
+                    />
+                    {s.kind === 'app' && (
+                      <Button kind="ghost" size="sm" hasIconOnly renderIcon={Renew} iconDescription="Recarregar apps" tooltipPosition="bottom" onClick={onRefreshApps} />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           {chatNode ? (
@@ -707,20 +848,84 @@ export function LiveView({
         </aside>
       </div>
 
-      <section className="logs-panel" aria-label="Logs dos serviços">
+      <section
+        className={`logs-panel${logsCollapsed ? ' logs-panel--collapsed' : ''}`}
+        aria-label="Logs dos serviços"
+        style={{ ['--logs-h' as string]: `${logsHeight}px` }}
+      >
+        {!logsCollapsed && (
+          <div
+            className="logs-resizer"
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Redimensionar painel de logs (arraste ou use as setas)"
+            tabIndex={0}
+            onPointerDown={onLogsResizeStart}
+            onKeyDown={onLogsResizeKeyDown}
+          >
+            <span className="logs-resizer-grip" />
+          </div>
+        )}
         <div className="logs-panel-head">
           <span className="logs-panel-title"><Terminal size={16} /> Logs dos serviços</span>
-          <Dropdown
-            id="logs-service-dd" size="sm" titleText="Serviço" hideLabel label="Serviço"
-            items={LOG_SERVICES}
-            itemToString={(it) => (it ? it.label : '')}
-            selectedItem={LOG_SERVICES.find((s) => s.id === logService) ?? LOG_SERVICES[0]}
-            onChange={({ selectedItem }) => setLogService(selectedItem?.id ?? 'web')}
-          />
+          <div className="logs-panel-services">
+            <MultiSelect
+              id="logs-services"
+              size="sm"
+              titleText="Serviços"
+              hideLabel
+              label="Serviços"
+              items={LOG_SERVICES}
+              itemToString={(it) => (it ? it.label : '')}
+              selectedItems={LOG_SERVICES.filter((s) => logServices.includes(s.id))}
+              onChange={({ selectedItems }) => onLogServicesChange(selectedItems)}
+            />
+          </div>
           <Tag type="green" size="sm">auto 1,5s</Tag>
-          <span className="logs-panel-hint">logs/&lt;serviço&gt;.log · estilo terminal</span>
+          <span className="logs-panel-count">{totalLogLines} linhas</span>
+          <Button
+            kind="ghost"
+            size="sm"
+            hasIconOnly
+            renderIcon={logsCollapsed ? ChevronDown : ChevronUp}
+            iconDescription={logsCollapsed ? 'Expandir logs' : 'Recolher logs'}
+            tooltipPosition="left"
+            onClick={toggleLogsCollapsed}
+          />
         </div>
-        <pre ref={logsRef} className="logs-terminal">{logs.length ? logs.join('\n') : 'sem linhas ainda...'}</pre>
+        {!logsCollapsed && (
+          <div className="logs-panel-body">
+            {logServices.length === 0 && (
+              <p className="logs-panel-empty">Nenhum serviço selecionado — escolha os serviços no seletor acima.</p>
+            )}
+            {logServices.map((svc) => {
+              const meta = LOG_SERVICES.find((s) => s.id === svc);
+              const lines = logsByService[svc] ?? [];
+              return (
+                <div key={svc} className="logs-block">
+                  <div className="logs-block-head">
+                    <span className="logs-block-title">{meta?.label ?? svc}</span>
+                    <code className="logs-block-path">logs/{svc}.log</code>
+                    <span className="logs-block-count">{lines.length} linhas</span>
+                    <Button
+                      kind="ghost"
+                      size="sm"
+                      hasIconOnly
+                      renderIcon={Close}
+                      iconDescription={`Remover logs de ${svc}`}
+                      tooltipPosition="left"
+                      onClick={() => removeLogService(svc)}
+                    />
+                  </div>
+                  <pre
+                    className="logs-terminal"
+                    ref={(el) => { logsRefs.current[svc] = el; }}
+                  >{lines.length ? lines.join('\n') : `sem linhas — logs/${svc}.log (suba com ./faladorctl start)`}</pre>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </section>
 
       <Modal
