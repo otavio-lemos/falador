@@ -116,19 +116,19 @@ export function sanitizeFlow(flow: Flow): Flow {
   };
 }
 
-// RAG leve: injeta os pontos-chave dos documentos no system prompt do assistente
-// (llm.omlx) — só em flows de entrevista (que têm decision.llm ou human.approve),
-// pra não contaminar um flow de tradução puro.
+// RAG legado: injeta pontos-chave dos documentos no system prompt apenas quando o nó
+// llm.omlx não usa o retriever BM25 nativo (useContext: true) e não é um tradutor puro.
 export function applyContext(flow: Flow, docs: ContextDoc[]): Flow {
-  const isInterview = flow.nodes.some((n) => n.type === 'decision.llm' || n.type === 'human.approve');
-  if (!docs.length || !isInterview) return flow;
+  if (!docs.length) return flow;
   const points = docs.flatMap((d) => d.points.map((p) => `- ${p}`));
   if (!points.length) return flow;
-  const ctx = `Contexto do candidato (currículo / job description):\n${points.join('\n')}`;
+  const ctx = `Contexto dos documentos carregados:\n${points.join('\n')}`;
   return {
     ...flow,
-    nodes: flow.nodes.map((n) => (n.type === 'llm.omlx'
-      ? { ...n, params: { ...n.params, system: [ctx, n.params.system].filter(Boolean).join('\n\n') } }
-      : n)),
+    nodes: flow.nodes.map((n) => {
+      if (n.type !== 'llm.omlx') return n;
+      if (n.params.useContext === true || n.params.useContext === false || n.params.targetLanguage) return n;
+      return { ...n, params: { ...n.params, system: [ctx, n.params.system].filter(Boolean).join('\n\n') } };
+    }),
   };
 }

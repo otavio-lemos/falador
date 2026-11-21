@@ -1,9 +1,10 @@
 {
   "version": 1,
   "stopWhenSourcesDone": false,
+  "description": "Tradução simultânea EN → PT em tempo real (~1,1 s): captura o áudio da call (Teams, Zoom ou Meet) via SCK, transcreve com Voxtral streaming e traduz para português do Brasil natural em legendas ao vivo.",
   "nodes": [
     {
-      "id": "pipasist",
+      "id": "captura",
       "type": "capture.ffmpeg",
       "params": {
         "input": "",
@@ -26,6 +27,7 @@
       "params": {
         "enableThinking": false,
         "historyMax": 0,
+        "targetLanguage": "Portuguese",
         "template": [
           "Traduza para português do Brasil, natural e falado. Responda APENAS com a tradução."
         ]
@@ -42,10 +44,11 @@
   ],
   "edges": [
     {
-      "from": "pipasist.out",
+      "from": "captura.out",
       "to": "asr.in",
-      "capacity": 128,
-      "overflow": "block"
+      "capacity": 32,
+      "overflow": "drop_oldest",
+      "ttlMs": 1500
     },
     {
       "from": "asr.out",
@@ -59,6 +62,5 @@
       "capacity": 16,
       "overflow": "drop_oldest"
     }
-  ],
-  "description": "Ouve a call em inglês e mostra a tradução em português em tempo real. Use em reuniões no Teams, Zoom ou Google Meet."
+  ]
 }

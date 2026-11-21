@@ -1,7 +1,7 @@
 # run.md — Guia de operação do Falador (subir · usar · derrubar)
 
 > Como subir todos os serviços, acessar a UI, rodar testes e desligar tudo.
-> Última atualização: 2026-11-19. Hardware de referência: MacBook Pro M4 Pro 48 GB.
+> Última atualização: 2026-11-21. Hardware de referência: MacBook Pro M4 Pro 48 GB.
 > Regra de ouro: **modelos são RESIDENTES** (carga fria 1,5–1,8 s — nunca recarregar por utterance, AGENTS.md §4/L2).
 
 ---
@@ -113,43 +113,46 @@ EOF
 
 ## 5. Como usar
 
-### 4a. UI web (duas telas — rebuild do layout do dono, 2026-11-19)
+### 4a. UI web (duas telas — Carbon Design, 2026-11-21)
 
 - **Abrir:** <http://127.0.0.1:8787>
-- **Tela 1 — Criação (Builder):** barra superior (título + seletor de flow + salvar + pill `Live Latency` + **Testar Fluxo** / **Iniciar Live**). Paleta à esquerda com busca e 6 categorias coloridas (Captura/Transcrição/Pensar/Decidir/Falar/Saída) + grupo Teste recolhível; arraste um nó pro canvas (ou duplo clique). Canvas React Flow com cards de header colorido por categoria, conexões tracejadas + ramos coloridos rotulados (auto/humano), minimap e zoom.
-- **Edição INLINE:** clique num nó → o editor abre **ancorado no próprio nó** (acompanha pan/zoom/drag; flipa pro lado se não couber; fecha clicando no canvas ou no ×). Abas **Configuração / Regras / Logs**; campos reais de cada nó com o controle certo (dropdown/slider/toggle/textarea/JSON) + texto de ajuda e **default real**. Não há painel direito fixo.
-- **Tela 2 — Execução (Live):** header **LIVE MODE** + cenário + pill **Latência** + **Pausar/Retomar** + **Encerrar Sessão**. Transcrição ao vivo do entrevistador; **dropdown por etapa do workflow** (Captura=app, ASR=modelo, LLM=modelo, Gate=Manual/Auto, Voz=voz quando o flow tem TTS) — trocar uma etapa atualiza o param REAL do nó e reinicia a sessão (motor não faz hot-swap). Sugestão **HERO verde** (o que você lê pra falar) + **Regerar / Editar / Aprovar & Falar** (gate humano). Sidebar **Contexto & Cheatsheet** com **RAG leve 100% on-device**: *Carregar documento* (PDF via `pdftotext`/TXT) → pontos-chave extraídos via omlx → **tópicos detectados ao vivo** da transcrição → os pontos são **injetados no system prompt do assistente** (informam a sugestão). Dicas STAR/atenção + status real de captura (app + atividade).
-- **Testar Fluxo** roda o flow na própria tela de criação (métricas/latência ao vivo nos nós e no pill).
+- **Tela 1 — Criação (Builder):** barra superior 100% Carbon (`Dropdown` de workflow + botões `Novo`, `Editar`, `Salvar`, `Modelos`, `Testar Fluxo`, `Iniciar Live` + pill `Live Latency`). Faixa no topo do canvas com nome e descrição completa do workflow (edição via `<Modal>` Carbon). Paleta à esquerda com busca e 7 categorias coloridas (Captura / Transcrição / Pensar / Decidir — inclui `turn.detector` / Falar / Ações & Conectores — `exec.command` / Saída) + grupo Teste recolhível. Cards com seção dedicada de portas alinhadas aos handles e auto-layout sem cruzamentos.
+- **Edição INLINE:** clique num nó → o editor abre **ancorado no próprio nó** (acompanha pan/zoom/drag; flipa pro lado se não couber). Abas **Configuração / Regras / Logs**; campos reais com controle certo (dropdown/slider/toggle/textarea/JSON) + helper + default real (incl. `useContext`/BM25 no `llm.omlx`, `emitInterruptOnSpeech`/`maxPendingMs` no `asr.realtime`, `dryRun`/`allowedHosts`/`allowedPrefixes` no `exec.command`).
+- **Tela 2 — Execução (Live):** header **LIVE MODE** + cenário + pill **Latência** com breakdown ponta-a-ponta (`trace`: ASR / Turn / LLM TTFT / Decisão / Total) + badge `DRY-RUN` / `EXEC ATIVO` (quando há `exec.command`) + **Limpar contexto** (`POST /api/run/reset-history`) + **Exportar sessão** (`POST /api/session/export` → `.md` em `sessions/` + webhook opt-in) + **Pausar/Retomar** + **Encerrar Sessão**. Card de aprovação (`human.approve`) suporta texto simples e comando estruturado (badges de Host + Risco `d1` + comando monospaced editável). Sidebar **Contexto / Documentos** com **RAG BM25 local** (`.md`, `.pdf`, `.txt`, `.yaml`, `.json` + tags).
 - Salvar/carregar flows: `apps/tui/flows/*.json` (host lista via `/api/flows`; descrição dentro do flow).
 
 ### 4b. Fluxos prontos
 
 | Flow | O que é |
 |---|---|
-| `cenario1-pt.json` | Cenário 1 estrutura: captura SCK do app da call → Voxtral streaming → tradução via omlx → legendas (~1,1 s) |
-| `cenario1-lfm3.json` | Cenário 1 nativo: captura SCK → `asr.lfm3` (janela 12 s) → legendas PT (~15× rt, NÃO streaming) |
-| `cenario2-auto.json` | **Cenário 2 SÓ-TEXTO (ADR-005)**: captura SCK → ASR → assistente LLM → votação d1 auto/humano → sugestão na tela (auto) ou card editável (humano). **Você fala.** Sem TTS = sem eco |
+| `assistente-entrevista.json` | **Default (ADR-005/006):** captura SCK (`drop_oldest`, `ttlMs: 1500`) → Voxtral streaming → transcrição + assistente LLM → votação `d1` auto/humano → sugestão na tela (auto) ou card editável (humano). Sem TTS = sem eco |
+| `legendas-traducao-pt.json` | Tradução simultânea EN → PT em tempo real (~1,1 s): captura SCK → Voxtral streaming → LLM tradutor → legendas PT |
+| `legendas-traducao-direta.json` | Tradução direta do áudio para PT via `asr.lfm3` (janela 12 s, sem nó LLM, menor uso de memória) |
+| `transcricao-ao-vivo.json` | Transcrição pura em tempo real (captura SCK → Voxtral streaming → legendas, menor latência) |
+| `tradutor-voz-en.json` | Pipeline completo de interpretação por voz: STT → Tradução PT→EN → Legenda + TTS EN → Alto-falante |
+| `revisao-servidor-ops.json` | **Ops / SRE (ADR-007):** voz → `turn.detector` (`d1`) → planejador LLM (`useContext: true` RAG BM25) → triagem `d1` (`leitura_segura` / `sensivel` / `bloqueado`) → `human.approve` → `exec.command` (`dryRun: true`, `mode: "readonly"`) → analista LLM → diagnóstico |
 | `test/demo-engine` / `test/demo-live` | fixtures de smoke (sintético / integração omlx+sidecar) — em `flows/test/`, fora do dropdown |
 
-> Captura nos flows: `backend: 'sck'`, `input: 'Teams'` — **troque pro seu app da call** no Inspector (zoom.us, Chrome p/ Meet…). SCK ouve SÓ esse app; precisa de permissão de Gravação de Tela (Ajustes → Privacidade e Segurança). O app pode ser aberto DEPOIS do run (o helper espera 30 s).
+> Captura nos flows: `backend: 'sck'`, `input: ''` — **escolha o app da call** no Inspector (Teams, zoom.us, Google Chrome…). SCK ouve SÓ esse app; precisa de permissão de Gravação de Tela (Ajustes → Privacidade e Segurança).
 
 ### 4c. Runner headless (sem UI)
 
 ```bash
-cd /Users/otaviolemos/ml/falador
-node packages/falador-cli/run-flow.mjs apps/tui/flows/cenario1-lfm3.json --run-seconds 30
-node packages/falador-cli/run-flow.mjs --catalog            # catálogo JSON
+cd /Users/otaviolemos/orca/workspaces/falador/sweetlips
+node packages/falador-cli/run-flow.mjs apps/tui/flows/legendas-traducao-direta.json --run-seconds 30
+node packages/falador-cli/run-flow.mjs --catalog            # catálogo JSON (15 nós)
 ```
 
-Eventos saem em NDJSON (`caption`, `run_stopped`, …). `sink.captions` sem binding ganha `__onCaption` automático. Gates recebem JSON via stdin: `{"type":"gate_action","nodeId":"...","text":"editado ou null"}` — no stop, gates pendentes viram rejeição.
+Eventos saem em NDJSON (`caption` com `trace`, `gate` com metadados estruturados, `run_stopped`, …). Comandos via stdin: `{"type":"gate_action","nodeId":"...","text":"editado ou null"}` e `{"type":"reset_history","nodeId":"*"}`.
 
 ### 4d. Testes
 
 ```bash
-cd packages/falador-graph && npm test            # motor: 12/12
-cd packages/falador-nodes && npm test            # nós: 9/9 (N10 das lives usa :8091 real)
-FALADOR_MIC_TEST=1 npm test                      # + N7 com mic real (avfoundation :1)
-cd apps/tui && ../../.venv/bin/python smoke.py   # TUI (Textual) smoke
+node --test --test-force-exit packages/falador-graph/test/*.test.ts   # motor: 18/18
+node --test --test-force-exit packages/falador-nodes/test/*.test.ts   # nós (incl. streaming, BM25, adversarial exec): 38/38 (+1 skip N7)
+node --test --test-force-exit apps/web-server.test.mjs                # host HTTP (RAG, reset-history, export .md/webhook): 1/1
+FALADOR_MIC_TEST=1 node --test --test-force-exit packages/falador-nodes/test/nodes.test.ts  # + N7 mic real
+cd apps/web && npx tsc --noEmit && npm run build                      # typecheck + build UI
 ```
 
 ---

@@ -12,8 +12,11 @@ import { fetchCatalog, fetchFlows, fetchFlow, fetchModels, fetchApps, fetchConte
 import { applyContext, sanitizeFlow } from './live-utils';
 
 function scenarioLabel(name: string): string {
-  if (name.startsWith('cenario2')) return 'Entrevista Técnica';
-  if (name.startsWith('cenario1')) return 'Legendas ao vivo';
+  if (name.includes('entrevista') || name.startsWith('cenario2')) return 'Entrevista Técnica';
+  if (name.includes('ops') || name.includes('servidor')) return 'Ops / Revisão de Servidor';
+  if (name.includes('legendas') || name.startsWith('cenario1')) return 'Legendas ao vivo';
+  if (name.includes('transcricao')) return 'Transcrição ao vivo';
+  if (name.includes('tradutor-voz')) return 'Tradutor de voz';
   return name || 'Sessão';
 }
 
@@ -31,6 +34,7 @@ export function App() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [flows, setFlows] = useState<{ name: string; description: string }[]>([]);
   const [currentFlow, setCurrentFlow] = useState('');
+  const [editFlowOpen, setEditFlowOpen] = useState(false);
   const [liveFlow, setLiveFlow] = useState<Flow | null>(null);
   const [models, setModels] = useState<{ omlx: string[]; cache: string[] }>({ omlx: [], cache: [] });
   const [apps, setApps] = useState<string[]>([]);
@@ -43,7 +47,7 @@ export function App() {
     fetchCatalog().then(setCatalog).catch(() => setToast('Falha ao carregar catálogo'));
     fetchFlows().then((fs) => {
       setFlows(fs);
-      setCurrentFlow((cur) => cur || (fs.find((f) => f.name === 'cenario2-auto') ?? fs[0])?.name || '');
+      setCurrentFlow((cur) => cur || (fs.find((f) => f.name === 'assistente-entrevista') ?? fs[0])?.name || '');
     }).catch(() => setToast('Falha ao listar flows'));
     fetchModels().then(setModels).catch(() => {});
     fetchApps().then(setApps).catch(() => {});
@@ -53,24 +57,24 @@ export function App() {
   const registerActions = useCallback((a: { getFlow: () => Flow; save: () => void }) => { actionsRef.current = a; }, []);
   const refreshFlows = useCallback(() => { fetchFlows().then(setFlows).catch(() => {}); }, []);
 
-  const onTest = () => { const f = actionsRef.current?.getFlow(); if (f) runner.start(f); };
-  // inicia a sessão: saneia modelo de LLM inválido + injeta contexto dos documentos (RAG leve)
-  const startWithContext = (f: Flow) => runner.start(applyContext(sanitizeFlow(f), contextDocs));
+  const onTest = () => { const f = actionsRef.current?.getFlow(); if (f) runner.start(f, currentFlow); };
+  const startWithContext = (f: Flow, name?: string) => runner.start(applyContext(sanitizeFlow(f), contextDocs), name ?? currentFlow);
   const onGoLive = () => {
     const f = actionsRef.current?.getFlow();
     if (!f) return;
-    setLiveFlow(f); startWithContext(f); setView('live');
+    setLiveFlow(f); startWithContext(f, currentFlow); setView('live');
     fetchApps().then(setApps).catch(() => {});
     fetchModels().then(setModels).catch(() => {});
   };
-  const onSave = () => { actionsRef.current?.save(); setToast('Flow salvo'); };
+  const onSave = () => { actionsRef.current?.save(); setToast('Workflow salvo'); };
 
   const onNewFlow = async () => {
     const name = `workflow-${Date.now()}`;
-    const blank: Flow = { version: 1, nodes: [], edges: [], stopWhenSourcesDone: true, description: 'Novo workflow' };
+    const blank: Flow = { version: 1, nodes: [], edges: [], stopWhenSourcesDone: false, description: 'Novo workflow personalizado' };
     await saveFlow(name, blank);
     await refreshFlows();
     setCurrentFlow(name);
+    setEditFlowOpen(true);
     setToast(`Workflow "${name}" criado`);
   };
 
@@ -81,10 +85,9 @@ export function App() {
     await saveFlow(newName, updated, newName !== currentFlow ? currentFlow : undefined);
     setCurrentFlow(newName);
     await refreshFlows();
-    setToast('Workflow renomeado');
+    setToast('Detalhes do workflow salvos');
   };
 
-  // trocar uma etapa = atualiza o param REAL do nó e reinicia a sessão (motor não faz hot-swap)
   const onUpdateStage = (nodeId: string, param: string, value: unknown) => {
     if (!liveFlow) return;
     const next: Flow = { ...liveFlow, nodes: liveFlow.nodes.map((n) => (n.id === nodeId ? { ...n, params: { ...n.params, [param]: value } } : n)) };
@@ -92,25 +95,24 @@ export function App() {
   };
   const onRegenerate = () => { if (liveFlow) startWithContext(liveFlow); };
   const onExit = () => { runner.stop(); setView('builder'); };
-  // trocar de workflow NA tela de execução: carrega o flow, aplica contexto e reinicia
   const onSwitchLiveFlow = async (name: string) => {
     try {
       const f = await fetchFlow(name);
-      setCurrentFlow(name); setLiveFlow(f); startWithContext(f);
+      setCurrentFlow(name); setLiveFlow(f); startWithContext(f, name);
     } catch { setToast('Falha ao carregar o flow'); }
   };
 
-  const onUploadDoc = async (file: File) => {
+  const onUploadDoc = async (file: File, tags?: string[]) => {
     try {
       const isPdf = file.name.toLowerCase().endsWith('.pdf');
       const payload = isPdf
-        ? { pdfB64: await fileToBase64(file) }
-        : { text: await file.text() };
-      setToast(`Extraindo pontos de ${file.name}…`);
+        ? { pdfB64: await fileToBase64(file), tags }
+        : { text: await file.text(), tags };
+      setToast(`Indexando ${file.name}…`);
       await uploadDoc(file.name, payload);
       const docs = await fetchContext();
       setContextDocs(docs);
-      setToast(`${file.name}: pontos extraídos`);
+      setToast(`${file.name} indexado`);
     } catch (e) {
       setToast(`Falha: ${(e as Error).message}`);
     }
@@ -120,6 +122,8 @@ export function App() {
     setContextDocs(await fetchContext());
   };
 
+  const currentDesc = flows.find((f) => f.name === currentFlow)?.description ?? '';
+
   return (
     <Theme theme="g100">
       <div className="app">
@@ -127,8 +131,11 @@ export function App() {
           <TopBar
             view={view} latencyMs={runner.latency} running={runner.running}
             flows={flows} currentFlow={currentFlow}
-            description={flows.find((f) => f.name === currentFlow)?.description ?? ''}
+            description={currentDesc}
             models={models}
+            editOpen={editFlowOpen}
+            onOpenEdit={() => setEditFlowOpen(true)}
+            onCloseEdit={() => setEditFlowOpen(false)}
             onSelectFlow={setCurrentFlow} onSave={onSave}
             onRename={onRename} onNewFlow={onNewFlow}
             onTest={onTest} onGoLive={onGoLive}
@@ -140,8 +147,10 @@ export function App() {
             <ReactFlowProvider>
               <div className={view === 'builder' ? 'view' : 'view view--hidden'}>
                 <BuilderView
-                  catalog={catalog} currentFlow={currentFlow} runner={runner}
+                  catalog={catalog} currentFlow={currentFlow} description={currentDesc}
+                  runner={runner}
                   registerActions={registerActions} onSaved={refreshFlows}
+                  onEditFlow={() => setEditFlowOpen(true)}
                   models={models} apps={apps}
                   onRefreshApps={() => fetchApps().then(setApps).catch(() => {})}
                 />
@@ -155,7 +164,10 @@ export function App() {
               contextDocs={contextDocs} onUploadDoc={onUploadDoc} onRemoveDoc={onRemoveDoc}
               onStart={startWithContext}
               flows={flows} currentFlow={currentFlow} onSwitchFlow={onSwitchLiveFlow}
-              onUpdateStage={onUpdateStage} onRegenerate={onRegenerate} onRefreshApps={() => fetchApps().then(setApps).catch(() => {})} onExit={onExit}
+              onUpdateStage={onUpdateStage} onRegenerate={onRegenerate}
+              onRefreshApps={() => fetchApps().then(setApps).catch(() => {})}
+              onNotify={(msg) => setToast(msg)}
+              onExit={onExit}
             />
           )}
         </div>

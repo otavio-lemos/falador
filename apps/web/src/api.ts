@@ -12,7 +12,7 @@ export interface CatalogNode {
 export interface Catalog { nodes: CatalogNode[] }
 
 export interface FlowNode { id: string; type: string; params: Record<string, unknown>; enabled?: boolean }
-export interface FlowEdge { from: string; to: string; capacity?: number; overflow?: string }
+export interface FlowEdge { from: string; to: string; capacity?: number; overflow?: string; ttlMs?: number }
 export interface Flow {
   version?: number;
   stopWhenSourcesDone?: boolean;
@@ -55,13 +55,28 @@ export async function fetchApps(): Promise<string[]> {
   return [...new Set((j.apps as { name: string }[]).map((a) => a.name).filter((n) => n && n.trim() && !n.startsWith('Open and Save Panel Service')))];
 }
 
-// ---- Contexto & Cheatsheet (RAG leve) ----
-export interface ContextDoc { name: string; points: string[]; chars: number }
+// ---- Contexto & RAG local (runbooks / docs) ----
+export interface ContextDoc {
+  id?: string;
+  name: string;
+  tags?: string[];
+  addedAt?: string | null;
+  points: string[];
+  chunksCount?: number;
+  chars: number;
+}
 export async function fetchContext(): Promise<ContextDoc[]> {
   return (await fetch('/api/context')).json().then((j) => j.docs);
 }
-export async function uploadDoc(name: string, payload: { text?: string; pdfB64?: string }): Promise<ContextDoc> {
-  const r = await fetch('/api/context/doc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, ...payload }) });
+export async function uploadDoc(
+  name: string,
+  payload: { text?: string; pdfB64?: string; tags?: string[] },
+): Promise<ContextDoc> {
+  const r = await fetch('/api/context/doc', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, ...payload }),
+  });
   if (!r.ok) throw new Error((await r.json()).error ?? 'falha no upload');
   return r.json();
 }
@@ -73,6 +88,34 @@ export async function fetchTopics(text: string): Promise<string[]> {
 }
 export async function stopRun(): Promise<void> {
   await fetch('/api/stop', { method: 'POST' });
+}
+export async function resetHistory(nodeId?: string): Promise<{ ok: boolean; sent?: boolean; nodeId?: string }> {
+  const r = await fetch('/api/run/reset-history', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nodeId: nodeId ?? '*' }),
+  });
+  return r.json();
+}
+export interface ExportSessionOptions {
+  saveMarkdown?: boolean;
+  webhookUrl?: string;
+  flowName?: string;
+}
+export interface ExportSessionResult {
+  ok: boolean;
+  markdownPath?: string;
+  webhookStatus?: number;
+  webhookError?: string;
+}
+export async function exportSession(opts: ExportSessionOptions): Promise<ExportSessionResult> {
+  const r = await fetch('/api/session/export', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  });
+  if (!r.ok) throw new Error((await r.json()).error ?? 'falha ao exportar sessão');
+  return r.json();
 }
 export async function gateAction(nodeId: string, text: string | null): Promise<void> {
   await fetch('/api/gate', {
@@ -88,11 +131,12 @@ export function openRun(
   onEvent: (ev: RunnerEvent) => void,
   onEnd: (code: number) => void,
   onOpen?: () => void,
+  flowName?: string,
 ): AbortController {
   const ctl = new AbortController();
   fetch('/api/run', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ flow }), signal: ctl.signal,
+    body: JSON.stringify({ flow, ...(flowName ? { flowName } : {}) }), signal: ctl.signal,
   }).then(async (r) => {
     if (!r.ok || !r.body) { onEnd(-1); return; }
     onOpen?.();

@@ -188,6 +188,59 @@ export class RunningGraph {
         return { seq };
       },
       emitControl(port, c) {
+        const msg: ControlMsg = { ...c, sourceNode: vn.id };
+        if (c.kind === 'interrupt') {
+          const visited = new Set<string>();
+          const queue: string[] = [];
+          const affectedNodes: string[] = [];
+
+          const isTextPort = (pt: ValidatedEdge['portType']): boolean =>
+            pt === 'tokens_parcial' || pt === 'phrase';
+
+          for (const { e, q } of self.edges.values()) {
+            if (e.fromNode !== vn.id || e.fromPort !== port) continue;
+            if (isTextPort(e.portType)) {
+              while (q.takeNow() !== null) {
+                /* descarta pendentes de texto na fila intermediária */
+              }
+            }
+            if (!visited.has(e.toNode)) {
+              visited.add(e.toNode);
+              queue.push(e.toNode);
+            }
+          }
+
+          while (queue.length > 0) {
+            const nodeId = queue.shift()!;
+            affectedNodes.push(nodeId);
+            const target = self.nodeStates.get(nodeId);
+            if (target) {
+              self.invokeOnControl(target, msg);
+            }
+            for (const { e, q } of self.edges.values()) {
+              if (e.fromNode !== nodeId) continue;
+              if (isTextPort(e.portType)) {
+                while (q.takeNow() !== null) {
+                  /* descarta pendentes de texto na fila intermediária */
+                }
+              }
+              if (!visited.has(e.toNode)) {
+                visited.add(e.toNode);
+                queue.push(e.toNode);
+              }
+            }
+          }
+
+          self.emitEvent({
+            type: 'interrupted',
+            by: vn.id,
+            reason: c.reason,
+            affectedNodes,
+          });
+          return;
+        }
+
+        // c.kind === 'cancel':
         // cancela imediatamente o que está nas filas desta porta + registra para isCancelled do PRÓPRIO nó
         const own = self.cancelledSeqs.get(vn.id)!;
         const set = own.get(port) ?? new Set<number>();
@@ -197,8 +250,16 @@ export class RunningGraph {
         if (c.uptoSeq !== undefined) addUpto(c.uptoSeq);
         if (c.uptoSeqByPort?.[port] !== undefined) addUpto(c.uptoSeqByPort[port]);
         own.set(port, set);
+        const notified = new Set<string>();
         for (const { e, q } of self.edges.values()) {
-          if (e.fromNode === vn.id && e.fromPort === port) q.markCancelled(c);
+          if (e.fromNode === vn.id && e.fromPort === port) {
+            q.markCancelled({ kind: 'cancel', uptoSeq: c.uptoSeq, uptoSeqByPort: c.uptoSeqByPort });
+            if (!notified.has(e.toNode)) {
+              notified.add(e.toNode);
+              const target = self.nodeStates.get(e.toNode);
+              if (target) self.invokeOnControl(target, msg);
+            }
+          }
         }
         self.emitEvent({ type: 'cancelled', scope: c.scope, by: vn.id });
       },
@@ -344,6 +405,17 @@ export class RunningGraph {
     arr.push(dt);
     if (arr.length > this.procWindow) arr.shift();
     void this.maybeNaturalStop();
+  }
+
+  private invokeOnControl(target: NodeState, c: ControlMsg): void {
+    try {
+      target.runtime.onControl?.(c);
+    } catch (err) {
+      this.handleNodeError(target, err);
+      if (this.policyOf(target) === 'stop_run') {
+        void this.stop(`erro no onControl de ${target.id}`);
+      }
+    }
   }
 
   private policyOf(st: NodeState): 'isolate' | 'stop_run' {

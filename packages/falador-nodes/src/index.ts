@@ -8,18 +8,54 @@ import { captureFfmpeg } from './capture-ffmpeg.ts';
 import { sinkCaptions, sinkPlayback } from './sinks.ts';
 import { humanApprove } from './human-approve.ts';
 import { decisionLlm } from './decision-llm.ts';
+import { turnDetector } from './turn-detector.ts';
+import { execCommand } from './exec-command.ts';
 
-export { llmOmlx } from './llm-omlx.ts';
+export { llmOmlx, type ContextProvider } from './llm-omlx.ts';
 export { ttsSts, type AudioChunkPayload } from './tts-sts.ts';
 export { asrRealtime, LFM3_AUDIO_SNAPSHOT, VOXTRAL_SNAPSHOT } from './asr-realtime.ts';
 export { asrLfm3 } from './asr-lfm3.ts';
 export { captureFfmpeg } from './capture-ffmpeg.ts';
 export { sinkCaptions, sinkPlayback } from './sinks.ts';
-export { humanApprove, type GateHolder } from './human-approve.ts';
+export { humanApprove, type GateHolder, type GateMeta } from './human-approve.ts';
 export { decisionLlm } from './decision-llm.ts';
+export { turnDetector } from './turn-detector.ts';
+export {
+  execCommand,
+  DEFAULT_READONLY_PREFIXES,
+  parseArgv,
+  extractCommand,
+  validateCommand,
+  type ExecPolicy,
+  type ExtractResult,
+  type ValidateResult,
+  type AuditEntry,
+} from './exec-command.ts';
+export {
+  chunkDocument,
+  searchChunks,
+  formatContextBlock,
+  tokenize,
+  type ContextChunk,
+  type ContextDocument,
+  type ChunkOptions,
+  type SearchOptions,
+} from './context-store.ts';
+export { inheritTrace, type TraceMeta } from './trace.ts';
 export { postJsonBytes, postSse, payloadText } from './sse.ts';
 
 /** Registra todos os nós reais no registry dado. */
 export function registerFaladorNodes(registry: Registry): Registry {
-  return registry.register(llmOmlx).register(ttsSts).register(asrRealtime).register(asrLfm3).register(captureFfmpeg).register(sinkCaptions).register(sinkPlayback).register(humanApprove).register(decisionLlm);
+  return registry
+    .register(llmOmlx)
+    .register(ttsSts)
+    .register(asrRealtime)
+    .register(asrLfm3)
+    .register(captureFfmpeg)
+    .register(sinkCaptions)
+    .register(sinkPlayback)
+    .register(humanApprove)
+    .register(decisionLlm)
+    .register(turnDetector)
+    .register(execCommand);
 }

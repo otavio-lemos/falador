@@ -10,6 +10,7 @@
 // Modo 'server_vad' (default): Silero roda no server e auto-committa cada fala — ideal p/ conferência.
 // Modo 'manual': cliente comita por commitEveryMs após a última chegada de áudio.
 import type { NodeCtx, NodeRuntime, NodeTypeDef } from '../../falador-graph/src/index.ts';
+import { inheritTrace, type TraceMeta } from './trace.ts';
 
 const DEFAULT_URL = process.env.FALADOR_ASR_URL ?? 'ws://127.0.0.1:8090/v1/realtime';
 // LFM3-Audio 2B — SEM streaming STT (sem create_streaming_session): só serve p/ STS/TTS.
@@ -21,7 +22,17 @@ export const VOXTRAL_SNAPSHOT =
 
 export const asrRealtime: NodeTypeDef = {
   type: 'asr.realtime',
-  paramNames: ['url', 'model', 'inputRate', 'serverVad', 'commitEveryMs', 'silenceThresholdMs'],
+  paramNames: [
+    'url',
+    'model',
+    'inputRate',
+    'serverVad',
+    'commitEveryMs',
+    'silenceThresholdMs',
+    'maxPendingMs',
+    'emitInterruptOnSpeech',
+    'bargeInDebounceMs',
+  ],
   inputs: [{ name: 'in', type: 'pcm16k' }],
   outputs: [{ name: 'out', type: 'tokens_parcial' }],
   validateParams: (p) => {
@@ -31,13 +42,19 @@ export const asrRealtime: NodeTypeDef = {
         errs.push({ path: `params.${k}`, code: 'INVALID_PARAM', message: `${k} deve ser string` });
       }
     }
-    for (const k of ['inputRate', 'commitEveryMs', 'silenceThresholdMs'] as const) {
-      if (p[k] !== undefined && (typeof p[k] !== 'number' || p[k] <= 0)) {
+    for (const k of ['inputRate', 'commitEveryMs', 'silenceThresholdMs', 'maxPendingMs'] as const) {
+      if (p[k] !== undefined && (typeof p[k] !== 'number' || Number.isNaN(p[k]) || p[k] <= 0)) {
         errs.push({ path: `params.${k}`, code: 'INVALID_PARAM', message: `${k} deve ser número > 0` });
       }
     }
+    if (p.bargeInDebounceMs !== undefined && (typeof p.bargeInDebounceMs !== 'number' || Number.isNaN(p.bargeInDebounceMs) || p.bargeInDebounceMs < 0)) {
+      errs.push({ path: 'params.bargeInDebounceMs', code: 'INVALID_PARAM', message: 'bargeInDebounceMs deve ser número >= 0' });
+    }
     if (p.serverVad !== undefined && typeof p.serverVad !== 'boolean') {
       errs.push({ path: 'params.serverVad', code: 'INVALID_PARAM', message: 'serverVad deve ser boolean' });
+    }
+    if (p.emitInterruptOnSpeech !== undefined && typeof p.emitInterruptOnSpeech !== 'boolean') {
+      errs.push({ path: 'params.emitInterruptOnSpeech', code: 'INVALID_PARAM', message: 'emitInterruptOnSpeech deve ser boolean' });
     }
     return errs;
   },
@@ -49,22 +66,46 @@ export const asrRealtime: NodeTypeDef = {
     const serverVad = (ctx.params.serverVad as boolean | undefined) ?? true;
     const commitEveryMs = (ctx.params.commitEveryMs as number | undefined) ?? 900;
     const silenceThresholdMs = (ctx.params.silenceThresholdMs as number | undefined) ?? 800;
+    const maxPendingMs = (ctx.params.maxPendingMs as number | undefined) ?? 2000;
+    const emitInterruptOnSpeech = (ctx.params.emitInterruptOnSpeech as boolean | undefined) ?? false;
+    const bargeInDebounceMs = (ctx.params.bargeInDebounceMs as number | undefined) ?? 300;
 
     let ws: WebSocket | null = null;
     let opened = false;
-    // áudio que chegou antes da sessão abrir fica em buffer (modelo carrega em ~1,5-4,5 s)
+    // áudio que chegou antes da sessão abrir fica em buffer limitado por maxPendingMs
     let directSent = 0;
-    const pending: Uint8Array[] = [];
-    const PENDING_MAX_FRAMES = 192; // ~19 s @100 ms/frame; além disso drop do mais antigo
+    const pending: Array<{ bytes: Uint8Array; ts: number }> = [];
     let accByItem = new Map<string, string>();
+    const firstDeltaMsByItem = new Map<string, number>();
     let curItem: string | null = null;
     let lastAudioAt = 0;
+    let lastCaptureMs = 0;
     let lastCommitAt = 0;
     let commitTimer: ReturnType<typeof setInterval> | null = null;
+    let bargeInTimer: ReturnType<typeof setTimeout> | null = null;
     let stopped = false;
     let backoff = 200;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let everOpened = false; // reconexão automática só depois da primeira abertura
+
+    function clearBargeInTimer(): void {
+      if (bargeInTimer !== null) {
+        clearTimeout(bargeInTimer);
+        bargeInTimer = null;
+      }
+    }
+
+    function dropStalePending(now: number): number {
+      let dropped = 0;
+      while (pending.length > 0 && now - pending[0].ts > maxPendingMs) {
+        pending.shift();
+        dropped++;
+      }
+      if (dropped > 0) {
+        ctx.metrics.counter('asr.realtime.pendingDropped', dropped);
+      }
+      return dropped;
+    }
 
     function b64encode(bytes: Uint8Array): string {
       let bin = '';
@@ -91,13 +132,16 @@ export const asrRealtime: NodeTypeDef = {
         };
         if (process.env.FALADOR_ASR_DEBUG) console.error(`[asr dbg ${Math.round(Date.now() / 1000) % 10000}] ONOPEN inputRate=${inputRate} serverVad=${serverVad} pending=${pending.length}`);
         ws?.send(JSON.stringify({ type: 'session.update', session: { audio: { input: audioInput } } }));
-        // flush do buffer pré-abertura (em blocos p/ não travar o event loop)
+        // flush do buffer pré-abertura (descartando frames mais velhos que maxPendingMs)
         const flush = () => {
+          dropStalePending(Date.now());
           let n = 0;
           while (pending.length > 0) {
-            const b = pending.shift()!;
-            ws?.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: b64encode(b) }));
-            n++;
+            const frame = pending.shift()!;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: b64encode(frame.bytes) }));
+              n++;
+            }
           }
           if (process.env.FALADOR_ASR_DEBUG) ctx.log('info', `flush ${n} frames`);
           ctx.metrics.counter('asr.realtime.bufferedFlushed', 1);
@@ -122,6 +166,7 @@ export const asrRealtime: NodeTypeDef = {
       ws.onclose = () => {
         if (process.env.FALADOR_ASR_DEBUG) ctx.log('info', `ws-CLOSE ${JSON.stringify({ code: (arguments as never), wasClean: true }).slice(0, 80)}`);
         opened = false;
+        clearBargeInTimer();
         if (commitTimer) {
           clearInterval(commitTimer);
           commitTimer = null;
@@ -142,6 +187,22 @@ export const asrRealtime: NodeTypeDef = {
         ctx.log('error', `asr.realtime server: ${JSON.stringify((m as any).error ?? m)}`);
         return;
       }
+      if (type === 'input_audio_buffer.speech_started') {
+        if (emitInterruptOnSpeech && !stopped && !ctx.signal.aborted) {
+          clearBargeInTimer();
+          bargeInTimer = setTimeout(() => {
+            bargeInTimer = null;
+            if (stopped || ctx.signal.aborted) return;
+            ctx.metrics.counter('asr.realtime.interrupts', 1);
+            ctx.emitControl('out', { kind: 'interrupt', scope: 'port', reason: 'speech_started' });
+          }, bargeInDebounceMs);
+        }
+        return;
+      }
+      if (type === 'input_audio_buffer.speech_stopped') {
+        clearBargeInTimer();
+        return;
+      }
       if (type === 'conversation.item.added') {
         curItem = String((m as any).item?.id ?? '');
         if (!accByItem.has(curItem)) accByItem.set(curItem, '');
@@ -152,18 +213,35 @@ export const asrRealtime: NodeTypeDef = {
         const delta = String((m as any).delta ?? '');
         const acc = (accByItem.get(item) ?? '') + delta;
         accByItem.set(item, acc);
-        await ctx.emit('out', { text: acc, final: false }, { meta: { itemId: item } });
+        const now = Date.now();
+        if (!firstDeltaMsByItem.has(item)) firstDeltaMsByItem.set(item, now);
+        const tAsrFirstMs = firstDeltaMsByItem.get(item)!;
+        const tracePatch: Partial<TraceMeta> = {
+          turnId: item || undefined,
+          tCaptureMs: lastCaptureMs || undefined,
+          tAsrFirstMs,
+        };
+        await ctx.emit('out', { text: acc, final: false }, { meta: { itemId: item, ...inheritTrace(undefined, tracePatch) } });
         return;
       }
       if (type === 'conversation.item.input_audio_transcription.completed') {
         const item = String((m as any).item_id ?? curItem ?? '');
         const transcript = String((m as any).transcript ?? accByItem.get(item) ?? '');
         accByItem.delete(item);
+        const now = Date.now();
+        const tAsrFirstMs = firstDeltaMsByItem.get(item) ?? now;
+        firstDeltaMsByItem.delete(item);
         ctx.metrics.counter('asr.realtime.turns', 1);
-        await ctx.emit('out', { text: transcript, final: true }, { meta: { itemId: item } });
+        const tracePatch: Partial<TraceMeta> = {
+          turnId: item || undefined,
+          tCaptureMs: lastCaptureMs || undefined,
+          tAsrFirstMs,
+          tAsrFinalMs: now,
+        };
+        await ctx.emit('out', { text: transcript, final: true }, { meta: { itemId: item, ...inheritTrace(undefined, tracePatch) } });
         return;
       }
-      // committed / speech_started / speech_stopped / session.* : nada a emitir
+      // committed / session.* : nada a emitir
     }
 
     function maybeCommit(): void {
@@ -198,10 +276,13 @@ export const asrRealtime: NodeTypeDef = {
               ? new Uint8Array(Buffer.from(String((msg.payload as any).data), 'base64'))
               : null;
         if (bytes == null || bytes.length === 0) return;
-        lastAudioAt = Date.now();
+        const now = Date.now();
+        lastAudioAt = now;
+        const incomingTrace = msg.meta?.trace as TraceMeta | undefined;
+        lastCaptureMs = incomingTrace?.tCaptureMs ?? msg.ts ?? now;
         if (!opened || !ws || ws.readyState !== WebSocket.OPEN) {
-          if (pending.length >= PENDING_MAX_FRAMES) pending.shift();
-          pending.push(bytes);
+          dropStalePending(now);
+          pending.push({ bytes, ts: now });
           ctx.metrics.counter('asr.realtime.bufferedPushed', 1);
           return;
         }
@@ -215,6 +296,7 @@ export const asrRealtime: NodeTypeDef = {
       },
       async stop(_reason: string) {
         stopped = true;
+        clearBargeInTimer();
         if (commitTimer) clearInterval(commitTimer);
         commitTimer = null;
         if (reconnectTimer) clearTimeout(reconnectTimer);

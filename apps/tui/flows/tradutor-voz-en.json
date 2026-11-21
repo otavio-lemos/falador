@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "stopWhenSourcesDone": false,
+  "description": "Pipeline completo de interpretação por voz (STT → Tradução → TTS → Áudio): transcreve a fala em tempo real, traduz para inglês natural, exibe a legenda na tela e sintetiza em voz alta no alto-falante.",
+  "nodes": [
+    {
+      "id": "captura",
+      "type": "capture.ffmpeg",
+      "params": {
+        "input": "",
+        "chunkMs": 80,
+        "backend": "sck"
+      }
+    },
+    {
+      "id": "asr",
+      "type": "asr.realtime",
+      "params": {
+        "model": "/Users/otaviolemos/.cache/huggingface/hub/models--mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit/snapshots/fdebf7b2af834a1db4b8a3c99ab7480b333adf9e",
+        "serverVad": true,
+        "inputRate": 16000
+      }
+    },
+    {
+      "id": "tradutor",
+      "type": "llm.omlx",
+      "params": {
+        "enableThinking": false,
+        "historyMax": 2,
+        "targetLanguage": "English",
+        "template": [
+          "Translate to natural spoken English. Output ONLY the translation."
+        ]
+      }
+    },
+    {
+      "id": "legenda",
+      "type": "sink.captions",
+      "params": {
+        "mode": "callback",
+        "showParcials": true
+      }
+    },
+    {
+      "id": "voz",
+      "type": "tts.sts",
+      "params": {
+        "url": "http://127.0.0.1:8091",
+        "language": "English",
+        "voice": "female",
+        "speakOn": "final"
+      }
+    },
+    {
+      "id": "audio",
+      "type": "sink.playback",
+      "params": {
+        "maxQueue": 4
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "captura.out",
+      "to": "asr.in",
+      "capacity": 32,
+      "overflow": "drop_oldest",
+      "ttlMs": 1500
+    },
+    {
+      "from": "asr.out",
+      "to": "tradutor.parcs",
+      "capacity": 16,
+      "overflow": "drop_oldest"
+    },
+    {
+      "from": "tradutor.out",
+      "to": "legenda.in",
+      "capacity": 16,
+      "overflow": "drop_oldest"
+    },
+    {
+      "from": "tradutor.out",
+      "to": "voz.in",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "voz.out",
+      "to": "audio.in",
+      "capacity": 8,
+      "overflow": "block"
+    }
+  ]
+}

@@ -61,18 +61,35 @@ async function main() {
   }
 
   // binding automático de legenda: sink.captions sem __onCaption emite eventos NDJSON
-  // {"type":"caption","nodeId","text","final"} — assim a TUI/web recebem a legenda ao vivo
+  // {"type":"caption","nodeId","text","final","trace"?} — assim a TUI/web recebem a legenda ao vivo
   // mesmo rodando headless (sem poluir o stdout servido para o host).
   for (const n of flow.nodes ?? []) {
     if (n.type === 'sink.captions' && !(flow.bindings[n.id]?.__onCaption)) {
       flow.bindings[n.id] = {
         ...(flow.bindings[n.id] ?? {}),
-        __onCaption: (cap) => line({ type: 'caption', nodeId: n.id, ...cap }),
+        __onCaption: (cap) => line({
+          type: 'caption',
+          nodeId: n.id,
+          text: cap.text,
+          final: cap.final,
+          ...(cap.trace ? { trace: cap.trace } : {}),
+        }),
       };
     }
   }
 
-  // gates human.approve: runner cria holder por nó, anuncia {"type":"gate"} e
+  // reset de histórico em runtime para nós llm.omlx (ADR-006 Fase 4)
+  const resetters = new Map(); // nodeId -> () => void
+  for (const n of flow.nodes ?? []) {
+    if (n.type === 'llm.omlx') {
+      flow.bindings[n.id] = {
+        ...(flow.bindings[n.id] ?? {}),
+        __registerReset: (fn) => { resetters.set(n.id, fn); },
+      };
+    }
+  }
+
+  // gates human.approve: runner cria holder por nó, anuncia {"type":"gate","nodeId","text","meta"?} e
   // resolve via stdin JSON {"type":"gate_action","nodeId","text"} (null = rejeitar).
   const gates = new Map(); // nodeId -> resolve
   const pendingGates = new Set(); // resolvers abertos (reject all no stop do run)
@@ -81,13 +98,21 @@ async function main() {
       flow.bindings[n.id] = {
         ...(flow.bindings[n.id] ?? {}),
         __gate: {
-          request: (text) =>
+          request: (text, meta) =>
             new Promise((resolve) => {
               const res = (t) => { pendingGates.delete(res); resolve(typeof t === 'string' ? t : null); };
               pendingGates.add(res);
               gates.set(n.id, res);
-              line({ type: 'gate', nodeId: n.id, text });
+              const ev = { type: 'gate', nodeId: n.id, text };
+              if (meta && typeof meta === 'object' && Object.keys(meta).length > 0) {
+                ev.meta = meta;
+              }
+              line(ev);
             }),
+          cancel: (reason) => {
+            gates.delete(n.id);
+            line({ type: 'gate_cancelled', nodeId: n.id, reason: reason ?? 'interrupted' });
+          },
         },
       };
     }
@@ -109,6 +134,14 @@ async function main() {
         if (m.type === 'gate_action' && gates.has(m.nodeId)) {
           gates.get(m.nodeId)(typeof m.text === 'string' ? m.text : null);
           gates.delete(m.nodeId);
+        } else if (m.type === 'reset_history') {
+          const target = typeof m.nodeId === 'string' && m.nodeId.trim() ? m.nodeId.trim() : '*';
+          if (target === '*') {
+            for (const fn of resetters.values()) fn();
+          } else if (resetters.has(target)) {
+            resetters.get(target)();
+          }
+          line({ type: 'history_reset', nodeId: target });
         }
       } catch { /* linha inválida: ignora */ }
     }

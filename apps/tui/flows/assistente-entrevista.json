@@ -1,9 +1,10 @@
 {
   "version": 1,
   "stopWhenSourcesDone": false,
+  "description": "Copilot para entrevista técnica em inglês (só texto, sem eco): captura a call via SCK, transcreve a pergunta em tempo real, gera sugestão de resposta em 1ª pessoa e roteia automaticamente via d1 entre exibição direta (auto) ou revisão manual editável (humano).",
   "nodes": [
     {
-      "id": "pipasist",
+      "id": "captura",
       "type": "capture.ffmpeg",
       "params": {
         "input": "",
@@ -21,7 +22,7 @@
       }
     },
     {
-      "id": "legenda",
+      "id": "transcricao",
       "type": "sink.captions",
       "params": {
         "mode": "callback",
@@ -41,7 +42,7 @@
       }
     },
     {
-      "id": "porta",
+      "id": "decisao",
       "type": "decision.llm",
       "params": {
         "options": [
@@ -59,11 +60,6 @@
       }
     },
     {
-      "id": "gate",
-      "type": "human.approve",
-      "params": {}
-    },
-    {
       "id": "sugestao",
       "type": "sink.captions",
       "params": {
@@ -72,7 +68,12 @@
       }
     },
     {
-      "id": "editada",
+      "id": "revisao",
+      "type": "human.approve",
+      "params": {}
+    },
+    {
+      "id": "aprovada",
       "type": "sink.captions",
       "params": {
         "mode": "callback",
@@ -82,14 +83,15 @@
   ],
   "edges": [
     {
-      "from": "pipasist.out",
+      "from": "captura.out",
       "to": "asr.in",
-      "capacity": 128,
-      "overflow": "block"
+      "capacity": 32,
+      "overflow": "drop_oldest",
+      "ttlMs": 1500
     },
     {
       "from": "asr.out",
-      "to": "legenda.in",
+      "to": "transcricao.in",
       "capacity": 16,
       "overflow": "drop_oldest"
     },
@@ -101,28 +103,27 @@
     },
     {
       "from": "assistente.out",
-      "to": "porta.in",
+      "to": "decisao.in",
       "capacity": 8,
       "overflow": "block"
     },
     {
-      "from": "porta.humano",
-      "to": "gate.in",
-      "capacity": 8,
-      "overflow": "block"
-    },
-    {
-      "from": "porta.auto",
+      "from": "decisao.auto",
       "to": "sugestao.in",
       "capacity": 8,
       "overflow": "block"
     },
     {
-      "from": "gate.out",
-      "to": "editada.phrase",
+      "from": "decisao.humano",
+      "to": "revisao.in",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "revisao.out",
+      "to": "aprovada.phrase",
       "capacity": 8,
       "overflow": "block"
     }
-  ],
-  "description": "Ouve a pergunta do entrevistador em inglês e sugere a resposta para você falar. A IA decide sozinha quando a sugestão está pronta; você pode editar antes de falar."
+  ]
 }

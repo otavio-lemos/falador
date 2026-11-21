@@ -3,24 +3,19 @@ import { useCallback, useMemo } from 'react';
 import {
   ReactFlow, Background, BackgroundVariant, Controls, MiniMap,
   useViewport, useReactFlow, MarkerType, ConnectionMode,
-  type Node, type Edge, type OnNodesChange, type OnEdgesChange, type OnConnect,
+  type Edge, type OnNodesChange, type OnEdgesChange, type OnConnect,
   type IsValidConnection,
 } from '@xyflow/react';
-import { FlowNode } from './FlowNode';
+import { FlowNode, PORT_COLOR } from './FlowNode';
 import { NodeEditor } from './NodeEditor';
 import type { FNode, FaladorNodeData } from '../flow-utils';
 import type { NodeMetrics, RunnerEvent, RunSnapshot } from '../api';
 
 const nodeTypes = { falador: FlowNode };
 
-// Cor da aresta = cor do tipo de porta (igual ao PORT_COLOR do FlowNode)
-const EDGE_COLOR: Record<string, string> = {
-  pcm16k:        '#06b6d4',
-  tokens_parcial:'#a855f7',
-  phrase:        '#f59e0b',
-  audio_chunk:   '#22c55e',
-};
-function edgeColor(type: string) { return EDGE_COLOR[type] ?? '#5a5a5a'; }
+function edgeColor(type: string) {
+  return PORT_COLOR[type] ?? '#6b7280';
+}
 
 interface Props {
   nodes: FNode[];
@@ -49,37 +44,33 @@ export function FlowCanvas(p: Props) {
     data: { ...n.data, metrics: p.metrics[n.id], running: p.running },
   })), [p.nodes, p.metrics, p.running]);
 
-  // arestas coloridas pelo tipo da porta de saída (mesmo esquema do FlowNode)
+  // arestas coloridas pelo tipo real da porta de saída
   const edges = useMemo(() => p.edges.map((e) => {
     const src = p.nodes.find((n) => n.id === e.source);
     const isBranch = src?.data.type === 'decision.llm';
-    // descobre o tipo da porta fonte para colorir a aresta igual à bolinha
-    // decision.llm tem outputs dinâmicos (não estão no catálogo estático) — tipo = phrase
     const srcPort = src?.data.outputs.find((o) => o.name === e.sourceHandle);
-    const portType = srcPort?.type ?? (isBranch ? 'phrase' : undefined);
-    const color = isBranch
-      ? edgeColor('phrase')
-      : edgeColor(portType ?? '');
+    const portType = srcPort?.type ?? (isBranch ? 'tokens_parcial' : '');
+    const color = edgeColor(portType);
     return {
       ...e,
       type: 'smoothstep',
       label: isBranch ? String(e.sourceHandle ?? '') : undefined,
-      labelStyle: { fill: '#f4f4f4', fontSize: 11 },
-      labelBgStyle: { fill: '#161616' },
+      labelStyle: { fill: '#f4f4f4', fontSize: 11, fontWeight: 600 },
+      labelBgStyle: { fill: '#161616', stroke: '#3a3a3a', strokeWidth: 1 },
+      labelBgPadding: [6, 3] as [number, number],
+      labelBgBorderRadius: 4,
       style: { stroke: color, strokeWidth: 2 },
       markerEnd: { type: MarkerType.ArrowClosed, color, width: 16, height: 16 },
     };
   }), [p.edges, p.nodes]);
 
   // só permite conexão entre portas do mesmo tipo
-  // decision.llm: outputs dinâmicos (tipo phrase) — trata como phrase
   const isValidConnection = useCallback<IsValidConnection>((connection) => {
     const srcNode = p.nodes.find((n) => n.id === connection.source);
     const tgtNode = p.nodes.find((n) => n.id === connection.target);
     if (!srcNode || !tgtNode) return false;
     const srcPort = srcNode.data.outputs.find((o) => o.name === connection.sourceHandle);
     const tgtPort = tgtNode.data.inputs.find((i) => i.name === connection.targetHandle);
-    // sem info de tipo numa das pontas = permissivo (nó com outputs dinâmicos)
     if (!srcPort || !tgtPort) return true;
     return srcPort.type === tgtPort.type;
   }, [p.nodes]);
@@ -103,7 +94,7 @@ export function FlowCanvas(p: Props) {
         onPaneClick={() => p.onSelect(null)}
         connectionMode={ConnectionMode.Strict}
         isValidConnection={isValidConnection}
-        fitView fitViewOptions={{ padding: 0.12, maxZoom: 0.9, minZoom: 0.4 }}
+        fitView fitViewOptions={{ padding: 0.16, maxZoom: 0.95, minZoom: 0.4 }}
         minZoom={0.3} maxZoom={2}
         proOptions={{ hideAttribution: true }}
       >
@@ -142,12 +133,12 @@ function EditorAnchor({ nodes, selectedId, onChange, onClose, metrics, events, m
   const node = nodes.find((n) => n.id === selectedId);
   if (!node) return null;
   const W = 480;
-  const nodeW = (node.measured?.width ?? 210) * vp.zoom;
+  const nodeW = (node.measured?.width ?? 240) * vp.zoom;
   const sx = node.position.x * vp.zoom + vp.x;
   const sy = node.position.y * vp.zoom + vp.y;
   let left = sx + nodeW + 14;
   if (left + W > window.innerWidth - 16) left = Math.max(16, sx - W - 14);
-  const top = Math.max(76, Math.min(sy, window.innerHeight - 460));
+  const top = Math.max(16, Math.min(sy, window.innerHeight - 500));
   return (
     <div className="node-editor-anchor" style={{ left, top }}>
       <NodeEditor
