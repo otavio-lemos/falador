@@ -155,13 +155,26 @@ export function openRun(
   onEnd: (code: number) => void,
   onOpen?: () => void,
   flowName?: string,
+  // onError é opcional para não quebrar chamadas existentes: recebe a mensagem
+  // do host (ex.: 409 "run já em andamento") antes de onEnd(-1).
+  onError?: (msg: string) => void,
 ): AbortController {
   const ctl = new AbortController();
   fetch('/api/run', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ flow, ...(flowName ? { flowName } : {}) }), signal: ctl.signal,
   }).then(async (r) => {
-    if (!r.ok || !r.body) { onEnd(-1); return; }
+    if (!r.ok) {
+      let msg = `falha ao iniciar run (HTTP ${r.status})`;
+      try {
+        const j = (await r.json()) as { error?: unknown };
+        if (j && typeof j.error === 'string' && j.error) msg = j.error;
+      } catch { /* corpo não-JSON: mantém a mensagem padrão */ }
+      onError?.(msg);
+      onEnd(-1);
+      return;
+    }
+    if (!r.body) { onError?.('resposta do host sem corpo SSE'); onEnd(-1); return; }
     onOpen?.();
     const reader = r.body.getReader();
     const dec = new TextDecoder();
