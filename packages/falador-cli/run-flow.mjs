@@ -137,7 +137,30 @@ async function main() {
   }
   // stop do run nunca pode pendurar num gate sem resposta: resolve tudo como rejeições
   const rejectPendingGates = () => { for (const res of [...pendingGates]) res(null); };
-  process.on('SIGTERM', () => { rejectPendingGates(); setTimeout(() => process.exit(0), 400); });
+  // Sinal do host (SIGTERM em POST /api/stop) ou Ctrl-C: parar o grafo DE VERDADE.
+  // Sem rg.stop() os nós nunca rodam seu stop() e os children (capture-sck,
+  // ffmpeg, sidecars) ficam ÓRFÃOS capturando para sempre (12+ acumulados).
+  // `rg` é atribuído mais abaixo (runGraph é async): declará-lo AQUI deixa o
+  // closure enxergar a instância real.
+  let rg;
+  let stoppingOnSignal = false;
+  const shutdownOnSignal = (sig) => {
+    if (stoppingOnSignal) return;
+    stoppingOnSignal = true;
+    rejectPendingGates();
+    const finish = () => {
+      try { process.exit(0); } catch { /* já saindo */ }
+    };
+    // rede de segurança: stop() que pendure não pode deixar o host esperando
+    const safety = setTimeout(finish, 2500);
+    safety.unref?.();
+    Promise.resolve()
+      .then(() => rg?.stop?.(`sinal ${sig}`))
+      .catch(() => {})
+      .then(() => { clearTimeout(safety); finish(); });
+  };
+  process.on('SIGTERM', () => shutdownOnSignal('SIGTERM'));
+  process.on('SIGINT', () => shutdownOnSignal('SIGINT'));
   let stdinBuf = '';
   process.stdin.setEncoding('utf-8');
   process.stdin.on('data', (d) => {
@@ -182,7 +205,6 @@ async function main() {
   // --run-seconds N: fonte contínua (mic/BlackHole) não "esgota" — o host pede stop programático
   const runSecondsArg = args.find((a) => a === '--run-seconds');
   const runSeconds = runSecondsArg ? Number(args[args.indexOf('--run-seconds') + 1]) : 0;
-  let rg;
   try {
     rg = await runGraph(flow, registry);
   } catch (err) {

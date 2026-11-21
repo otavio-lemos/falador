@@ -65,6 +65,20 @@ export const captureFfmpeg: NodeTypeDef = {
     let stopped = false;
     let rest = Buffer.alloc(0);
 
+    // rede de segurança: QUALQUER process.exit() (normal ou via handler de sinal)
+    // executa handlers 'exit' SÍNCRONOS — matar o child aqui garante que o
+    // capture-sck/ffmpeg/sidecar não vira órfão capturando para sempre, mesmo
+    // que stop() nunca rode (ex.: runner morto por sinal do host).
+    const killChildOnExit = () => {
+      const c = child;
+      child = null;
+      if (!c || c.killed || c.exitCode !== null) return;
+      try {
+        c.kill('SIGKILL');
+      } catch { /* já morto */ }
+    };
+    process.on('exit', killChildOnExit);
+
     return {
       async start() {
         // sck: ScreenCaptureKit por app (sem routing). Binário compilado sob demanda
@@ -119,6 +133,7 @@ export const captureFfmpeg: NodeTypeDef = {
       async onInput() {},
       async stop() {
         stopped = true;
+        process.off('exit', killChildOnExit);
         if (child) {
           try {
             child.kill('SIGTERM');
