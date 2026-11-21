@@ -6,7 +6,7 @@
       "id": "pipasist",
       "type": "capture.ffmpeg",
       "params": {
-        "input": "",
+        "input": "Teams",
         "chunkMs": 80,
         "backend": "sck"
       }

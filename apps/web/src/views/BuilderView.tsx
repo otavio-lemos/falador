@@ -15,12 +15,9 @@ interface Props {
   runner: Runner;
   registerActions: (a: { getFlow: () => Flow; save: () => void }) => void;
   onSaved: () => void;
-  models: { omlx: string[]; cache: string[] };
-  apps: string[];
-  onRefreshApps: () => void;
 }
 
-export function BuilderView({ catalog, currentFlow, runner, registerActions, onSaved, models, apps, onRefreshApps }: Props) {
+export function BuilderView({ catalog, currentFlow, runner, registerActions, onSaved }: Props) {
   const [nodes, setNodes, onNodesChange] = useNodesState<FNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [meta, setMeta] = useState<Flow>({ version: 1, nodes: [], edges: [], stopWhenSourcesDone: false, description: '' });
@@ -84,9 +81,6 @@ export function BuilderView({ catalog, currentFlow, runner, registerActions, onS
   const errEv = [...runner.events].reverse().find((e) => e.type === 'node_error' && !String((e as { code?: string }).code ?? '').startsWith('log_')) as { nodeId?: string; message?: string } | undefined;
   const logEv = [...runner.events].reverse().find((e) => e.type === 'node_error' && String((e as { code?: string }).code ?? '').startsWith('log_')) as { nodeId?: string; message?: string } | undefined;
   const statusMsg = errEv ? `[${errEv.nodeId}] ${errEv.message}` : logEv ? `[${logEv.nodeId}] ${logEv.message}` : '';
-  // captions finais do teste — mostra só as finais em ordem, deduplicadas por nodeId+texto
-  const finalCaptions = runner.captions.filter((c) => c.final);
-  const lastCaption = runner.captions.at(-1); // parcial mais recente (pode ser não-final)
 
   return (
     <div className="builder-wrap">
@@ -98,26 +92,13 @@ export function BuilderView({ catalog, currentFlow, runner, registerActions, onS
           selectedId={selectedId} onSelect={setSelectedId}
           onParamsChange={onParamsChange} onAddNode={onAddNode}
           metrics={runner.metrics} events={runner.events} running={runner.running}
-          models={models} apps={apps} onRefreshApps={onRefreshApps}
         />
       </div>
-      {(runner.running || finalCaptions.length > 0 || statusMsg) && (
+      {(runner.running || statusMsg) && (
         <div className={`builder-status${errEv ? ' builder-status--err' : ''}`}>
-          <div className="builder-status-top">
-            <span className={`live-dot${runner.running ? ' live-dot--on' : ''}`} />
-            <span className="builder-status-state">{runner.running ? 'Rodando' : 'Parado'}</span>
-            {statusMsg && <span className="builder-status-msg">{statusMsg}</span>}
-          </div>
-          {(finalCaptions.length > 0 || (lastCaption && !lastCaption.final)) && (
-            <div className="builder-output">
-              {finalCaptions.map((c, i) => (
-                <div key={i} className="builder-output-line">{c.text}</div>
-              ))}
-              {lastCaption && !lastCaption.final && (
-                <div className="builder-output-line builder-output-line--partial">{lastCaption.text}<span className="live-cursor" /></div>
-              )}
-            </div>
-          )}
+          <span className={`live-dot${runner.running ? ' live-dot--on' : ''}`} />
+          <span className="builder-status-state">{runner.running ? 'Rodando' : 'Parado'}</span>
+          {statusMsg && <span className="builder-status-msg">{statusMsg}</span>}
         </div>
       )}
     </div>

@@ -7,8 +7,6 @@
 import Foundation
 import ScreenCaptureKit
 import CoreMedia
-import CoreAudio
-import AppKit
 
 var appName = ""
 var rate = 16000
@@ -58,67 +56,15 @@ final class AudioOut: NSObject, SCStreamOutput {
     }
 }
 
-// --list: só apps que estão emitindo áudio agora (CoreAudio HAL + SCK)
+// --list: apps rodando em JSON (pro picker da UI) e sai
 if listOnly {
-    // 1. Coleta PIDs com áudio ativo via CoreAudio ProcessObjectList
-    var activeBundles = Set<String>()
-    var propAddr = AudioObjectPropertyAddress(
-        mSelector: kAudioHardwarePropertyProcessObjectList,
-        mScope: kAudioObjectPropertyScopeGlobal,
-        mElement: kAudioObjectPropertyElementMain)
-    var dataSize: UInt32 = 0
-    if AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &propAddr, 0, nil, &dataSize) == noErr, dataSize > 0 {
-        let count = Int(dataSize) / MemoryLayout<AudioObjectID>.size
-        var objs = [AudioObjectID](repeating: 0, count: count)
-        AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &propAddr, 0, nil, &dataSize, &objs)
-        for obj in objs {
-            var pidAddr = AudioObjectPropertyAddress(mSelector: kAudioProcessPropertyPID, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
-            var pid: pid_t = 0; var pidSize = UInt32(MemoryLayout<pid_t>.size)
-            guard AudioObjectGetPropertyData(obj, &pidAddr, 0, nil, &pidSize, &pid) == noErr, pid > 0 else { continue }
-            var runAddr = AudioObjectPropertyAddress(mSelector: kAudioProcessPropertyIsRunning, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
-            var running: UInt32 = 0; var runSize = UInt32(MemoryLayout<UInt32>.size)
-            AudioObjectGetPropertyData(obj, &runAddr, 0, nil, &runSize, &running)
-            guard running != 0 else { continue }
-            // resolve bundle via NSRunningApplication — sobe pelo parent se for helper
-            if let app = NSRunningApplication(processIdentifier: pid) {
-                let bid = app.bundleIdentifier ?? ""
-                if !bid.isEmpty { activeBundles.insert(bid) }
-            }
-            // também tenta o processo pai (helpers do Chrome/etc têm parent = app principal)
-            var info = proc_bsdinfo()
-            let sz = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, Int32(MemoryLayout<proc_bsdinfo>.size))
-            if sz > 0 {
-                let parentPid = pid_t(info.pbi_ppid)
-                if let parentApp = NSRunningApplication(processIdentifier: parentPid) {
-                    let bid = parentApp.bundleIdentifier ?? ""
-                    if !bid.isEmpty { activeBundles.insert(bid) }
-                }
-            }
-        }
-    }
-
-    // 2. Cruza com SCK
     let semL = DispatchSemaphore(value: 0)
     var contentL: SCShareableContent?
     SCShareableContent.getWithCompletionHandler { c, _ in contentL = c; semL.signal() }
     semL.wait()
-
-    var apps: [[String: String]]
-    if activeBundles.isEmpty {
-        // fallback: lista todos os apps do SCK (CoreAudio indisponível)
-        apps = (contentL?.applications ?? []).map {
-            ["name": $0.applicationName, "bundleId": $0.bundleIdentifier]
-        }
-    } else {
-        apps = (contentL?.applications ?? [])
-            .filter { !$0.bundleIdentifier.isEmpty && activeBundles.contains($0.bundleIdentifier) }
-            .map { ["name": $0.applicationName, "bundleId": $0.bundleIdentifier] }
+    let apps = (contentL?.applications ?? []).map {
+        ["name": $0.applicationName, "bundleId": $0.bundleIdentifier]
     }
-
-    // Remove duplicatas por bundleId
-    var seen = Set<String>()
-    apps = apps.filter { seen.insert($0["bundleId"] ?? "").inserted }
-
     if let data = try? JSONSerialization.data(withJSONObject: apps),
        let json = String(data: data, encoding: .utf8) {
         print(json)

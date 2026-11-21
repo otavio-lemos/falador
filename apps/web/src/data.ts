@@ -28,19 +28,19 @@ export interface NodeMeta {
 }
 
 export const NODE_META: Record<string, NodeMeta> = {
-  'capture.ffmpeg': { title: 'Captura da call', subtitle: 'Zoom · Meet · Teams · mic', desc: 'Ouve o áudio do app que você escolher' },
-  'asr.realtime':  { title: 'Transcrição em tempo real', subtitle: 'Voxtral streaming', desc: 'Converte fala em texto enquanto o outro fala' },
-  'asr.lfm3':      { title: 'Transcrição + tradução direta', subtitle: 'LFM3-Audio', desc: 'Ouve e já traduz sem etapa extra de texto' },
-  'llm.omlx':      { title: 'Assistente de texto', subtitle: 'Sugestão · Tradução · Resposta', desc: 'Recebe texto e gera resposta, tradução ou sugestão' },
-  'decision.llm':  { title: 'Decisão automática', subtitle: 'Escolhe o próximo passo', desc: 'Roteia o fluxo sem precisar de você' },
-  'human.approve': { title: 'Aprovação manual', subtitle: 'Revisar antes de continuar', desc: 'Pausa para você editar ou aprovar' },
-  'tts.sts':       { title: 'Voz (falar em voz alta)', subtitle: 'EN / PT', desc: 'Converte texto em fala sintetizada' },
-  'sink.captions': { title: 'Legenda na tela', subtitle: 'Texto ao vivo', desc: 'Mostra o texto gerado na interface' },
-  'sink.playback': { title: 'Tocar no alto-falante', subtitle: 'Áudio sintetizado', desc: 'Toca o áudio no seu dispositivo' },
-  'source.tone':   { title: 'Frases de teste', subtitle: 'Gera texto sintético', desc: 'Fonte de dados para testar o fluxo' },
-  'pipe.delay':    { title: 'Atraso', subtitle: 'Atrasa mensagens', desc: 'Introduz um delay configurável' },
-  'pipe.parcs':    { title: 'Parciais', subtitle: 'Quebra em streaming', desc: 'Converte texto completo em parciais' },
-  'sink.collect':  { title: 'Coleta resultado', subtitle: 'Junta a saída (teste)', desc: 'Acumula tudo para verificar o resultado' },
+  'capture.ffmpeg': { title: 'Captura de áudio', subtitle: 'App da call / mic / sistema', desc: 'Captura de áudio' },
+  'asr.realtime': { title: 'Transcrição ao vivo', subtitle: 'Voxtral Streaming', desc: 'Transcrição ao vivo' },
+  'asr.lfm3': { title: 'Transcrição + tradução', subtitle: 'LFM3 direto do áudio', desc: 'Transcrição + tradução PT' },
+  'llm.omlx': { title: 'LLM de texto', subtitle: 'Traduzir + Sugerir Resposta', desc: 'LLM de texto' },
+  'decision.llm': { title: 'Votação / roteamento', subtitle: 'Escolhe o caminho', desc: 'Votação/roteamento' },
+  'human.approve': { title: 'Gate humano', subtitle: 'Aprovar / Editar / Rejeitar', desc: 'Gate humano' },
+  'tts.sts': { title: 'Síntese de voz', subtitle: 'Voz: EN / PT', desc: 'Síntese de voz EN/PT' },
+  'sink.captions': { title: 'Legendas na tela', subtitle: 'Texto ao vivo', desc: 'Legendas' },
+  'sink.playback': { title: 'Alto-falante', subtitle: 'Toca o áudio', desc: 'Alto-falante' },
+  'source.tone': { title: 'Frases de teste', subtitle: 'Gera texto sintético', desc: 'Frases de teste' },
+  'pipe.delay': { title: 'Atraso', subtitle: 'Atrasa mensagens', desc: 'Atraso' },
+  'pipe.parcs': { title: 'Parciais', subtitle: 'Quebra em parciais', desc: 'Parciais' },
+  'sink.collect': { title: 'Coleta resultado', subtitle: 'Junta a saída (teste)', desc: 'Coleta resultado' },
 };
 
 export function categoryOf(type: string): Category {
@@ -67,7 +67,7 @@ const BACKENDS = [
   { val: 'sounddevice', label: 'sounddevice — PortAudio por device' },
   { val: 'ffmpeg', label: 'ffmpeg — avfoundation (perde samples no ffmpeg 9)' },
 ];
-export const LANGS = [
+const LANGS = [
   { val: 'English', label: 'English (inglês) ★' },
   { val: 'Portuguese', label: 'Portuguese (português) ★' },
   { val: 'Spanish', label: 'Spanish (espanhol)' },
@@ -77,7 +77,7 @@ export const LANGS = [
 
 export const PARAM_HELP: Record<string, Record<string, ParamDoc>> = {
   'capture.ffmpeg': {
-    backend: { help: 'como capturar o áudio', def: 'sck', control: 'dropdown', options: BACKENDS },
+    backend: { help: 'como capturar o áudio', def: 'ffmpeg', control: 'dropdown', options: BACKENDS },
     input: { help: 'sck: nome do app da call (Teams/zoom.us/Chrome); sounddevice: device (BlackHole/Microfone); ffmpeg: índice :N', def: ':0' },
     sampleRate: { help: 'sample rate de saída (Hz)', def: '16000', control: 'slider', min: 8000, max: 48000, step: 8000, unit: 'Hz' },
     chunkMs: { help: 'tamanho de cada frame (ms)', def: '80', control: 'slider', min: 20, max: 500, step: 20, unit: 'ms' },
@@ -105,13 +105,6 @@ export const PARAM_HELP: Record<string, Record<string, ParamDoc>> = {
   'llm.omlx': {
     baseUrl: { help: 'servidor OpenAI-compat (omlx)', def: 'http://127.0.0.1:8080' },
     model: { help: 'modelo de texto no omlx', def: 'LiquidAI--LFM3-1.7B-MLX-4bit', control: 'model' },
-    targetLanguage: { help: 'idioma da tradução (usado quando template está vazio)', def: '', control: 'dropdown', options: [
-      { val: 'Portuguese', label: 'Português' },
-      { val: 'English', label: 'Inglês' },
-      { val: 'Spanish', label: 'Espanhol' },
-      { val: 'French', label: 'Francês' },
-      { val: 'German', label: 'Alemão' },
-    ] },
     system: { help: 'system prompt: papel e idioma da resposta', def: '(sem system)', control: 'textarea' },
     template: { help: 'JSON array de strings: instrução ANTES do texto recebido. Vazio = só o texto', def: '[]', control: 'json' },
     temperature: { help: 'criatividade (0 = determinístico)', def: '0.2', control: 'slider', min: 0, max: 1, step: 0.1 },
@@ -143,7 +136,6 @@ export const PARAM_HELP: Record<string, Record<string, ParamDoc>> = {
   'sink.captions': {
     mode: { help: 'stdout = terminal; callback = eventos pra UI (use callback na web)', def: 'stdout', control: 'dropdown', options: [{ val: 'stdout', label: 'stdout — terminal' }, { val: 'callback', label: 'callback — UI' }] },
     showParcials: { help: 'mostra parciais ao vivo', def: 'true', control: 'toggle' },
-    outputFile: { help: 'arquivo opcional para salvar somente as frases finais', def: '', control: 'text' },
   },
   'sink.playback': {
     player: { help: 'binário que toca o WAV', def: '/usr/bin/afplay' },

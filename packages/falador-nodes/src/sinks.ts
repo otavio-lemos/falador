@@ -14,7 +14,7 @@ import type { AudioChunkPayload } from './tts-sts.ts';
 export const sinkCaptions: NodeTypeDef = {
   type: 'sink.captions',
   sink: true,
-  paramNames: ['mode', 'showParcials', 'outputFile'],
+  paramNames: ['mode', 'showParcials'],
   bindingNames: ['__onCaption'],
   inputs: [
     { name: 'in', type: 'tokens_parcial' },
@@ -29,33 +29,22 @@ export const sinkCaptions: NodeTypeDef = {
     if (p.showParcials !== undefined && typeof p.showParcials !== 'boolean') {
       errs.push({ path: 'params.showParcials', code: 'INVALID_PARAM', message: 'showParcials deve ser boolean' });
     }
-    if (p.outputFile !== undefined && typeof p.outputFile !== 'string') {
-      errs.push({ path: 'params.outputFile', code: 'INVALID_PARAM', message: 'outputFile deve ser string (caminho)' });
-    }
     return errs;
   },
   create: (ctx: NodeCtx): NodeRuntime => {
     const mode = (ctx.params.mode as 'stdout' | 'callback' | undefined) ?? 'stdout';
     const showParcials = (ctx.params.showParcials as boolean | undefined) ?? true;
-    const outputFile = (ctx.params.outputFile as string | undefined);
     const cb = ctx.bindings.__onCaption as ((c: { text: string; final: boolean }) => void) | undefined;
-
-    // stream de arquivo aberto só se outputFile definido
-    let fileStream: ReturnType<typeof createWriteStream> | null = null;
-    if (outputFile) {
-      fileStream = createWriteStream(outputFile, { flags: 'a', encoding: 'utf-8' });
-    }
 
     function write(text: string, final: boolean): void {
       if (!text) return;
       if (!final) {
         if (!showParcials) return;
+        // linha parcial viva: \r recomeça e limita a 120 cols
         const line = text.length > 120 ? '…' + text.slice(-119) : text;
         process.stdout.write(`\r${line}\u001B[K`);
       } else {
         process.stdout.write(`\r${text}\u001B[K\n`);
-        // salva só linhas finais no arquivo
-        if (fileStream) fileStream.write(text + '\n');
       }
       ctx.metrics.counter('sink.captions.messages', 1);
     }
@@ -68,8 +57,6 @@ export const sinkCaptions: NodeTypeDef = {
         if (!pl) return;
         if (mode === 'callback') {
           cb?.({ text: pl.text, final: pl.final });
-          // também salva no arquivo quando em modo callback
-          if (fileStream && pl.final && pl.text) fileStream.write(pl.text + '\n');
           return;
         }
         const isParcs = typeof msg.payload === 'object' && msg.payload !== null;
@@ -77,10 +64,7 @@ export const sinkCaptions: NodeTypeDef = {
         write(pl.text, pl.final);
       },
       async stop() {
-        await new Promise<void>((res) => {
-          if (fileStream) fileStream!.end(res);
-          else res();
-        });
+        // nada persistente: stdout já terminou cada linha no `final`
       },
     };
   },
