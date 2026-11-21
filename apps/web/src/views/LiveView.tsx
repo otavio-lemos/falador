@@ -1,5 +1,7 @@
-// Tela de EXECUÇÃO — LIVE MODE derivada do workflow (nada fixo).
-// Layout: colunas e painéis nascem dos nós do flow atual.
+// Tela de EXECUÇÃO — Layout derivado do workflow (nada fixo).
+// Header: Workflow selector + Reload + Audio toggle
+// Linha 2: Todos os componentes do workflow como dropdowns (uma linha)
+// Linha 3: Linha simples TRANSCRIÇÃO | AGENTE | TRANSLATE | DECISOR | VOCÊ
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import {
@@ -34,6 +36,14 @@ import {
   Terminal,
   ChevronDown,
   ChevronUp,
+  Restart,
+  Settings,
+  UserAvatar,
+  Chat,
+  Language,
+  ArrowRight,
+  ArrowLeft,
+  ListNumbered,
 } from '@carbon/icons-react';
 import type { Runner, Gate, AgentStep } from '../useRunner';
 import { exportSession, fetchLogs, fetchTopics, resetHistory, type Flow, type ContextDoc } from '../api';
@@ -201,7 +211,8 @@ function riskTagType(decision?: string): 'green' | 'warm-gray' | 'red' | 'magent
   return 'purple';
 }
 
-// ── Cor por tipo de nó (para o nome na conversa) ──────────────────────────────
+// ── Helpers de módulo (NÃO duplicar dentro do componente) ─────────────────────
+
 function nodeTypeColor(type: string): string {
   switch (type) {
     case 'llm.omlx': return '#22c55e';
@@ -210,14 +221,67 @@ function nodeTypeColor(type: string): string {
     case 'asr.realtime': return '#a855f7';
     case 'asr.lfm3': return '#a855f7';
     case 'capture.ffmpeg': return '#ec4899';
+    case 'human.approve': return '#f97316';
+    case 'rag.search': return '#06b6d4';
     case 'sink.captions': return '#22d3ee';
     default: return '#9ca3af';
   }
 }
 
+function componentLabel(type: string): string {
+  switch (type) {
+    case 'capture.ffmpeg': return 'CAPTURA';
+    case 'asr.realtime': return 'TRANSCRIÇÃO';
+    case 'asr.lfm3': return 'TRANSCRIÇÃO';
+    case 'llm.omlx': return 'AGENTE';
+    case 'agent.tools': return 'AGENTE';
+    case 'decision.llm': return 'DECISOR';
+    case 'human.approve': return 'REVISÃO';
+    case 'tts.sts': return 'VOZ';
+    case 'rag.search': return 'RAG';
+    case 'sink.captions': return 'LEGENDA';
+    case 'exec.command': return 'EXEC';
+    case 'tool.mcp': return 'MCP';
+    case 'tool.workflow': return 'WF';
+    case 'tool.web_search': return 'WEB';
+    case 'tool.crawler': return 'CRAWL';
+    default: return type.toUpperCase();
+  }
+}
+
+function NodeIcon({ type }: { type: string }) {
+  switch (type) {
+    case 'capture.ffmpeg': return <Microphone size={16} />;
+    case 'asr.realtime':
+    case 'asr.lfm3': return <Language size={16} />;
+    case 'llm.omlx':
+    case 'agent.tools': return <Chat size={16} />;
+    case 'decision.llm': return <ListNumbered size={16} />;
+    case 'human.approve': return <UserAvatar size={16} />;
+    case 'tts.sts': return <Microphone size={16} />;
+    case 'rag.search': return <Settings size={16} />;
+    case 'sink.captions': return <Document size={16} />;
+    default: return <Settings size={16} />;
+  }
+}
+
 function roleColor(role: 'user' | 'agent', sourceNodeType?: string): string {
   if (role === 'user') return '#9ca3af';
-  return sourceNodeType ? nodeTypeColor(sourceNodeType) : '#22c55e';
+  if (!sourceNodeType) return '#22c55e';
+  switch (sourceNodeType) {
+    case 'llm.omlx': return '#22c55e';
+    case 'agent.tools': return '#0ea5e9';
+    case 'decision.llm': return '#f59e0b';
+    case 'asr.realtime': return '#a855f7';
+    case 'asr.lfm3': return '#a855f7';
+    case 'capture.ffmpeg': return '#ec4899';
+    default: return '#22c55e';
+  }
+}
+
+// Divider simples (Carbon não exporta Divider standalone)
+function Divider() {
+  return <hr className="live2-divider" />;
 }
 
 export function LiveView({
@@ -228,6 +292,8 @@ export function LiveView({
 }: Props) {
   const stages = useMemo(() => deriveStages(flow), [flow]);
   const sinks = useMemo(() => classifySinks(flow), [flow]);
+
+  // ── Estado UI (UMA VEZ SÓ) ────────────────────────────────────────────────
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [cmdDraft, setCmdDraft] = useState('');
@@ -249,7 +315,73 @@ export function LiveView({
   const [logsCollapsed, setLogsCollapsed] = useState<boolean>(readLogCollapsed);
   const logsHeightRef = useRef(logsHeight);
 
-  // Logs dos serviços residentes — poll dos selecionados a cada 1,5s
+  // ── Funções de ação ────────────────────────────────────────────────────────
+  const approve = () => {
+    if (!gate) return;
+    if (gateInfo.isCommand) {
+      const payload = gateInfo.host && gateInfo.host !== 'local'
+        ? JSON.stringify({ command: cmdDraft, host: gateInfo.host, ...(gateInfo.reason ? { reason: gateInfo.reason } : {}) })
+        : cmdDraft;
+      runner.gate(gate.nodeId, payload);
+      return;
+    }
+    runner.gate(gate.nodeId, editing ? draft : suggestion);
+    setEditing(false);
+  };
+  const rejectGate = () => { if (!gate) return; runner.gate(gate.nodeId, null); setEditing(false); };
+  const startEdit = () => { setDraft(suggestion); setEditing(true); };
+
+  const handleResetHistory = async () => {
+    try {
+      const r = await resetHistory('*');
+      onNotify?.(r.sent ? 'Contexto conversacional limpo' : 'Nenhum run ativo para limpar contexto');
+    } catch {
+      onNotify?.('Falha ao limpar contexto');
+    }
+  };
+
+  const handleSendChat = async () => {
+    const text = chatInput.trim();
+    if (!text || !runner.running || sendingChat) return;
+    setSendingChat(true);
+    try {
+      await runner.sendChat(text, chatNode?.id);
+      setChatInput('');
+    } catch (e) {
+      onNotify?.(`Erro ao enviar: ${(e as Error).message}`);
+    } finally {
+      setSendingChat(false);
+    }
+  };
+
+  const handleExport = async (sendWebhook: boolean) => {
+    setExporting(true);
+    setExportResult(null);
+    try {
+      const trimmedUrl = webhookUrl.trim();
+      try { localStorage.setItem(WEBHOOK_STORAGE_KEY, trimmedUrl); } catch { }
+      const res = await exportSession({
+        saveMarkdown: true,
+        flowName: currentFlow || scenarioName,
+        ...(sendWebhook && trimmedUrl ? { webhookUrl: trimmedUrl } : {}),
+      });
+      const parts: string[] = [];
+      if (res.markdownPath) parts.push(`Markdown salvo: ${res.markdownPath}`);
+      if (res.webhookStatus !== undefined) parts.push(`Webhook HTTP ${res.webhookStatus}`);
+      if (res.webhookError) parts.push(`Erro webhook: ${res.webhookError}`);
+      const summary = parts.join(' · ') || 'Sessão exportada';
+      setExportResult(summary);
+      onNotify?.(summary);
+    } catch (e) {
+      const msg = `Erro ao exportar: ${(e as Error).message}`;
+      setExportResult(msg);
+      onNotify?.(msg);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  // ── Logs dos serviços residentes ───────────────────────────────────────────
   useEffect(() => {
     if (!logServices.length) { setLogsByService({}); return; }
     let alive = true;
@@ -269,7 +401,6 @@ export function LiveView({
     return () => { alive = false; clearInterval(t); };
   }, [logServices]);
 
-  // auto-scroll de cada terminal
   useEffect(() => {
     for (const svc of logServices) {
       const el = logsRefs.current[svc];
@@ -325,6 +456,7 @@ export function LiveView({
 
   const totalLogLines = logServices.reduce((sum, svc) => sum + (logsByService[svc]?.length ?? 0), 0);
 
+  // ── Dados derivados ────────────────────────────────────────────────────────
   const lastOf = (set: Set<string>) => [...runner.captions].reverse().find((c) => set.has(c.nodeId));
   const transcription = lastOf(sinks.transcription)?.text ?? '';
   const gate = runner.gates[0];
@@ -337,7 +469,7 @@ export function LiveView({
   const suggestion = gate ? gate.text : (lastOf(sinks.suggestion)?.text ?? '');
   const captureApp = stages.find((s) => s.kind === 'app')?.value ?? '—';
 
-  // ── Presença de capacidades no workflow (nada fixo) ─────────────────────────
+  // ── Presença de capacidades no workflow ─────────────────────────────────────
   const hasCapture = flow.nodes.some((n) => n.type === 'capture.ffmpeg');
   const hasGate = flow.nodes.some(
     (n) => n.type === 'human.approve' || (n.type === 'agent.tools' && n.params.approvalPolicy !== 'never'),
@@ -351,14 +483,20 @@ export function LiveView({
   const hasRAG = contextDocs.length > 0 || flow.nodes.some((n) => n.type === 'rag.search');
   const isInterview = flow.nodes.some((n) => n.type === 'decision.llm' || n.type === 'human.approve') && !hasExec && !hasAgent;
 
-  // ── Monta "painéis ativos" baseados no que EXISTE no flow ───────────────────
-  const activePanels = useMemo(() => {
-    const panels: Array<{ id: string; weight: number }> = [];
-    if (hasCapture || hasLLM || hasGate) panels.push({ id: 'left', weight: 1 });
-    panels.push({ id: 'center', weight: 2 });
-    if (hasRAG) panels.push({ id: 'right', weight: 1 });
-    return panels;
-  }, [flow.nodes, contextDocs.length, hasCapture, hasLLM, hasGate, hasRAG]);
+  // ── Componentes do workflow para a barra de componentes (Linha 2) ───────────
+  const workflowComponents = useMemo(() => {
+    const excluded = new Set(['input.chat', 'source.tone', 'pipe.delay', 'pipe.parcs', 'sink.collect']);
+    return flow.nodes
+      .filter((n) => !excluded.has(n.type))
+      .map((n) => ({
+        id: n.id,
+        type: n.type,
+        label: componentLabel(n.type),
+        color: nodeTypeColor(n.type),
+        hasStage: stages.some(s => s.nodeId === n.id),
+        stageKey: stages.find(s => s.nodeId === n.id)?.key,
+      }));
+  }, [flow.nodes, stages]);
 
   // ── Conversa sequencial (VOCÊ / AGENTE / tradutor / decisor) ────────────────
   const chatNode = flow.nodes.find((n) => n.type === 'input.chat');
@@ -369,7 +507,6 @@ export function LiveView({
   const suggestionCaption = lastOf(sinks.suggestion);
   const liveAgent = suggestionCaption && !suggestionCaption.final && runner.running ? suggestionCaption : null;
 
-  // Mapeia caption → tipo de nó origem (para cor do nome)
   const captionSourceType = useMemo(() => {
     const map = new Map<string, string>();
     for (const n of flow.nodes) {
@@ -404,47 +541,6 @@ export function LiveView({
     if (el) el.scrollTop = el.scrollHeight;
   }, [conversation.length, liveAgent?.text]);
 
-  const handleSendChat = async () => {
-    const text = chatInput.trim();
-    if (!text || !runner.running || sendingChat) return;
-    setSendingChat(true);
-    try {
-      await runner.sendChat(text, chatNode?.id);
-      setChatInput('');
-    } catch (e) {
-      onNotify?.(`Erro ao enviar: ${(e as Error).message}`);
-    } finally {
-      setSendingChat(false);
-    }
-  };
-
-  const handleExport = async (sendWebhook: boolean) => {
-    setExporting(true);
-    setExportResult(null);
-    try {
-      const trimmedUrl = webhookUrl.trim();
-      try { localStorage.setItem(WEBHOOK_STORAGE_KEY, trimmedUrl); } catch { }
-      const res = await exportSession({
-        saveMarkdown: true,
-        flowName: currentFlow || scenarioName,
-        ...(sendWebhook && trimmedUrl ? { webhookUrl: trimmedUrl } : {}),
-      });
-      const parts: string[] = [];
-      if (res.markdownPath) parts.push(`Markdown salvo: ${res.markdownPath}`);
-      if (res.webhookStatus !== undefined) parts.push(`Webhook HTTP ${res.webhookStatus}`);
-      if (res.webhookError) parts.push(`Erro webhook: ${res.webhookError}`);
-      const summary = parts.join(' · ') || 'Sessão exportada';
-      setExportResult(summary);
-      onNotify?.(summary);
-    } catch (e) {
-      const msg = `Erro ao exportar: ${(e as Error).message}`;
-      setExportResult(msg);
-      onNotify?.(msg);
-    } finally {
-      setExporting(false);
-    }
-  };
-
   // tópicos ao vivo (debounce 2,5s)
   useEffect(() => {
     if (!runner.running || transcription.trim().length < 20) return;
@@ -456,21 +552,7 @@ export function LiveView({
 
   const bd = runner.latencyBreakdown;
 
-  const approve = () => {
-    if (!gate) return;
-    if (gateInfo.isCommand) {
-      const payload = gateInfo.host && gateInfo.host !== 'local'
-        ? JSON.stringify({ command: cmdDraft, host: gateInfo.host, ...(gateInfo.reason ? { reason: gateInfo.reason } : {}) })
-        : cmdDraft;
-      runner.gate(gate.nodeId, payload);
-      return;
-    }
-    runner.gate(gate.nodeId, editing ? draft : suggestion);
-    setEditing(false);
-  };
-  const rejectGate = () => { if (!gate) return; runner.gate(gate.nodeId, null); setEditing(false); };
-  const startEdit = () => { setDraft(suggestion); setEditing(true); };
-
+  // ── Comandos de gate ────────────────────────────────────────────────────────
   const commandGateCard = gate && gateInfo.isCommand ? (
     <div className="cmd-gate-card">
       <div className="cmd-gate-head">
@@ -502,404 +584,442 @@ export function LiveView({
     </div>
   ) : null;
 
-  const handleResetHistory = async () => {
-    try {
-      const r = await resetHistory('*');
-      onNotify?.(r.sent ? 'Contexto conversacional limpo' : 'Nenhum run ativo para limpar contexto');
-    } catch {
-      onNotify?.('Falha ao limpar contexto');
-    }
-  };
-
   const lastError = [...runner.events].reverse().find(
     (e) => e.type === 'node_error' && !String((e as { code?: string }).code ?? '').startsWith('log_'),
   ) as { message?: string; nodeId?: string } | undefined;
 
-  const heroLabel = hasExec || hasAgent
-    ? 'Diagnóstico / Comando sugerido'
-    : isInterview
-      ? 'Sugestão de resposta (para você falar)'
-      : 'Tradução ao vivo';
-
-  const heroText = isInterview ? (gate ? gate.text : (lastOf(sinks.suggestion)?.text ?? '')) : (lastOf(new Set([...sinks.transcription, ...sinks.suggestion]))?.text ?? '');
-
-  // ── Render dinâmico baseado nos painéis ativos ──────────────────────────────
+  // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <div className="live2">
+      {/* ===== HEADER (Linha 1) ===== */}
       <header className="live2-top">
-        <div className="live2-mode">
-          <span className={`live-dot${runner.running ? ' live-dot--on' : ''}`} />
-          <span className="live2-mode-label">LIVE MODE</span>
-          <span className="live2-scenario">— {scenarioName}</span>
-          <div className="live-flow-select">
+        <div className="live2-toolbar" role="toolbar" aria-label="Falador Live Controls">
+          {/* Workflow selector */}
+          <div className="live2-toolbar-item live2-workflow-item">
             <Dropdown
-              id="live-flow" size="sm" titleText="Workflow" hideLabel label="Workflow"
+              id="live-flow"
+              size="sm"
+              titleText="Workflow"
+              hideLabel
+              label="Workflow"
               items={flows.map((f) => ({ id: f.name, label: f.name }))}
               itemToString={(it) => (it ? it.label : '')}
               selectedItem={flows.map((f) => ({ id: f.name, label: f.name })).find((i) => i.id === currentFlow) ?? null}
               onChange={({ selectedItem }) => selectedItem && onSwitchFlow(selectedItem.id)}
             />
           </div>
-          {hasExec && (
-            <Tag type={execActive ? 'red' : 'blue'} size="md" className="exec-mode-tag">
-              {execActive ? 'EXEC ATIVO' : 'DRY-RUN'}
-            </Tag>
-          )}
-        </div>
 
-        <div className="live2-metrics-bar">
-          <Toggletip align="bottom">
-            <ToggletipButton label="Detalhes de latência por etapa" className="latency-trigger">
-              <Tag type="green" size="md" className="latency-pill">
-                Latência: {runner.latency != null ? `${Math.round(runner.latency)}ms` : '—'}
-              </Tag>
-            </ToggletipButton>
-            <ToggletipContent>
-              <div className="latency-breakdown">
-                <div className="latency-breakdown-title">Latência do último turno</div>
-                {bd ? (
-                  <ul className="latency-breakdown-list">
-                    {bd.asrMs != null && <li><span>ASR</span><strong>{bd.asrMs} ms</strong></li>}
-                    {bd.turnMs != null && <li><span>Turn Detector</span><strong>{bd.turnMs} ms</strong></li>}
-                    {bd.llmTtftMs != null && <li><span>LLM TTFT</span><strong>{bd.llmTtftMs} ms</strong></li>}
-                    {bd.decisionMs != null && <li><span>Decisão d1</span><strong>{bd.decisionMs} ms</strong></li>}
-                    {bd.totalMs != null && <li className="latency-total"><span>Total</span><strong>{bd.totalMs} ms</strong></li>}
-                  </ul>
-                ) : (
-                  <p className="latency-empty">Aguardando trace do primeiro turno completo.</p>
-                )}
+          <Divider />
+
+          {/* Reload button */}
+          <div className="live2-toolbar-item">
+            <Button
+              kind="ghost"
+              size="sm"
+              hasIconOnly
+              renderIcon={Restart}
+              iconDescription="Recarregar workflow"
+              tooltipPosition="bottom"
+              tooltipAlignment="center"
+              onClick={() => { if (runner.running) runner.stop(); onStart(flow); }}
+              disabled={!runner.running}
+            />
+          </div>
+
+          <Divider />
+
+          {/* Audio capture toggle - REPLACE LIVE MODE TEXT */}
+          <div className="live2-toolbar-item">
+            <div className="live2-audio-toggle">
+              <Toggle
+                id="live-capture-toggle"
+                size="sm"
+                labelText="Captura de áudio"
+                labelA="Desligada"
+                labelB="Ligada"
+                toggled={captureEnabled}
+                onToggle={onToggleCapture}
+              />
+              <span className="live2-capture-hint">
+                {captureEnabled
+                  ? (runner.running ? 'capturando' : 'aplicada ao iniciar')
+                  : (runner.running ? 'captura desligada' : 'será ignorada no run')}
+                </span>
               </div>
-            </ToggletipContent>
-          </Toggletip>
+          </div>
+
+          <div className="live2-toolbar-spacer" />
+
+          {/* Latency pill */}
+          <div className="live2-toolbar-item">
+            <Toggletip align="bottom">
+              <ToggletipButton label="Detalhes de latência por etapa" className="latency-trigger">
+                <Tag type="green" size="md" className="latency-pill">
+                  Latência: {runner.latency != null ? `${Math.round(runner.latency)}ms` : '—'}
+                </Tag>
+              </ToggletipButton>
+              <ToggletipContent>
+                <div className="latency-breakdown">
+                  <div className="latency-breakdown-title">Latência do último turno</div>
+                  {bd ? (
+                    <ul className="latency-breakdown-list">
+                      {bd.asrMs != null && <li><span>ASR</span><strong>{bd.asrMs} ms</strong></li>}
+                      {bd.turnMs != null && <li><span>Turn Detector</span><strong>{bd.turnMs} ms</strong></li>}
+                      {bd.llmTtftMs != null && <li><span>LLM TTFT</span><strong>{bd.llmTtftMs} ms</strong></li>}
+                      {bd.decisionMs != null && <li><span>Decisão d1</span><strong>{bd.decisionMs} ms</strong></li>}
+                      {bd.totalMs != null && <li className="latency-total"><span>Total</span><strong>{bd.totalMs} ms</strong></li>}
+                    </ul>
+                  ) : (
+                    <p className="latency-empty">Aguardando trace do primeiro turno completo.</p>
+                  )}
+                </div>
+              </ToggletipContent>
+            </Toggletip>
+          </div>
+
+          <Divider />
+
+          {/* Actions */}
+          <div className="live2-toolbar-item">
+            {hasLLM && (
+              <Button kind="ghost" size="sm" renderIcon={Reset} onClick={handleResetHistory} title="Limpa memória conversacional do LLM sem reiniciar o fluxo">
+                Limpar contexto
+              </Button>
+            )}
+          </div>
+          <div className="live2-toolbar-item">
+            <Button kind="ghost" size="sm" renderIcon={Download} onClick={() => { setExportResult(null); setExportOpen(true); }}>
+              Exportar sessão
+            </Button>
+          </div>
+          <div className="live2-toolbar-item">
+            <Button kind="secondary" size="sm" renderIcon={runner.running ? Pause : Play} onClick={() => (runner.running ? runner.stop() : onStart(flow))}>
+              {runner.running ? 'Pausar' : 'Retomar'}
+            </Button>
+          </div>
+          <div className="live2-toolbar-item">
+            <Button kind="danger" size="sm" renderIcon={Stop} onClick={onExit}>Encerrar Sessão</Button>
+          </div>
         </div>
 
-        <div className="live2-top-actions">
-          {hasLLM && (
-            <Button kind="ghost" size="sm" renderIcon={Reset} onClick={handleResetHistory} title="Limpa memória conversacional do LLM sem reiniciar o fluxo">
-              Limpar contexto
-            </Button>
-          )}
-          <Button kind="ghost" size="sm" renderIcon={Download} onClick={() => { setExportResult(null); setExportOpen(true); }}>
-            Exportar sessão
-          </Button>
-          <Button kind="secondary" size="sm" renderIcon={runner.running ? Pause : Play} onClick={() => (runner.running ? runner.stop() : onStart(flow))}>
-            {runner.running ? 'Pausar' : 'Retomar'}
-          </Button>
-          <Button kind="danger" size="sm" renderIcon={Stop} onClick={onExit}>Encerrar Sessão</Button>
-        </div>
+        {/* Error banner */}
+        {lastError && <div className="live2-error">⚠ [{lastError.nodeId}] {lastError.message}</div>}
+        {!lastError && runner.lastRunError && <div className="live2-error">⚠ {runner.lastRunError}</div>}
       </header>
 
+      {/* ===== LINHA 2: COMPONENTES DO WORKFLOW (dropdowns) ===== */}
+      <div className="live2-components-bar">
+        {workflowComponents.map((comp) => (
+          <div key={comp.id} className="live2-component-item" data-accent={comp.color}>
+            <span className="live2-component-label">
+              <NodeIcon type={comp.type} />
+              {comp.label}
+            </span>
+            {comp.hasStage && (
+              <>
+                <Divider />
+                <div className="live2-component-dropdown">
+                  {(() => {
+                    const stage = stages.find(s => s.nodeId === comp.id);
+                    if (!stage) return null;
+                    const items = stageItems(stage, models, apps);
+                    return (
+                      <Dropdown
+                        id={`stage-${stage.key}`}
+                        size="sm"
+                        titleText={stage.label}
+                        hideLabel
+                        label={stage.label}
+                        items={items}
+                        itemToString={(it) => (it ? it.label : '')}
+                        selectedItem={items.find((i) => i.id === stage.value) ?? items[0]}
+                        onChange={({ selectedItem }) => selectedItem && onUpdateStage(stage.nodeId, stage.param, selectedItem.id)}
+                      />
+                    );
+                  })()}
+                  {comp.type === 'capture.ffmpeg' && (
+                    <Button kind="ghost" size="sm" hasIconOnly renderIcon={Restart} iconDescription="Recarregar apps" tooltipPosition="bottom" onClick={onRefreshApps} />
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* ===== LINHA 3: LABELS SIMPLES (TRANSCRIÇÃO | AGENTE | TRANSLATE | DECISOR | VOCÊ) ===== */}
+      <div className="live2-roles-bar">
+        {[
+          { key: 'transcricao', label: 'TRANSCRIÇÃO', color: '#a855f7', icon: <Language size={12} />, hasNode: flow.nodes.some(n => n.type.startsWith('asr')) },
+          { key: 'agente', label: 'AGENTE', color: '#22c55e', icon: <Chat size={12} />, hasNode: flow.nodes.some(n => n.type === 'llm.omlx' || n.type === 'agent.tools') },
+          { key: 'translate', label: 'TRANSLATE', color: '#06b6d4', icon: <><ArrowLeft size={12} /> <ArrowRight size={12} /></>, hasNode: flow.nodes.some(n => n.type === 'llm.omlx' && n.params.targetLanguage) },
+          { key: 'decisor', label: 'DECISOR', color: '#f59e0b', icon: <ListNumbered size={12} />, hasNode: flow.nodes.some(n => n.type === 'decision.llm') },
+          { key: 'voce', label: 'VOCÊ', color: '#9ca3af', icon: <UserAvatar size={12} />, hasNode: true },
+        ].map((role) => (
+          <div key={role.key} className="live2-role-item" data-role-color={role.color}>
+            {role.icon}
+            <span className="live2-role-label">{role.label}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* ===== MAIN CONTENT ===== */}
       <div className="live2-body">
-        {/* Grid dinâmico: colunas nascem dos painéis ativos */}
-        <main className="live2-grid" style={{ gridTemplateColumns: activePanels.map(p => `${p.weight}fr`).join(' ') }}>
-          {/* Painel ESQUERDA: captura + sugestão principal */}
-          {activePanels.some(p => p.id === 'left') && (
-            <section className="live2-panel live2-left" aria-label="Controles e sugestão">
-              {hasCapture && (
-                <div className="live2-capture">
-                  <Toggle
-                    id="live-capture-toggle"
-                    size="sm"
-                    labelText="Captura de áudio"
-                    labelA="Desligada"
-                    labelB="Ligada"
-                    toggled={captureEnabled}
-                    onToggle={onToggleCapture}
-                  />
-                  <span className="live2-capture-hint">
-                    {captureEnabled
-                      ? (runner.running ? 'capturando' : 'aplicada ao iniciar')
-                      : (runner.running ? 'captura desligada' : 'será ignorada no run')}
-                    </span>
-                  </div>
+        <main className="live2-main">
+          {/* Área principal: sugestão HERÓI ou chat sequencial */}
+          {chatNode ? (
+            <>
+              {commandGateCard}
+              {hasGate && gate && !gateInfo.isCommand && (
+                <div className="live2-actions live-chat-gate-actions">
+                  {editing ? (
+                    <>
+                      <TextArea labelText="Editar sugestão" hideLabel rows={3} value={draft} onChange={(e) => setDraft(e.target.value)} />
+                      <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={approve}>Enviar editada</Button>
+                      <Button kind="ghost" size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button kind="ghost" size="sm" renderIcon={Edit} onClick={startEdit}>Editar</Button>
+                      <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
+                        {hasTTS ? 'Aprovar & Falar' : 'Aprovar'}
+                      </Button>
+                      <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>Rejeitar</Button>
+                    </>
+                  )}
+                </div>
               )}
 
-              {/* Dropdowns por etapa (uma linha, redimensionáveis via flex) */}
-              <div className="live2-stages">
-                {stages.map((s) => {
-                  const items = stageItems(s, models, apps);
+              <div className="live-chat">
+                <div className="live-chat-log" ref={chatLogRef}>
+                  {conversation.length === 0 && !liveAgent && (
+                    <p className="live-chat-empty">
+                      {runner.running ? 'Envie uma mensagem para conversar com o agente.' : 'Inicie a sessão para conversar com o agente.'}
+                    </p>
+                  )}
+                  {conversation.map((m, idx) => (
+                    <div
+                      key={`${m.ts}-${idx}`}
+                      className="live-chat-line"
+                      style={{ borderLeftColor: roleColor(m.role, m.sourceType) }}
+                    >
+                      <span className="live-chat-ts">{new Date(m.ts).toLocaleTimeString()}</span>
+                      <span
+                        className="live-chat-role"
+                        style={{ color: roleColor(m.role, m.sourceType) }}
+                      >
+                        {m.role === 'user' ? (m.sourceType === 'asr' ? 'Entrevistador' : 'Você') : 'Agente'}
+                      </span>
+                      <span className="live-chat-text">{m.text}</span>
+                    </div>
+                  ))}
+                  {liveAgent && (
+                    <div className="live-chat-line live-chat-line--live" style={{ borderLeftColor: roleColor('agent', 'llm.omlx') }}>
+                      <span className="live-chat-ts">{new Date(liveAgent.ts).toLocaleTimeString()}</span>
+                      <span className="live-chat-role" style={{ color: roleColor('agent', 'llm.omlx') }}>Agente</span>
+                      <span className="live-chat-text">{liveAgent.text}<span className="live-cursor" /></span>
+                    </div>
+                  )}
+                </div>
+                <div className="live-chat-input">
+                  <TextArea
+                    id="live-chat-input"
+                    labelText="Mensagem"
+                    hideLabel
+                    rows={2}
+                    placeholder={runner.running ? chatPlaceholder : 'Inicie a sessão para enviar mensagens...'}
+                    value={chatInput}
+                    disabled={!runner.running || sendingChat}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        void handleSendChat();
+                      }
+                    }}
+                  />
+                  <Button
+                    kind="primary"
+                    size="md"
+                    renderIcon={Play}
+                    disabled={!runner.running || sendingChat || !chatInput.trim()}
+                    onClick={() => void handleSendChat()}
+                  >
+                    Enviar
+                  </Button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="live2-suggestion">
+                {editing && hasGate ? (
+                  <TextArea labelText="Editar sugestão" hideLabel rows={4} value={draft} onChange={(e) => setDraft(e.target.value)} />
+                ) : (
+                  <div className="live2-suggestion-text">
+                    {suggestion || (runner.running ? (isInterview ? 'Gerando resposta...' : 'Aguardando áudio...') : 'Inicie a sessão.')}
+                    {runner.running && !editing && <span className="live-cursor" />}
+                  </div>
+                )}
+              </div>
+              {(hasLLM || hasGate) && (
+                <div className="live2-actions">
+                  {hasLLM && <Button kind="ghost" size="sm" renderIcon={Renew} onClick={onRegenerate}>Regerar</Button>}
+                  {hasGate && (editing ? (
+                    <>
+                      <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={approve} disabled={!gate}>Enviar editada</Button>
+                      <Button kind="ghost" size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button kind="ghost" size="sm" renderIcon={Edit} onClick={startEdit} disabled={!gate}>Editar</Button>
+                      <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve} disabled={!gate}>
+                        {hasTTS ? 'Aprovar & Falar' : 'Aprovar'}
+                      </Button>
+                      {gate && (
+                        <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>Rejeitar</Button>
+                      )}
+                    </>
+                  ))}
+                </div>
+              )}
+              {hasGate && !gate && runner.running && (
+                <p className="live2-hint">Roteamento automático — sem gate humano pendente.</p>
+              )}
+            </>
+          )}
+
+          {runner.agentSteps.length > 0 && (
+            <section className="agent-timeline" aria-label="Passos do agente">
+              <div className="live2-label">Passos do agente ({runner.agentSteps.length})</div>
+              <div className="agent-timeline-list">
+                {runner.agentSteps.map((s, idx) => {
+                  const st = agentStepStatus(s);
                   return (
-                    <div key={s.key} className="stage-dd" style={{ ['--accent' as string]: s.accent }}>
-                      <span className="stage-dd-label">{s.label}</span>
-                      <Dropdown
-                        id={`stage-${s.key}`} size="sm" titleText={s.label} hideLabel label={s.label}
-                        items={items} itemToString={(it) => (it ? it.label : '')}
-                        selectedItem={items.find((i) => i.id === s.value) ?? items[0]}
-                        onChange={({ selectedItem }) => selectedItem && onUpdateStage(s.nodeId, s.param, selectedItem.id)}
-                      />
-                      {s.kind === 'app' && (
-                        <Button kind="ghost" size="sm" hasIconOnly renderIcon={Renew} iconDescription="Recarregar apps" tooltipPosition="bottom" onClick={onRefreshApps} />
+                    <div key={`${s.nodeId}-${s.step}-${s.phase}-${idx}`} className="agent-step-row">
+                      <span className="agent-step-num">Passo {s.step}</span>
+                      <code className="agent-step-tool">{s.tool}</code>
+                      <Tag type={st.tagType} size="sm">{st.label}</Tag>
+                      {typeof s.durationMs === 'number' && (
+                        <span className="agent-step-dur">{Math.round(s.durationMs)} ms</span>
                       )}
                     </div>
                   );
                 })}
               </div>
-
-              {/* Área principal: sugestão HERÓI ou chat sequencial */}
-              {chatNode ? (
-                <>
-                  {commandGateCard}
-                  {hasGate && gate && !gateInfo.isCommand && (
-                    <div className="live2-actions live-chat-gate-actions">
-                      {editing ? (
-                        <>
-                          <TextArea labelText="Editar sugestão" hideLabel rows={3} value={draft} onChange={(e) => setDraft(e.target.value)} />
-                          <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={approve}>Enviar editada</Button>
-                          <Button kind="ghost" size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
-                        </>
-                      ) : (
-                        <>
-                          <Button kind="ghost" size="sm" renderIcon={Edit} onClick={startEdit}>Editar</Button>
-                          <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
-                            {hasTTS ? 'Aprovar & Falar' : 'Aprovar'}
-                          </Button>
-                          <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>Rejeitar</Button>
-                        </>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="live-chat">
-                    <div className="live-chat-log" ref={chatLogRef}>
-                      {conversation.length === 0 && !liveAgent && (
-                        <p className="live-chat-empty">
-                          {runner.running ? 'Envie uma mensagem para conversar com o agente.' : 'Inicie a sessão para conversar com o agente.'}
-                        </p>
-                      )}
-                      {conversation.map((m, idx) => (
-                        <div
-                          key={`${m.ts}-${idx}`}
-                          className="live-chat-line"
-                          style={{ borderColor: roleColor(m.role, m.sourceType) }}
-                        >
-                          <span className="live-chat-ts">{new Date(m.ts).toLocaleTimeString()}</span>
-                          <span
-                            className="live-chat-role"
-                            style={{ color: roleColor(m.role, m.sourceType) }}
-                          >
-                            {m.role === 'user' ? (m.sourceType === 'asr' ? 'Entrevistador' : 'Você') : 'Agente'}
-                          </span>
-                          <span className="live-chat-text">{m.text}</span>
-                        </div>
-                      ))}
-                      {liveAgent && (
-                        <div className="live-chat-line live-chat-line--live" style={{ borderColor: roleColor('agent', 'llm.omlx') }}>
-                          <span className="live-chat-ts">{new Date(liveAgent.ts).toLocaleTimeString()}</span>
-                          <span className="live-chat-role" style={{ color: roleColor('agent', 'llm.omlx') }}>Agente</span>
-                          <span className="live-chat-text">{liveAgent.text}<span className="live-cursor" /></span>
-                        </div>
-                      )}
-                    </div>
-                    <div className="live-chat-input">
-                      <TextArea
-                        id="live-chat-input"
-                        labelText="Mensagem"
-                        hideLabel
-                        rows={2}
-                        placeholder={runner.running ? chatPlaceholder : 'Inicie a sessão para enviar mensagens...'}
-                        value={chatInput}
-                        disabled={!runner.running || sendingChat}
-                        onChange={(e) => setChatInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && !e.shiftKey) {
-                            e.preventDefault();
-                            void handleSendChat();
-                          }
-                        }}
-                      />
-                      <Button
-                        kind="primary"
-                        size="md"
-                        renderIcon={Play}
-                        disabled={!runner.running || sendingChat || !chatInput.trim()}
-                        onClick={() => void handleSendChat()}
-                      >
-                        Enviar
-                      </Button>
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="live2-label">{heroLabel}</div>
-                  {commandGateCard ? commandGateCard : (
-                    <>
-                      <div className="live2-suggestion">
-                        {editing && hasGate ? (
-                          <TextArea labelText="Editar sugestão" hideLabel rows={4} value={draft} onChange={(e) => setDraft(e.target.value)} />
-                        ) : (
-                          <div className="live2-suggestion-text">
-                            {heroText || (runner.running ? (isInterview ? 'Gerando resposta...' : 'Aguardando áudio...') : 'Inicie a sessão.')}
-                            {runner.running && !editing && <span className="live-cursor" />}
-                          </div>
-                        )}
-                      </div>
-                      {(hasLLM || hasGate) && (
-                        <div className="live2-actions">
-                          {hasLLM && <Button kind="ghost" size="sm" renderIcon={Renew} onClick={onRegenerate}>Regerar</Button>}
-                          {hasGate && (editing ? (
-                            <>
-                              <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={approve} disabled={!gate}>Enviar editada</Button>
-                              <Button kind="ghost" size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
-                            </>
-                          ) : (
-                            <>
-                              <Button kind="ghost" size="sm" renderIcon={Edit} onClick={startEdit} disabled={!gate}>Editar</Button>
-                              <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve} disabled={!gate}>
-                                {hasTTS ? 'Aprovar & Falar' : 'Aprovar'}
-                              </Button>
-                              {gate && (
-                                <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>Rejeitar</Button>
-                              )}
-                            </>
-                          ))}
-                        </div>
-                      )}
-                      {hasGate && !gate && runner.running && (
-                        <p className="live2-hint">Roteamento automático — sem gate humano pendente.</p>
-                      )}
-                    </>
-                  )}
-                </>
-              )}
-
-              {runner.agentSteps.length > 0 && (
-                <section className="agent-timeline" aria-label="Passos do agente">
-                  <div className="live2-label">Passos do agente ({runner.agentSteps.length})</div>
-                  <div className="agent-timeline-list">
-                    {runner.agentSteps.map((s, idx) => {
-                      const st = agentStepStatus(s);
-                      return (
-                        <div key={`${s.nodeId}-${s.step}-${s.phase}-${idx}`} className="agent-step-row">
-                          <span className="agent-step-num">Passo {s.step}</span>
-                          <code className="agent-step-tool">{s.tool}</code>
-                          <Tag type={st.tagType} size="sm">{st.label}</Tag>
-                          {typeof s.durationMs === 'number' && (
-                            <span className="agent-step-dur">{Math.round(s.durationMs)} ms</span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </section>
-              )}
             </section>
           )}
 
-          {/* Painel CENTRO: transcrição ao vivo (se tem ASR) */}
-          <section className="live2-panel live2-center" aria-label="Transcrição ao vivo">
-            {flow.nodes.some(n => n.type.startsWith('asr')) && (
+          {/* Transcrição ao vivo (se tem ASR) */}
+          {flow.nodes.some(n => n.type.startsWith('asr')) && (
+            <div className="live2-transcription-section">
+              <div className="live2-label">Transcrição ao vivo (entrevistador)</div>
+              <div className="live2-transcription">
+                {transcription || (runner.running ? 'Ouvindo...' : '—')}
+              </div>
+            </div>
+          )}
+        </main>
+
+        {/* ===== SIDEBAR: RAG / Documentos / Microfone ===== */}
+        {(hasRAG || isInterview) && (
+          <aside className="live2-side" aria-label="Documentos e Runbooks">
+            <div className="live2-side-title">Documentos & Runbooks (RAG)</div>
+
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".md,.markdown,.txt,.pdf,.yaml,.yml,.json"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) {
+                  const tags = uploadTags.split(',').map((t) => t.trim()).filter(Boolean);
+                  onUploadDoc(f, tags);
+                  setUploadTags('');
+                }
+                e.target.value = '';
+              }}
+            />
+            <div className="ctx-upload">
+              <TextInput
+                id="ctx-tags-input"
+                size="sm"
+                labelText="Tags opcionais (separadas por vírgula)"
+                placeholder="ex.: nginx, ops, runbook"
+                value={uploadTags}
+                onChange={(e) => setUploadTags(e.target.value)}
+              />
+              <Button kind="ghost" size="sm" renderIcon={Add} onClick={() => fileRef.current?.click()}>
+                Carregar documento
+              </Button>
+            </div>
+
+            {contextDocs.map((d) => (
+              <div key={d.name} className="ctx-doc">
+                <Document size={18} />
+                <div className="ctx-doc-body">
+                  <div className="ctx-doc-name">{d.name}</div>
+                  <div className="ctx-doc-sub ctx-doc-sub--ok">
+                    <Checkmark size={12} /> {d.chunksCount ?? 0} chunks · {d.points.length} pontos
+                  </div>
+                  {d.tags && d.tags.length > 0 && (
+                    <div className="ctx-chips" style={{ marginTop: 4 }}>
+                      {d.tags.map((t, i) => <Tag key={i} type="cool-gray" size="sm">{t}</Tag>)}
+                    </div>
+                  )}
+                  {d.points.length > 0 && <ul className="ctx-points">{d.points.map((p, i) => <li key={i}>{p}</li>)}</ul>}
+                </div>
+                <button className="ctx-doc-remove" onClick={() => onRemoveDoc(d.name)} title="Remover documento"><TrashCan size={14} /></button>
+              </div>
+            ))}
+            {contextDocs.length === 0 && (
+              <div className="ctx-doc ctx-doc--empty">
+                <Document size={18} />
+                <div>
+                  <div className="ctx-doc-name">Runbooks / Documentos locais</div>
+                  <div className="ctx-doc-sub">Carregue .md, .pdf, .txt, .yaml ou .json para busca BM25 on-device</div>
+                </div>
+              </div>
+            )}
+
+            <div className="ctx-block">
+              <div className="ctx-block-title">Tópicos detectados</div>
+              <div className="ctx-chips">
+                {topics.length
+                  ? topics.map((t, i) => <Tag key={i} type="purple" size="sm">{t}</Tag>)
+                  : <span className="ctx-empty">{runner.running ? 'detectando…' : 'aparecem durante a fala'}</span>}
+              </div>
+            </div>
+
+            {isInterview && (
               <>
-                <div className="live2-label">Transcrição ao vivo (entrevistador)</div>
-                <div className="live2-transcription">
-                  {transcription || (runner.running ? 'Ouvindo...' : '—')}
+                <div className="ctx-block">
+                  <div className="ctx-block-title"><Information size={16} /> Dica de estrutura</div>
+                  <p className="ctx-text">Use o método <strong>STAR</strong> (Situação, Tarefa, Ação, Resultado) para responder.</p>
+                </div>
+                <div className="ctx-block ctx-block--warn">
+                  <div className="ctx-block-title"><Warning size={16} /> Pontos de atenção</div>
+                  <p className="ctx-text">Não fale mal de monolitos — cite os trade-offs.</p>
                 </div>
               </>
             )}
-            {!flow.nodes.some(n => n.type.startsWith('asr')) && !chatNode && (
-              <div className="live2-label">Nenhum nó de transcrição no workflow</div>
-            )}
-          </section>
 
-          {/* Painel DIREITA: RAG / Documentos / Microfone */}
-          {activePanels.some(p => p.id === 'right') && (
-            <aside className="live2-panel live2-right live2-side" aria-label="Documentos e Runbooks">
-              <div className="live2-side-title">Documentos & Runbooks (RAG)</div>
-
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".md,.markdown,.txt,.pdf,.yaml,.yml,.json"
-                hidden
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) {
-                    const tags = uploadTags.split(',').map((t) => t.trim()).filter(Boolean);
-                    onUploadDoc(f, tags);
-                    setUploadTags('');
-                  }
-                  e.target.value = '';
-                }}
-              />
-              <div className="ctx-upload">
-                <TextInput
-                  id="ctx-tags-input"
-                  size="sm"
-                  labelText="Tags opcionais (separadas por vírgula)"
-                  placeholder="ex.: nginx, ops, runbook"
-                  value={uploadTags}
-                  onChange={(e) => setUploadTags(e.target.value)}
-                />
-                <Button kind="ghost" size="sm" renderIcon={Add} onClick={() => fileRef.current?.click()}>
-                  Carregar documento
-                </Button>
-              </div>
-
-              {contextDocs.map((d) => (
-                <div key={d.name} className="ctx-doc">
-                  <Document size={18} />
-                  <div className="ctx-doc-body">
-                    <div className="ctx-doc-name">{d.name}</div>
-                    <div className="ctx-doc-sub ctx-doc-sub--ok">
-                      <Checkmark size={12} /> {d.chunksCount ?? 0} chunks · {d.points.length} pontos
-                    </div>
-                    {d.tags && d.tags.length > 0 && (
-                      <div className="ctx-chips" style={{ marginTop: 4 }}>
-                        {d.tags.map((t, i) => <Tag key={i} type="cool-gray" size="sm">{t}</Tag>)}
-                      </div>
-                    )}
-                    {d.points.length > 0 && <ul className="ctx-points">{d.points.map((p, i) => <li key={i}>{p}</li>)}</ul>}
-                  </div>
-                  <button className="ctx-doc-remove" onClick={() => onRemoveDoc(d.name)} title="Remover documento"><TrashCan size={14} /></button>
-                </div>
-              ))}
-              {contextDocs.length === 0 && (
-                <div className="ctx-doc ctx-doc--empty">
-                  <Document size={18} />
-                  <div>
-                    <div className="ctx-doc-name">Runbooks / Documentos locais</div>
-                    <div className="ctx-doc-sub">Carregue .md, .pdf, .txt, .yaml ou .json para busca BM25 on-device</div>
-                  </div>
-                </div>
-              )}
-
-              <div className="ctx-block">
-                <div className="ctx-block-title">Tópicos detectados</div>
-                <div className="ctx-chips">
-                  {topics.length
-                    ? topics.map((t, i) => <Tag key={i} type="purple" size="sm">{t}</Tag>)
-                    : <span className="ctx-empty">{runner.running ? 'detectando…' : 'aparecem durante a fala'}</span>}
+            <div className="ctx-mic">
+              <Microphone size={18} />
+              <div className="ctx-mic-info">
+                <div className="ctx-mic-name">Capturando: {captureApp}</div>
+                <div className={`ctx-level${runner.running ? ' ctx-level--on' : ''}`}>
+                  {Array.from({ length: 12 }).map((_, i) => <span key={i} style={{ ['--i' as string]: i }} />)}
                 </div>
               </div>
+            </div>
+          </aside>
+        )}
 
-              {isInterview && (
-                <>
-                  <div className="ctx-block">
-                    <div className="ctx-block-title"><Information size={16} /> Dica de estrutura</div>
-                    <p className="ctx-text">Use o método <strong>STAR</strong> (Situação, Tarefa, Ação, Resultado) para responder.</p>
-                  </div>
-                  <div className="ctx-block ctx-block--warn">
-                    <div className="ctx-block-title"><Warning size={16} /> Pontos de atenção</div>
-                    <p className="ctx-text">Não fale mal de monolitos — cite os trade-offs.</p>
-                  </div>
-                </>
-              )}
-
-              <div className="ctx-mic">
-                <Microphone size={18} />
-                <div className="ctx-mic-info">
-                  <div className="ctx-mic-name">Capturando: {captureApp}</div>
-                  <div className={`ctx-level${runner.running ? ' ctx-level--on' : ''}`}>
-                    {Array.from({ length: 12 }).map((_, i) => <span key={i} style={{ ['--i' as string]: i }} />)}
-                  </div>
-                </div>
-              </div>
-            </aside>
-          )}
-        </main>
       </div>
 
-      {/* Logs dos serviços — redimensionável, multi-seleção */}
+      {/* ===== LOGS DOS SERVIÇOS ===== */}
       <section
         className={`logs-panel${logsCollapsed ? ' logs-panel--collapsed' : ''}`}
         aria-label="Logs dos serviços"
