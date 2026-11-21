@@ -52,6 +52,13 @@ cmd_status() {
 }
 
 cmd_start() {
+  # rebuild da UI antes de subir (evita servir dist stale)
+  if [ -d apps/web ]; then
+    echo "Build da UI (apps/web)..."
+    (cd apps/web && npm run build) > logs/build.log 2>&1 \
+      && echo "  ✔ build ok (logs/build.log)" \
+      || { echo "  ✖ build falhou — veja logs/build.log"; exit 1; }
+  fi
   echo "Subindo TODOS os serviços: $(names)"
   for s in "${SERVICES[@]}"; do
     IFS='|' read -r name port cmd tries <<< "$s"

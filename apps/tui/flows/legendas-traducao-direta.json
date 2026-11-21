@@ -1,10 +1,10 @@
 {
   "version": 1,
   "stopWhenSourcesDone": false,
-  "description": "Cenário 1 (nativo): captura SCK do app da call → LFM3-Audio traduz DIRETO do áudio (task=chat), janelas de 12 s, ~15× rt, sem nó llm",
+  "description": "Tradução direta do áudio para português via LFM3-Audio (sem etapa separada de LLM): menor uso de memória, processa janelas de 12 s direto do áudio da call para legendas em PT.",
   "nodes": [
     {
-      "id": "pipasist",
+      "id": "captura",
       "type": "capture.ffmpeg",
       "params": {
         "input": "",
@@ -32,10 +32,11 @@
   ],
   "edges": [
     {
-      "from": "pipasist.out",
+      "from": "captura.out",
       "to": "asrtraduz.in",
-      "capacity": 128,
-      "overflow": "block"
+      "capacity": 32,
+      "overflow": "drop_oldest",
+      "ttlMs": 1500
     },
     {
       "from": "asrtraduz.out",

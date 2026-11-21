@@ -29,7 +29,7 @@ function modelsForNode(nodeType: string, models: { omlx: string[]; cache: string
   const all = [...models.omlx, ...models.cache.filter((m) => !models.omlx.includes(m))];
   if (nodeType === 'asr.realtime' || nodeType === 'asr.lfm3') return all.filter(isAsrModel);
   if (nodeType === 'tts.sts') return all.filter((m) => isTtsModel(m) || isStsModel(m));
-  if (nodeType === 'decision.llm') return all.filter(isDecisionModel);
+  if (nodeType === 'decision.llm' || nodeType === 'turn.detector') return all.filter(isDecisionModel);
   if (nodeType === 'llm.omlx') return all.filter(isTextModel);
   return all;
 }
@@ -288,7 +288,7 @@ function shortLabel(id: string): string {
 function inferControl(name: string, value: unknown): ParamDoc['control'] {
   if (typeof value === 'boolean') return 'toggle';
   if (['system', 'instructions', 'instruction', 'prompt'].includes(name)) return 'textarea';
-  if (['template', 'options', 'criteria'].includes(name)) return 'json';
+  if (['template', 'options', 'criteria', 'allowedPrefixes', 'allowedHosts', 'contextTags'].includes(name)) return 'json';
   return 'text';
 }
 function parseScalar(raw: string): unknown {

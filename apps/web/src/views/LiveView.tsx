@@ -1,14 +1,42 @@
-// Tela de EXECUÇÃO — layout do dono: LIVE MODE + latência + Pausar/Encerrar;
-// transcrição do entrevistador; DROPDOWN POR ETAPA do workflow (troca a config real
-// de cada nó); sugestão hero (o que o dono lê pra falar) + Regerar/Editar/Aprovar;
-// sidebar Contexto & Cheatsheet com RAG leve REAL (docs + pontos + tópicos ao vivo).
+// Tela de EXECUÇÃO — LIVE MODE + latência com breakdown + DRY-RUN/EXEC ATIVO + Limpar contexto +
+// Exportar sessão (.md / webhook) + card rico de aprovação (comandos/host/risco d1) +
+// sidebar de Documentos/Runbooks (RAG BM25 com tags e chunks).
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Dropdown, Tag, TextArea } from '@carbon/react';
-import { Pause, Play, Stop, Renew, Edit, Checkmark, Document, Warning, Information, Microphone, Add, TrashCan } from '@carbon/icons-react';
-import type { Runner } from '../useRunner';
-import { fetchTopics, type Flow, type ContextDoc } from '../api';
+import {
+  Button,
+  Dropdown,
+  Modal,
+  Tag,
+  TextArea,
+  TextInput,
+  Toggletip,
+  ToggletipButton,
+  ToggletipContent,
+} from '@carbon/react';
+import {
+  Pause,
+  Play,
+  Stop,
+  Renew,
+  Edit,
+  Checkmark,
+  Close,
+  Document,
+  Warning,
+  Information,
+  Microphone,
+  Add,
+  TrashCan,
+  Download,
+  Reset,
+  Terminal,
+} from '@carbon/icons-react';
+import type { Runner, Gate } from '../useRunner';
+import { exportSession, fetchTopics, resetHistory, type Flow, type ContextDoc } from '../api';
 import { deriveStages, classifySinks, shortModel, isTextModel, isAsrModel, type Stage } from '../live-utils';
 import { LANGS } from '../data';
+
+const WEBHOOK_STORAGE_KEY = 'falador.webhookUrl';
 
 interface Props {
   runner: Runner;
@@ -17,7 +45,7 @@ interface Props {
   models: { omlx: string[]; cache: string[] };
   apps: string[];
   contextDocs: ContextDoc[];
-  onUploadDoc: (file: File) => void;
+  onUploadDoc: (file: File, tags?: string[]) => void;
   onRemoveDoc: (name: string) => void;
   onStart: (flow: Flow) => void;
   flows: { name: string; description: string }[];
@@ -26,6 +54,7 @@ interface Props {
   onUpdateStage: (nodeId: string, param: string, value: unknown) => void;
   onRegenerate: () => void;
   onRefreshApps: () => void;
+  onNotify?: (msg: string) => void;
   onExit: () => void;
 }
 
@@ -37,12 +66,9 @@ function stageItems(stage: Stage, models: { omlx: string[]; cache: string[] }, a
   if (stage.kind === 'language') return LANGS.map((l) => ({ id: l.val, label: l.label }));
   let vals: string[] = [];
   if (stage.kind === 'app') vals = apps.length ? apps : [stage.value];
-  // ASR: modelos compatíveis vindos do omlx e do cache HF, preservando o atual.
   else if (stage.kind === 'model-asr') vals = [...models.omlx, ...models.cache.filter((m) => !models.omlx.includes(m))].filter(isAsrModel);
-  // LLM de sugestão: SÓ modelos de texto (d1/áudio/VAD não geram resposta)
   else if (stage.kind === 'model-llm') vals = models.omlx.filter(isTextModel);
   const items = vals.filter(Boolean).map((v) => ({ id: v, label: stage.kind.startsWith('model') ? shortModel(v) : v }));
-  // só realça o valor atual se for válido pro tipo (não mantém um d1 num LLM de texto)
   const validCurrent = stage.value && (stage.kind !== 'model-llm' || isTextModel(stage.value));
   if (validCurrent && !items.some((i) => i.id === stage.value)) {
     items.unshift({ id: stage.value, label: stage.kind.startsWith('model') ? shortModel(stage.value) : stage.value });
@@ -50,40 +76,177 @@ function stageItems(stage: Stage, models: { omlx: string[]; cache: string[] }, a
   return items.length ? items : [{ id: stage.value || '—', label: stage.value || '—' }];
 }
 
-export function LiveView({ runner, flow, scenarioName, models, apps, contextDocs, onUploadDoc, onRemoveDoc, onStart, flows, currentFlow, onSwitchFlow, onUpdateStage, onRegenerate, onRefreshApps, onExit }: Props) {
+function parseGateCommand(gate: Gate | undefined): {
+  isCommand: boolean;
+  host: string;
+  command: string;
+  decision?: string;
+  reason?: string;
+} {
+  if (!gate) return { isCommand: false, host: 'local', command: '' };
+  const meta = gate.meta;
+  let host = meta?.host;
+  let command = meta?.command;
+  let decision = meta?.decision;
+  let reason = meta?.reason;
+
+  if (!command) {
+    try {
+      const trimmed = gate.text.trim();
+      const candidate = trimmed.startsWith('{')
+        ? trimmed
+        : (trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim() ?? '');
+      if (candidate.startsWith('{')) {
+        const obj = JSON.parse(candidate) as Record<string, unknown>;
+        if (typeof obj.command === 'string') command = obj.command;
+        if (typeof obj.host === 'string' && !host) host = obj.host;
+        if (typeof obj.reason === 'string' && !reason) reason = obj.reason;
+        if (typeof obj.decision === 'string' && !decision) decision = obj.decision;
+      }
+    } catch { /* não é JSON */ }
+  }
+
+  const isCommand = Boolean(command || meta?.host || meta?.command || meta?.reason);
+  return {
+    isCommand,
+    host: host || 'local',
+    command: command ?? gate.text,
+    decision,
+    reason,
+  };
+}
+
+function riskTagType(decision?: string): 'green' | 'warm-gray' | 'red' | 'magenta' | 'purple' {
+  if (!decision) return 'purple';
+  const d = decision.toLowerCase();
+  if (d.includes('segur') || d === 'auto') return 'green';
+  if (d.includes('sensiv') || d === 'humano') return 'magenta';
+  if (d.includes('bloq')) return 'red';
+  return 'purple';
+}
+
+export function LiveView({
+  runner, flow, scenarioName, models, apps, contextDocs,
+  onUploadDoc, onRemoveDoc, onStart, flows, currentFlow,
+  onSwitchFlow, onUpdateStage, onRegenerate, onRefreshApps, onNotify, onExit,
+}: Props) {
   const stages = useMemo(() => deriveStages(flow), [flow]);
   const sinks = useMemo(() => classifySinks(flow), [flow]);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
+  const [cmdDraft, setCmdDraft] = useState('');
   const [topics, setTopics] = useState<string[]>([]);
+  const [uploadTags, setUploadTags] = useState('');
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportResult, setExportResult] = useState<string | null>(null);
+  const [webhookUrl, setWebhookUrl] = useState(() => {
+    try { return localStorage.getItem(WEBHOOK_STORAGE_KEY) ?? ''; } catch { return ''; }
+  });
   const fileRef = useRef<HTMLInputElement>(null);
 
   const lastOf = (set: Set<string>) => [...runner.captions].reverse().find((c) => set.has(c.nodeId));
   const transcription = lastOf(sinks.transcription)?.text ?? '';
   const gate = runner.gates[0];
+  const gateInfo = useMemo(() => parseGateCommand(gate), [gate]);
+
+  // Sincroniza rascunho editável do comando sempre que chegar um novo gate de comando
+  useEffect(() => {
+    if (gate && gateInfo.isCommand) {
+      setCmdDraft(gateInfo.command);
+    }
+  }, [gate, gateInfo.isCommand, gateInfo.command]);
+
   const suggestion = gate ? gate.text : (lastOf(sinks.suggestion)?.text ?? '');
   const captureApp = stages.find((s) => s.kind === 'app')?.value ?? '—';
-  // NADA FIXO: painéis e botões derivam dos nós que existem no workflow.
+
+  // NADA FIXO: painéis e indicadores derivam dos nós presentes no workflow.
   const hasGate = flow.nodes.some((n) => n.type === 'human.approve');
   const hasTTS = flow.nodes.some((n) => n.type === 'tts.sts');
   const hasLLM = flow.nodes.some((n) => n.type === 'llm.omlx');
-  const isInterview = flow.nodes.some((n) => n.type === 'decision.llm' || n.type === 'human.approve');
+  const execNodes = flow.nodes.filter((n) => n.type === 'exec.command');
+  const hasExec = execNodes.length > 0;
+  const execActive = execNodes.some((n) => n.params.dryRun === false);
+  const isAssisted = flow.nodes.some((n) => n.type === 'decision.llm' || n.type === 'human.approve' || n.type === 'exec.command');
+  const isInterview = flow.nodes.some((n) => (n.type === 'decision.llm' || n.type === 'human.approve')) && !hasExec;
   const allSinks = new Set([...sinks.transcription, ...sinks.suggestion]);
-  // entrevista: hero = sugestão do assistente; tradução: hero = a própria tradução
-  const heroText = isInterview ? (gate ? gate.text : (lastOf(sinks.suggestion)?.text ?? '')) : (lastOf(allSinks)?.text ?? '');
-  const heroLabel = isInterview ? 'Sugestão de resposta (para você falar)' : 'Tradução ao vivo';
-  // erro real do run (não log_info) — pra falha não ser silenciosa
-  const lastError = [...runner.events].reverse().find((e) => e.type === 'node_error' && !String((e as { code?: string }).code ?? '').startsWith('log_')) as { message?: string; nodeId?: string } | undefined;
 
-  const approve = () => { if (gate) runner.gate(gate.nodeId, editing ? draft : suggestion); setEditing(false); };
+  const heroText = isAssisted ? (gate ? gate.text : (lastOf(sinks.suggestion)?.text ?? '')) : (lastOf(allSinks)?.text ?? '');
+  const heroLabel = hasExec
+    ? 'Diagnóstico / Comando sugerido'
+    : isInterview
+      ? 'Sugestão de resposta (para você falar)'
+      : 'Tradução ao vivo';
+
+  const lastError = [...runner.events].reverse().find(
+    (e) => e.type === 'node_error' && !String((e as { code?: string }).code ?? '').startsWith('log_'),
+  ) as { message?: string; nodeId?: string } | undefined;
+
+  const approve = () => {
+    if (!gate) return;
+    if (gateInfo.isCommand) {
+      const payload = gateInfo.host && gateInfo.host !== 'local'
+        ? JSON.stringify({ command: cmdDraft, host: gateInfo.host, ...(gateInfo.reason ? { reason: gateInfo.reason } : {}) })
+        : cmdDraft;
+      runner.gate(gate.nodeId, payload);
+      return;
+    }
+    runner.gate(gate.nodeId, editing ? draft : suggestion);
+    setEditing(false);
+  };
+  const rejectGate = () => {
+    if (!gate) return;
+    runner.gate(gate.nodeId, null);
+    setEditing(false);
+  };
   const startEdit = () => { setDraft(suggestion); setEditing(true); };
 
-  // tópicos ao vivo: detecta da transcrição do entrevistador (debounce 2,5 s)
+  const handleResetHistory = async () => {
+    try {
+      const r = await resetHistory('*');
+      onNotify?.(r.sent ? 'Contexto conversacional limpo' : 'Nenhum run ativo para limpar contexto');
+    } catch {
+      onNotify?.('Falha ao limpar contexto');
+    }
+  };
+
+  const handleExport = async (sendWebhook: boolean) => {
+    setExporting(true);
+    setExportResult(null);
+    try {
+      const trimmedUrl = webhookUrl.trim();
+      try { localStorage.setItem(WEBHOOK_STORAGE_KEY, trimmedUrl); } catch { /* ignore */ }
+      const res = await exportSession({
+        saveMarkdown: true,
+        flowName: currentFlow || scenarioName,
+        ...(sendWebhook && trimmedUrl ? { webhookUrl: trimmedUrl } : {}),
+      });
+      const parts: string[] = [];
+      if (res.markdownPath) parts.push(`Markdown salvo: ${res.markdownPath}`);
+      if (res.webhookStatus !== undefined) parts.push(`Webhook HTTP ${res.webhookStatus}`);
+      if (res.webhookError) parts.push(`Erro webhook: ${res.webhookError}`);
+      const summary = parts.join(' · ') || 'Sessão exportada';
+      setExportResult(summary);
+      onNotify?.(summary);
+    } catch (e) {
+      const msg = `Erro ao exportar: ${(e as Error).message}`;
+      setExportResult(msg);
+      onNotify?.(msg);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  // tópicos ao vivo: detecta da transcrição (debounce 2,5 s)
   useEffect(() => {
     if (!runner.running || transcription.trim().length < 20) return;
-    const t = setTimeout(() => { fetchTopics(transcription).then((tp) => { if (tp.length) setTopics(tp); }).catch(() => {}); }, 2500);
+    const t = setTimeout(() => {
+      fetchTopics(transcription).then((tp) => { if (tp.length) setTopics(tp); }).catch(() => {});
+    }, 2500);
     return () => clearTimeout(t);
   }, [transcription, runner.running]);
+
+  const bd = runner.latencyBreakdown;
 
   return (
     <div className="live2">
@@ -101,9 +264,48 @@ export function LiveView({ runner, flow, scenarioName, models, apps, contextDocs
               onChange={({ selectedItem }) => selectedItem && onSwitchFlow(selectedItem.id)}
             />
           </div>
+          {hasExec && (
+            <Tag type={execActive ? 'red' : 'blue'} size="md" className="exec-mode-tag">
+              {execActive ? 'EXEC ATIVO' : 'DRY-RUN'}
+            </Tag>
+          )}
         </div>
-        <Tag type="green" size="md" className="latency-pill">Latência: {runner.latency != null ? `${Math.round(runner.latency)}ms` : '—'}</Tag>
+
+        <div className="live2-metrics-bar">
+          <Toggletip align="bottom">
+            <ToggletipButton label="Detalhes de latência por etapa" className="latency-trigger">
+              <Tag type="green" size="md" className="latency-pill">
+                Latência: {runner.latency != null ? `${Math.round(runner.latency)}ms` : '—'}
+              </Tag>
+            </ToggletipButton>
+            <ToggletipContent>
+              <div className="latency-breakdown">
+                <div className="latency-breakdown-title">Latência do último turno</div>
+                {bd ? (
+                  <ul className="latency-breakdown-list">
+                    {bd.asrMs != null && <li><span>ASR</span><strong>{bd.asrMs} ms</strong></li>}
+                    {bd.turnMs != null && <li><span>Turn Detector</span><strong>{bd.turnMs} ms</strong></li>}
+                    {bd.llmTtftMs != null && <li><span>LLM TTFT</span><strong>{bd.llmTtftMs} ms</strong></li>}
+                    {bd.decisionMs != null && <li><span>Decisão d1</span><strong>{bd.decisionMs} ms</strong></li>}
+                    {bd.totalMs != null && <li className="latency-total"><span>Total</span><strong>{bd.totalMs} ms</strong></li>}
+                  </ul>
+                ) : (
+                  <p className="latency-empty">Aguardando trace do primeiro turno completo.</p>
+                )}
+              </div>
+            </ToggletipContent>
+          </Toggletip>
+        </div>
+
         <div className="live2-top-actions">
+          {hasLLM && (
+            <Button kind="ghost" size="sm" renderIcon={Reset} onClick={handleResetHistory} title="Limpa memória conversacional do LLM sem reiniciar o fluxo">
+              Limpar contexto
+            </Button>
+          )}
+          <Button kind="ghost" size="sm" renderIcon={Download} onClick={() => { setExportResult(null); setExportOpen(true); }}>
+            Exportar sessão
+          </Button>
           <Button kind="secondary" size="sm" renderIcon={runner.running ? Pause : Play} onClick={() => (runner.running ? runner.stop() : onStart(flow))}>
             {runner.running ? 'Pausar' : 'Retomar'}
           </Button>
@@ -114,10 +316,10 @@ export function LiveView({ runner, flow, scenarioName, models, apps, contextDocs
       <div className="live2-body">
         <main className="live2-main">
           {lastError && <div className="live2-error">⚠ [{lastError.nodeId}] {lastError.message}</div>}
-          {isInterview && (
+          {isAssisted && (
             <>
-              <div className="live2-label">Transcrição ao vivo (entrevistador)</div>
-              <div className="live2-transcription">{transcription || (runner.running ? 'Ouvindo o entrevistador…' : '—')}</div>
+              <div className="live2-label">{hasExec ? 'Solicitação por voz (transcrição ao vivo)' : 'Transcrição ao vivo (entrevistador)'}</div>
+              <div className="live2-transcription">{transcription || (runner.running ? 'Ouvindo…' : '—')}</div>
             </>
           )}
 
@@ -142,53 +344,124 @@ export function LiveView({ runner, flow, scenarioName, models, apps, contextDocs
           </div>
 
           <div className="live2-label">{heroLabel}</div>
-          <div className="live2-suggestion">
-            {editing && hasGate ? (
-              <TextArea labelText="Editar sugestão" hideLabel rows={4} value={draft} onChange={(e) => setDraft(e.target.value)} />
-            ) : (
-              <div className="live2-suggestion-text">
-                {heroText || (runner.running ? (isInterview ? 'Gerando sugestão…' : 'Aguardando áudio…') : 'Inicie a sessão.')}
-                {runner.running && !editing && <span className="live-cursor" />}
+
+          {gate && gateInfo.isCommand ? (
+            <div className="cmd-gate-card">
+              <div className="cmd-gate-head">
+                <span className="cmd-gate-title"><Terminal size={16} /> Aprovação de Comando ({gate.nodeId})</span>
+                <div className="cmd-gate-badges">
+                  <Tag type="cyan" size="sm">Host: {gateInfo.host}</Tag>
+                  {gateInfo.decision && (
+                    <Tag type={riskTagType(gateInfo.decision)} size="sm">Risco d1: {gateInfo.decision}</Tag>
+                  )}
+                  {hasExec && (
+                    <Tag type={execActive ? 'red' : 'blue'} size="sm">{execActive ? 'EXEC ATIVO' : 'DRY-RUN'}</Tag>
+                  )}
+                </div>
               </div>
-            )}
-          </div>
-          {(hasLLM || hasGate) && (
-            <div className="live2-actions">
-              {hasLLM && <Button kind="ghost" size="sm" renderIcon={Renew} onClick={onRegenerate}>Regerar</Button>}
-              {hasGate && (editing ? (
-                <>
-                  <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={approve} disabled={!gate}>Enviar editada</Button>
-                  <Button kind="ghost" size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
-                </>
-              ) : (
-                <>
-                  <Button kind="ghost" size="sm" renderIcon={Edit} onClick={startEdit} disabled={!gate}>Editar</Button>
-                  <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve} disabled={!gate}>
-                    {hasTTS ? 'Aprovar & Falar' : 'Aprovar'}
-                  </Button>
-                </>
-              ))}
+              {gateInfo.reason && <p className="cmd-gate-reason">{gateInfo.reason}</p>}
+              <TextArea
+                id="cmd-gate-input"
+                labelText="Comando (editável antes da execução)"
+                rows={3}
+                className="cmd-gate-textarea"
+                value={cmdDraft}
+                onChange={(e) => setCmdDraft(e.target.value)}
+              />
+              <div className="live2-actions">
+                <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
+                  Aprovar e Executar
+                </Button>
+                <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>
+                  Rejeitar
+                </Button>
+              </div>
             </div>
-          )}
-          {hasGate && !gate && runner.running && (
-            <p className="live2-hint">Roteamento automático — sem gate humano pendente.</p>
+          ) : (
+            <>
+              <div className="live2-suggestion">
+                {editing && hasGate ? (
+                  <TextArea labelText="Editar sugestão" hideLabel rows={4} value={draft} onChange={(e) => setDraft(e.target.value)} />
+                ) : (
+                  <div className="live2-suggestion-text">
+                    {heroText || (runner.running ? (isAssisted ? 'Gerando resposta…' : 'Aguardando áudio…') : 'Inicie a sessão.')}
+                    {runner.running && !editing && <span className="live-cursor" />}
+                  </div>
+                )}
+              </div>
+              {(hasLLM || hasGate) && (
+                <div className="live2-actions">
+                  {hasLLM && <Button kind="ghost" size="sm" renderIcon={Renew} onClick={onRegenerate}>Regerar</Button>}
+                  {hasGate && (editing ? (
+                    <>
+                      <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={approve} disabled={!gate}>Enviar editada</Button>
+                      <Button kind="ghost" size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button kind="ghost" size="sm" renderIcon={Edit} onClick={startEdit} disabled={!gate}>Editar</Button>
+                      <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve} disabled={!gate}>
+                        {hasTTS ? 'Aprovar & Falar' : 'Aprovar'}
+                      </Button>
+                      {gate && (
+                        <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>Rejeitar</Button>
+                      )}
+                    </>
+                  ))}
+                </div>
+              )}
+              {hasGate && !gate && runner.running && (
+                <p className="live2-hint">Roteamento automático — sem gate humano pendente.</p>
+              )}
+            </>
           )}
         </main>
 
         <aside className="live2-side">
-          <div className="live2-side-title">Contexto &amp; Cheatsheet</div>
+          <div className="live2-side-title">Documentos &amp; Runbooks (RAG)</div>
 
           <input
-            ref={fileRef} type="file" accept=".pdf,.txt,.md,.markdown" hidden
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) onUploadDoc(f); e.target.value = ''; }}
+            ref={fileRef}
+            type="file"
+            accept=".md,.markdown,.txt,.pdf,.yaml,.yml,.json"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) {
+                const tags = uploadTags.split(',').map((t) => t.trim()).filter(Boolean);
+                onUploadDoc(f, tags);
+                setUploadTags('');
+              }
+              e.target.value = '';
+            }}
           />
-          <Button kind="ghost" size="sm" renderIcon={Add} onClick={() => fileRef.current?.click()}>Carregar documento</Button>
+          <div className="ctx-upload">
+            <TextInput
+              id="ctx-tags-input"
+              size="sm"
+              labelText="Tags opcionais (separadas por vírgula)"
+              placeholder="ex.: nginx, ops, runbook"
+              value={uploadTags}
+              onChange={(e) => setUploadTags(e.target.value)}
+            />
+            <Button kind="ghost" size="sm" renderIcon={Add} onClick={() => fileRef.current?.click()}>
+              Carregar documento
+            </Button>
+          </div>
+
           {contextDocs.map((d) => (
             <div key={d.name} className="ctx-doc">
               <Document size={18} />
               <div className="ctx-doc-body">
                 <div className="ctx-doc-name">{d.name}</div>
-                <div className="ctx-doc-sub ctx-doc-sub--ok"><Checkmark size={12} /> {d.points.length} pontos-chave extraídos</div>
+                <div className="ctx-doc-sub ctx-doc-sub--ok">
+                  <Checkmark size={12} /> {d.chunksCount ?? 0} chunks · {d.points.length} pontos
+                </div>
+                {d.tags && d.tags.length > 0 && (
+                  <div className="ctx-chips" style={{ marginTop: 4 }}>
+                    {d.tags.map((t, i) => <Tag key={i} type="cool-gray" size="sm">{t}</Tag>)}
+                  </div>
+                )}
                 {d.points.length > 0 && <ul className="ctx-points">{d.points.map((p, i) => <li key={i}>{p}</li>)}</ul>}
               </div>
               <button className="ctx-doc-remove" onClick={() => onRemoveDoc(d.name)} title="Remover documento"><TrashCan size={14} /></button>
@@ -198,8 +471,8 @@ export function LiveView({ runner, flow, scenarioName, models, apps, contextDocs
             <div className="ctx-doc ctx-doc--empty">
               <Document size={18} />
               <div>
-                <div className="ctx-doc-name">Currículo / Job Description</div>
-                <div className="ctx-doc-sub">Carregue um PDF ou TXT — os pontos informam a sugestão</div>
+                <div className="ctx-doc-name">Runbooks / Documentos locais</div>
+                <div className="ctx-doc-sub">Carregue .md, .pdf, .txt, .yaml ou .json para busca BM25 on-device</div>
               </div>
             </div>
           )}
@@ -238,6 +511,29 @@ export function LiveView({ runner, flow, scenarioName, models, apps, contextDocs
           </div>
         </aside>
       </div>
+
+      <Modal
+        open={exportOpen}
+        modalHeading="Exportar sessão"
+        primaryButtonText={exporting ? 'Exportando…' : (webhookUrl.trim() ? 'Salvar .md e Enviar Webhook' : 'Salvar .md local')}
+        secondaryButtonText="Fechar"
+        primaryButtonDisabled={exporting}
+        onRequestClose={() => setExportOpen(false)}
+        onRequestSubmit={() => void handleExport(Boolean(webhookUrl.trim()))}
+      >
+        <p className="export-modal-desc">
+          Salva a ata estruturada da sessão em <code>sessions/</code> (protegido no <code>.gitignore</code>).
+          Opcionalmente, informe um Webhook URL (ex.: n8n local) para enviar o JSON da sessão.
+        </p>
+        <TextInput
+          id="export-webhook-url"
+          labelText="Webhook URL (opcional, opt-in)"
+          placeholder="http://127.0.0.1:5678/webhook/falador"
+          value={webhookUrl}
+          onChange={(e) => setWebhookUrl(e.target.value)}
+        />
+        {exportResult && <p className="export-modal-result">{exportResult}</p>}
+      </Modal>
     </div>
   );
 }

@@ -7,8 +7,8 @@
 //     frio 0,70 s (carga do modelo) / warm ~40 ms, d1-2B-MLX-4bit servido pelo omlx.
 // Ex. cenario2-auto: options ['auto','humano'] → human.approve só no ramo 'humano'.
 import type { NodeCtx, NodeRuntime, NodeTypeDef } from '../../falador-graph/src/index.ts';
-import { payloadText, postSse } from './sse.ts';
-import { postJsonBytes } from './sse.ts';
+import { payloadText, postSse, postJsonBytes } from './sse.ts';
+import { inheritTrace } from './trace.ts';
 
 const DEFAULT_BASE = 'http://127.0.0.1:8080';
 const DEFAULT_MODEL = 'LiquidAI--LFM3-1.7B-MLX-4bit';
@@ -129,7 +129,17 @@ export const decisionLlm: NodeTypeDef = {
         }
 
         ctx.metrics.counter(`decision.llm.${chosen}`, 1);
-        await ctx.emit(chosen, { text: pl.text, final: true, decision: decisionMeta });
+        await ctx.emit(
+          chosen,
+          { text: pl.text, final: true, decision: decisionMeta },
+          {
+            meta: {
+              ...msg.meta,
+              ...inheritTrace(msg, { tDecisionMs: Date.now() }),
+              decision: chosen,
+            },
+          },
+        );
       },
       async stop() {},
     } as NodeRuntime & { _chosen?: string };

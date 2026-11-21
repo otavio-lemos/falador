@@ -14,12 +14,16 @@ export type NodeErrorPolicy = 'isolate' | 'stop_run';
 export type ControlScope = 'port' | 'node' | 'run';
 
 export interface ControlMsg {
-  kind: 'cancel';
+  kind: 'cancel' | 'interrupt';
   scope: ControlScope;
   /** Para scope 'port': seq máximo cancelado nessa porta. */
   uptoSeq?: number;
   /** Para scope 'node' | 'run': cancelamento por porta. */
   uptoSeqByPort?: Record<string, number>;
+  /** Identificador de origem para evitar loops/duplicação na propagação. */
+  sourceNode?: string;
+  /** Turno/item sendo interrompido (opcional). */
+  turnId?: string;
   reason?: string;
 }
 
@@ -124,6 +128,7 @@ export type RunEvent =
   | { type: 'edge_expired'; edge: string; count: number }
   | { type: 'edge_closed'; edge: string; reason: string }
   | { type: 'cancelled'; scope: ControlScope; by?: string }
+  | { type: 'interrupted'; by: string; reason?: string; affectedNodes: string[] }
   | { type: 'run_stopped'; runId: string; reason: string };
 
 export interface TimerStat {

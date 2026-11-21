@@ -1,7 +1,7 @@
 // falador-nodes — tts.sts: sintetiza voz via sidecar residente :8091 (STS LFM3-Audio)
 // ENTRADA:  in (tokens_parcial) fala no final:true (default); phrase (phrase) fala direta.
 // SAÍDA:    out (audio_chunk) WAV PCM16 mono 24 kHz: {format:'wav', sampleRateHz, data:Uint8Array}
-import type { Envelope, NodeCtx, NodeRuntime, NodeTypeDef } from '../../falador-graph/src/index.ts';
+import type { ControlMsg, Envelope, NodeCtx, NodeRuntime, NodeTypeDef } from '../../falador-graph/src/index.ts';
 import { postJsonBytes, payloadText } from './sse.ts';
 
 const DEFAULT_URL = 'http://127.0.0.1:8091';
@@ -47,32 +47,41 @@ export const ttsSts: NodeTypeDef = {
     const maxTextChars = (ctx.params.maxTextChars as number | undefined) ?? 1400;
 
     let stopped = false; // engine serializa onInput por pump; sidecar tem lock próprio
+    let controller: AbortController | null = null;
 
-    async function speak(text: string): Promise<void> {
+    async function speak(text: string, msg: Envelope): Promise<void> {
       const clean = text.replace(/\s+/g, ' ').trim();
       if (!clean) return;
       const truncated = clean.length > maxTextChars ? clean.slice(0, maxTextChars) + '…' : clean;
       const t0 = Date.now();
+      const ctrl = new AbortController();
+      controller = ctrl;
+      const onRunAbort = () => ctrl.abort();
+      ctx.signal.addEventListener('abort', onRunAbort, { once: true });
       let bytes: Uint8Array;
       try {
         bytes = await postJsonBytes(
           `${url}/tts`,
           { text: truncated, language, voice, sample_rate: sampleRateHz },
           timeoutMs,
-          ctx.signal,
+          ctrl.signal,
         );
       } catch (e: unknown) {
         const err = e as Error;
-        if (err?.name === 'AbortError' || ctx.signal.aborted) return;
+        if (err?.name === 'AbortError' || ctrl.signal.aborted || ctx.signal.aborted) return;
         ctx.log('error', `tts.sts falhou: ${err?.message ?? String(e)}`);
         ctx.metrics.counter('tts.sts.errors', 1);
         return;
+      } finally {
+        ctx.signal.removeEventListener('abort', onRunAbort);
+        if (controller === ctrl) controller = null;
       }
+      if (ctrl.signal.aborted || stopped) return;
       ctx.metrics.timer('tts.sts.ms', Date.now() - t0);
       ctx.metrics.counter('tts.sts.bytes', bytes.byteLength);
       ctx.log('info', `fala: "${clean.slice(0, 80)}" (${(bytes.byteLength / 1024).toFixed(0)} KB)`);
       const payload: AudioChunkPayload = { format: 'wav', sampleRateHz, data: bytes };
-      await ctx.emit('out', payload, { meta: { chars: clean.length } });
+      await ctx.emit('out', payload, { meta: { ...msg.meta, chars: clean.length } });
     }
 
     async function onEnvelope(msg: Envelope): Promise<void> {
@@ -83,7 +92,7 @@ export const ttsSts: NodeTypeDef = {
       if (msg.control) return;
       const isParcs = typeof msg.payload !== 'string' && msg.payload !== null && typeof msg.payload === 'object';
       if (isParcs && speakOn === 'final' && !pl.final) return;
-      await speak(pl.text);
+      await speak(pl.text, msg);
     }
 
     return {
@@ -93,6 +102,14 @@ export const ttsSts: NodeTypeDef = {
       },
       async stop() {
         stopped = true;
+        controller?.abort();
+        controller = null;
+      },
+      onControl(c: ControlMsg) {
+        if (c.kind === 'interrupt' && controller) {
+          controller.abort();
+          ctx.metrics.counter('tts.sts.interrupted', 1);
+        }
       },
     };
   },

@@ -1,13 +1,15 @@
 // falador-nodes — sinks: legenda no terminal e reprodução de áudio (afplay).
+import type { ChildProcess } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { NodeCtx, NodeRuntime, NodeTypeDef } from '../../falador-graph/src/index.ts';
+import type { ControlMsg, NodeCtx, NodeRuntime, NodeTypeDef } from '../../falador-graph/src/index.ts';
 import { payloadText } from './sse.ts';
 import { ttsSts as _ttsSts } from './tts-sts.ts';
 import type { AudioChunkPayload } from './tts-sts.ts';
+import type { TraceMeta } from './trace.ts';
 
 // ---- sink.captions --------------------------------------------------------
 
@@ -38,7 +40,9 @@ export const sinkCaptions: NodeTypeDef = {
     const mode = (ctx.params.mode as 'stdout' | 'callback' | undefined) ?? 'stdout';
     const showParcials = (ctx.params.showParcials as boolean | undefined) ?? true;
     const outputFile = (ctx.params.outputFile as string | undefined);
-    const cb = ctx.bindings.__onCaption as ((c: { text: string; final: boolean }) => void) | undefined;
+    const cb = ctx.bindings.__onCaption as
+      | ((c: { text: string; final: boolean; trace?: TraceMeta }) => void)
+      | undefined;
 
     // stream de arquivo aberto só se outputFile definido
     let fileStream: ReturnType<typeof createWriteStream> | null = null;
@@ -67,7 +71,11 @@ export const sinkCaptions: NodeTypeDef = {
         const pl = payloadText(msg.payload);
         if (!pl) return;
         if (mode === 'callback') {
-          cb?.({ text: pl.text, final: pl.final });
+          const trace =
+            msg.meta?.trace && typeof msg.meta.trace === 'object'
+              ? (msg.meta.trace as TraceMeta)
+              : undefined;
+          cb?.(trace ? { text: pl.text, final: pl.final, trace } : { text: pl.text, final: pl.final });
           // também salva no arquivo quando em modo callback
           if (fileStream && pl.final && pl.text) fileStream.write(pl.text + '\n');
           return;
@@ -113,10 +121,13 @@ export const sinkPlayback: NodeTypeDef = {
     let dropped = 0;
     let fileNo = 0;
     let stopped = false;
+    let activeChild: ChildProcess | null = null;
+    let generation = 0;
 
-    async function play(payload: AudioChunkPayload): Promise<void> {
-      if (stopped || ctx.signal.aborted) return;
+    async function play(payload: AudioChunkPayload, myGen: number): Promise<void> {
+      if (stopped || ctx.signal.aborted || myGen !== generation) return;
       if (!dir) dir = await mkdtemp(join(tmpdir(), 'falador-play-'));
+      if (stopped || ctx.signal.aborted || myGen !== generation) return;
       const file = join(dir, `chunk-${fileNo++}.wav`);
       await new Promise<void>((resolve, reject) => {
         const ws = createWriteStream(file);
@@ -124,18 +135,36 @@ export const sinkPlayback: NodeTypeDef = {
         ws.on('finish', () => resolve());
         ws.end(Buffer.from(payload.data));
       });
+      if (stopped || ctx.signal.aborted || myGen !== generation) {
+        await rm(file, { force: true }).catch(() => {});
+        return;
+      }
       const t0 = Date.now();
       await new Promise<void>((resolve, reject) => {
         const p = spawn(player, [file, '-q', '1']);
-        p.on('error', reject);
+        activeChild = p;
+        const onAbort = () => {
+          try { p.kill('SIGKILL'); } catch { /* ignore */ }
+        };
+        ctx.signal.addEventListener('abort', onAbort, { once: true });
+        const cleanup = () => {
+          ctx.signal.removeEventListener('abort', onAbort);
+          if (activeChild === p) activeChild = null;
+        };
+        p.on('error', (err) => {
+          cleanup();
+          reject(err);
+        });
         p.on('exit', (code) => {
-          if (code === 0 || code === null) resolve(); // null = kill no stop
+          cleanup();
+          if (code === 0 || code === null || myGen !== generation) resolve(); // null = kill no stop/interrupt
           else reject(new Error(`afplay exit ${code}`));
         });
-        ctx.signal.addEventListener('abort', () => p.kill('SIGKILL'), { once: true });
       });
-      ctx.metrics.timer('sink.playback.ms', Date.now() - t0);
-      ctx.log('info', `playback ok (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+      if (myGen === generation) {
+        ctx.metrics.timer('sink.playback.ms', Date.now() - t0);
+        ctx.log('info', `playback ok (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+      }
       await rm(file, { force: true }).catch(() => {});
     }
 
@@ -157,8 +186,9 @@ export const sinkPlayback: NodeTypeDef = {
           ctx.log('warn', `sink.playback: fila cheia, fala n.${fileNo + maxQueue} + ${dropped} descartadas`);
           return;
         }
+        const myGen = generation;
         chain = chain
-          .then(() => play(payload))
+          .then(() => play(payload, myGen))
           .then(() => {
             pending -= 1;
           })
@@ -174,6 +204,16 @@ export const sinkPlayback: NodeTypeDef = {
         await chain.catch(() => {}).then(() => {
           if (dirToClean) return rm(dirToClean, { recursive: true, force: true }).catch(() => {});
         });
+      },
+      onControl(c: ControlMsg) {
+        if (c.kind === 'interrupt') {
+          generation += 1;
+          if (activeChild) {
+            try { activeChild.kill('SIGKILL'); } catch { /* ignore */ }
+            activeChild = null;
+          }
+          ctx.metrics.counter('sink.playback.interrupted', 1);
+        }
       },
     };
   },

@@ -13,5 +13,8 @@ services/capture-sck
 # artefatos de build da UI
 apps/web/dist/
 
-# dados runtime do RAG (documentos carregados pelo usuário)
+# dados runtime do RAG, auditoria de execução e atas de sessão (privados)
 context/
+context/docs.json
+sessions/
+logs/exec-audit.jsonl

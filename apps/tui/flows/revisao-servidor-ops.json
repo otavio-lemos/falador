@@ -1,0 +1,239 @@
+{
+  "version": 1,
+  "stopWhenSourcesDone": false,
+  "description": "Ops / Revisão de Servidor assistida por voz (ADR-007): captura a solicitação via SCK, transcreve com Voxtral, aguarda fim de turno com d1-2B, consulta runbooks locais (.md/.pdf) via RAG BM25, classifica risco (leitura_segura/sensivel/bloqueado), exige aprovação humana e executa em modo dryRun=true por padrão com análise final do diagnóstico.",
+  "nodes": [
+    {
+      "id": "captura",
+      "type": "capture.ffmpeg",
+      "params": {
+        "input": "",
+        "chunkMs": 80,
+        "backend": "sck"
+      }
+    },
+    {
+      "id": "asr",
+      "type": "asr.realtime",
+      "params": {
+        "model": "/Users/otaviolemos/.cache/huggingface/hub/models--mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit/snapshots/fdebf7b2af834a1db4b8a3c99ab7480b333adf9e",
+        "serverVad": true,
+        "inputRate": 16000,
+        "maxPendingMs": 2000,
+        "emitInterruptOnSpeech": false
+      }
+    },
+    {
+      "id": "transcricao",
+      "type": "sink.captions",
+      "params": {
+        "mode": "callback",
+        "showParcials": true
+      }
+    },
+    {
+      "id": "turno",
+      "type": "turn.detector",
+      "params": {
+        "mode": "systemone",
+        "model": "d1-2B-MLX-4bit",
+        "minWords": 3,
+        "completeThreshold": 0.65,
+        "maxWaitMs": 2200,
+        "maxMergedTurns": 4
+      }
+    },
+    {
+      "id": "planejador",
+      "type": "llm.omlx",
+      "params": {
+        "enableThinking": false,
+        "historyMax": 4,
+        "historyCharBudget": 4000,
+        "useContext": true,
+        "contextTopK": 3,
+        "contextMaxChars": 2400,
+        "system": "Você é um engenheiro SRE/Ops. Consulte a documentação relevante e sugira UM ÚNICO comando de diagnóstico seguro (sem encadeamento &&, ; ou |). Responda APENAS em JSON válido no formato {\"command\":\"...\",\"host\":\"local\",\"reason\":\"...\"}.",
+        "template": [
+          "Formule um único comando de diagnóstico para a solicitação abaixo. Responda SOMENTE com o JSON {\"command\",\"host\",\"reason\"}."
+        ]
+      }
+    },
+    {
+      "id": "risco",
+      "type": "decision.llm",
+      "params": {
+        "mode": "systemone",
+        "model": "d1-2B-MLX-4bit",
+        "options": [
+          "leitura_segura",
+          "sensivel",
+          "bloqueado"
+        ],
+        "defaultOption": "bloqueado",
+        "instructions": "Classifique o risco do comando sugerido em leitura_segura, sensivel ou bloqueado.",
+        "criteria": {
+          "leitura_segura": "Pure read-only diagnostic command (uptime, df, ps, logs, status) with no state changes",
+          "sensivel": "Operational command that inspects sensitive services or requires careful review",
+          "bloqueado": "Destructive, mutating, shell chaining, or unsafe command that must be blocked"
+        }
+      }
+    },
+    {
+      "id": "gate_leitura",
+      "type": "human.approve",
+      "params": {}
+    },
+    {
+      "id": "exec_leitura",
+      "type": "exec.command",
+      "params": {
+        "transport": "local",
+        "mode": "readonly",
+        "dryRun": true,
+        "timeoutMs": 15000,
+        "maxOutputBytes": 32768
+      }
+    },
+    {
+      "id": "analista",
+      "type": "llm.omlx",
+      "params": {
+        "enableThinking": false,
+        "historyMax": 0,
+        "useContext": false,
+        "system": "Você é um analista SRE. Leia o relatório de saída do comando e devolva um diagnóstico curto e objetivo em português (2-4 frases), destacando a provável causa raiz e o próximo passo recomendado."
+      }
+    },
+    {
+      "id": "diagnostico",
+      "type": "sink.captions",
+      "params": {
+        "mode": "callback",
+        "showParcials": true
+      }
+    },
+    {
+      "id": "gate_sensivel",
+      "type": "human.approve",
+      "params": {}
+    },
+    {
+      "id": "exec_sensivel",
+      "type": "exec.command",
+      "params": {
+        "transport": "local",
+        "mode": "allowlist",
+        "dryRun": true,
+        "allowedPrefixes": [
+          "systemctl status",
+          "journalctl",
+          "docker ps",
+          "docker logs",
+          "kubectl get",
+          "kubectl describe",
+          "kubectl logs"
+        ],
+        "timeoutMs": 15000,
+        "maxOutputBytes": 32768
+      }
+    },
+    {
+      "id": "saida_sensivel",
+      "type": "sink.captions",
+      "params": {
+        "mode": "callback",
+        "showParcials": true
+      }
+    },
+    {
+      "id": "alerta",
+      "type": "sink.captions",
+      "params": {
+        "mode": "callback",
+        "showParcials": true
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "captura.out",
+      "to": "asr.in",
+      "capacity": 32,
+      "overflow": "drop_oldest",
+      "ttlMs": 1500
+    },
+    {
+      "from": "asr.out",
+      "to": "transcricao.in",
+      "capacity": 16,
+      "overflow": "drop_oldest"
+    },
+    {
+      "from": "asr.out",
+      "to": "turno.in",
+      "capacity": 16,
+      "overflow": "drop_oldest"
+    },
+    {
+      "from": "turno.out",
+      "to": "planejador.parcs",
+      "capacity": 16,
+      "overflow": "block"
+    },
+    {
+      "from": "planejador.out",
+      "to": "risco.in",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "risco.leitura_segura",
+      "to": "gate_leitura.in",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "gate_leitura.out",
+      "to": "exec_leitura.in",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "exec_leitura.out",
+      "to": "analista.in",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "analista.out",
+      "to": "diagnostico.in",
+      "capacity": 16,
+      "overflow": "drop_oldest"
+    },
+    {
+      "from": "risco.sensivel",
+      "to": "gate_sensivel.in",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "gate_sensivel.out",
+      "to": "exec_sensivel.in",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "exec_sensivel.out",
+      "to": "saida_sensivel.phrase",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "risco.bloqueado",
+      "to": "alerta.in",
+      "capacity": 8,
+      "overflow": "block"
+    }
+  ]
+}
