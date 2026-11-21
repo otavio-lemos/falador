@@ -1,6 +1,6 @@
 // Estado de execução compartilhado entre Builder (Testar Fluxo) e Live.
 import { useRef, useState } from 'react';
-import { openRun, stopRun, gateAction, type Flow, type RunnerEvent, type RunSnapshot } from './api';
+import { openRun, stopRun, gateAction, sendChatInput, type Flow, type RunnerEvent, type RunSnapshot } from './api';
 
 export interface TraceMeta {
   turnId?: string;
@@ -88,6 +88,7 @@ export function useRunner() {
   const [captions, setCaptions] = useState<Caption[]>([]);
   const [gates, setGates] = useState<Gate[]>([]);
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
+  const [chatMessages, setChatMessages] = useState<{ nodeId: string; text: string; ts: number }[]>([]);
   const [latency, setLatency] = useState<number | null>(null);
   const [latencyBreakdown, setLatencyBreakdown] = useState<LatencyBreakdown | null>(null);
   const ctlRef = useRef<AbortController | null>(null);
@@ -110,6 +111,7 @@ export function useRunner() {
     setCaptions([]);
     setGates([]);
     setAgentSteps([]);
+    setChatMessages([]);
     setLatency(null);
     setLatencyBreakdown(null);
     ctlRef.current = openRun(
@@ -159,6 +161,11 @@ export function useRunner() {
               ...(typeof ev.dryRun === 'boolean' ? { dryRun: ev.dryRun } : {}),
             },
           ]);
+        } else if (ev.type === 'chat_sent') {
+          setChatMessages((m) => [
+            ...m.slice(-100),
+            { nodeId: String(ev.nodeId ?? ''), text: String(ev.text ?? ''), ts: Date.now() },
+          ]);
         }
       },
       () => setRunning(false),
@@ -171,6 +178,9 @@ export function useRunner() {
     void gateAction(nodeId, text);
     setGates((g) => g.filter((x) => x.nodeId !== nodeId));
   };
-  return { running, metrics, events, captions, gates, agentSteps, latency, latencyBreakdown, start, stop, gate };
+  const sendChat = async (text: string, nodeId?: string) => {
+    await sendChatInput(text, nodeId);
+  };
+  return { running, metrics, events, captions, gates, agentSteps, chatMessages, latency, latencyBreakdown, start, stop, gate, sendChat };
 }
 export type Runner = ReturnType<typeof useRunner>;

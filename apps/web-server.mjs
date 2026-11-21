@@ -527,6 +527,20 @@ async function handleApi(req, res, pathname) {
     currentRun.child.stdin?.write(JSON.stringify({ type: 'reset_history', nodeId }) + '\n');
     return json(res, 200, { ok: true, sent: true, nodeId }), true;
   }
+  if (pathname === '/api/run/chat' && req.method === 'POST') {
+    const body = await readBody(req);
+    const text = typeof body.text === 'string' ? body.text.trim() : '';
+    if (!text) return json(res, 400, { error: 'text obrigatório' }), true;
+    const nodeId = typeof body.nodeId === 'string' && body.nodeId.trim() ? body.nodeId.trim() : '*';
+    if (!currentRun) {
+      return json(res, 409, { error: 'nenhum run em andamento' }), true;
+    }
+    currentRun.child.stdin?.write(JSON.stringify({ type: 'chat_input', nodeId, text }) + '\n');
+    if (sessionBuffer) {
+      sessionBuffer.captions.push({ ts: new Date().toISOString(), nodeId, kind: 'transcription', text });
+    }
+    return json(res, 200, { ok: true, sent: true, nodeId }), true;
+  }
   if (pathname === '/api/gate' && req.method === 'POST') {
     // aprovação/edição/rejeição do human.approve: {"nodeId","text"|null}
     if (!currentRun) return json(res, 409, { error: 'nenhum run' }), true;

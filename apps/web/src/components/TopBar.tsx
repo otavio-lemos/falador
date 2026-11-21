@@ -3,7 +3,7 @@
 // A edição de nome + descrição abre um Modal Carbon limpo com TextInput + TextArea.
 import { useEffect, useState } from 'react';
 import { Button, Dropdown, Modal, Search, Tag, TextArea, TextInput } from '@carbon/react';
-import { Save, Play, Stop, ArrowLeft, Edit, Add, Catalog } from '@carbon/icons-react';
+import { Save, Play, Stop, ArrowLeft, Edit, Add, Catalog, Bot } from '@carbon/icons-react';
 import { isTextModel, isAsrModel, isTtsModel, isStsModel, isDecisionModel } from '../live-utils';
 
 export interface FlowItem {
@@ -30,6 +30,7 @@ interface Props {
   onGoLive: () => void;
   onGoBuilder: () => void;
   onStop: () => void;
+  onOpenWorkflowAgent: () => void;
 }
 
 function classifyModel(id: string): string {
@@ -149,6 +150,14 @@ export function TopBar(p: Props) {
       </div>
 
       <div className="topbar-right">
+        <Button
+          kind="tertiary"
+          size="md"
+          renderIcon={Bot}
+          onClick={p.onOpenWorkflowAgent}
+        >
+          Agente Workflows
+        </Button>
         <Button
           kind="tertiary"
           size="md"

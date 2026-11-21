@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "stopWhenSourcesDone": false,
+  "description": "Agente Especialista em Workflows do Falador (Chat + Voz): cria, edita, valida e pesquisa workflows em apps/tui/flows/ mantendo o AGENTS.md atualizado, com busca externa anti-SSRF (tool.web_search) e seleção de modelo.",
+  "nodes": [
+    {
+      "id": "chat",
+      "type": "input.chat",
+      "params": {
+        "placeholder": "Descreva o workflow que deseja criar, editar ou pesquisar…"
+      }
+    },
+    {
+      "id": "captura",
+      "type": "capture.ffmpeg",
+      "params": {
+        "backend": "sck",
+        "input": "",
+        "chunkMs": 80
+      }
+    },
+    {
+      "id": "asr",
+      "type": "asr.realtime",
+      "params": {
+        "model": "/Users/otaviolemos/.cache/huggingface/hub/models--mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit/snapshots/fdebf7b2af834a1db4b8a3c99ab7480b333adf9e",
+        "serverVad": true,
+        "inputRate": 16000,
+        "maxPendingMs": 2000,
+        "emitInterruptOnSpeech": false
+      }
+    },
+    {
+      "id": "wf_tools",
+      "type": "tool.workflow",
+      "params": {
+        "flowsDir": "apps/tui/flows",
+        "agentsMdPath": "AGENTS.md",
+        "dryRun": false,
+        "allowDelete": false
+      }
+    },
+    {
+      "id": "web_search",
+      "type": "tool.web_search",
+      "params": {
+        "timeoutMs": 8000,
+        "maxResults": 5
+      }
+    },
+    {
+      "id": "agente",
+      "type": "agent.tools",
+      "params": {
+        "baseUrl": "http://127.0.0.1:8080",
+        "model": "LiquidAI--LFM3-1.7B-MLX-4bit",
+        "enableThinking": false,
+        "maxSteps": 6,
+        "approvalPolicy": "non_readonly",
+        "historyMax": 8,
+        "historyCharBudget": 6000,
+        "system": "Você é o Agente Especialista em Workflows do Falador, restrito exclusivamente a gerenciar workflows em apps/tui/flows/ e manter o AGENTS.md atualizado. Antes de criar ou editar qualquer workflow, consulte sempre workflow_catalog, workflow_list e knowledge_read para ter 100% de contexto atualizado dos nós, portas, parâmetros e convenções do projeto. Você pode usar web_search e web_fetch_doc para pesquisar melhores práticas externas de pipelines de IA e áudio. Ao salvar um workflow com workflow_save, forneça sempre um changeSummary claro descrevendo o que foi criado ou alterado para manter o AGENTS.md atualizado. Responda em português de forma clara, objetiva e estruturada."
+      }
+    },
+    {
+      "id": "resposta",
+      "type": "sink.captions",
+      "params": {
+        "mode": "callback",
+        "showParcials": true
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "chat.out",
+      "to": "agente.in",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "captura.out",
+      "to": "asr.in",
+      "capacity": 32,
+      "overflow": "drop_oldest",
+      "ttlMs": 1500
+    },
+    {
+      "from": "asr.out",
+      "to": "agente.parcs",
+      "capacity": 16,
+      "overflow": "drop_oldest"
+    },
+    {
+      "from": "wf_tools.tool",
+      "to": "agente.tools",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "web_search.tool",
+      "to": "agente.tools",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "agente.out",
+      "to": "resposta.in",
+      "capacity": 16,
+      "overflow": "drop_oldest"
+    }
+  ]
+}

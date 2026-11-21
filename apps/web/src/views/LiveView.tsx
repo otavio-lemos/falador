@@ -148,6 +148,8 @@ export function LiveView({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [cmdDraft, setCmdDraft] = useState('');
+  const [chatInput, setChatInput] = useState('');
+  const [sendingChat, setSendingChat] = useState(false);
   const [topics, setTopics] = useState<string[]>([]);
   const [uploadTags, setUploadTags] = useState('');
   const [exportOpen, setExportOpen] = useState(false);
@@ -225,6 +227,25 @@ export function LiveView({
       onNotify?.(r.sent ? 'Contexto conversacional limpo' : 'Nenhum run ativo para limpar contexto');
     } catch {
       onNotify?.('Falha ao limpar contexto');
+    }
+  };
+
+  const chatNode = flow.nodes.find((n) => n.type === 'input.chat');
+  const chatPlaceholder =
+    (typeof chatNode?.params?.placeholder === 'string' && chatNode.params.placeholder.trim()) ||
+    'Digite sua mensagem ou comando (Enter para enviar)…';
+
+  const handleSendChat = async () => {
+    const text = chatInput.trim();
+    if (!text || !runner.running || sendingChat) return;
+    setSendingChat(true);
+    try {
+      await runner.sendChat(text, chatNode?.id);
+      setChatInput('');
+    } catch (e) {
+      onNotify?.(`Erro ao enviar: ${(e as Error).message}`);
+    } finally {
+      setSendingChat(false);
     }
   };
 
@@ -334,6 +355,48 @@ export function LiveView({
       <div className="live2-body">
         <main className="live2-main">
           {lastError && <div className="live2-error">⚠ [{lastError.nodeId}] {lastError.message}</div>}
+          {chatNode && (
+            <div className="chatbox-panel">
+              <div className="live2-label">Chat / Prompt ({chatNode.id})</div>
+              {runner.chatMessages.length > 0 && (
+                <div className="chatbox-history">
+                  {runner.chatMessages.map((m, idx) => (
+                    <div key={`${m.ts}-${idx}`} className="chatbox-msg">
+                      <span className="chatbox-msg-role">Você</span>
+                      <span className="chatbox-msg-text">{m.text}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="chatbox-input-row">
+                <TextArea
+                  id="live-chat-input"
+                  labelText="Prompt"
+                  hideLabel
+                  rows={2}
+                  placeholder={runner.running ? chatPlaceholder : 'Inicie a sessão para enviar mensagens…'}
+                  value={chatInput}
+                  disabled={!runner.running || sendingChat}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      void handleSendChat();
+                    }
+                  }}
+                />
+                <Button
+                  kind="primary"
+                  size="md"
+                  renderIcon={Play}
+                  disabled={!runner.running || sendingChat || !chatInput.trim()}
+                  onClick={() => void handleSendChat()}
+                >
+                  Enviar
+                </Button>
+              </div>
+            </div>
+          )}
           {isAssisted && (
             <>
               <div className="live2-label">{hasExec ? 'Solicitação por voz (transcrição ao vivo)' : 'Transcrição ao vivo (entrevistador)'}</div>

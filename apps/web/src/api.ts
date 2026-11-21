@@ -97,6 +97,15 @@ export async function resetHistory(nodeId?: string): Promise<{ ok: boolean; sent
   });
   return r.json();
 }
+export async function sendChatInput(text: string, nodeId?: string): Promise<{ ok: boolean; sent?: boolean; nodeId?: string }> {
+  const r = await fetch('/api/run/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, nodeId: nodeId ?? '*' }),
+  });
+  if (!r.ok) throw new Error((await r.json()).error ?? 'falha ao enviar mensagem');
+  return r.json();
+}
 export interface ExportSessionOptions {
   saveMarkdown?: boolean;
   webhookUrl?: string;

@@ -1,6 +1,6 @@
 # AGENTS.md — Falador
 
-> **MEMÓRIA VIVA DO PROJETO. Toda sessão de agente deve ler este arquivo primeiro e ATUALIZÁ-LO ao final de cada conquista.** Última atualização: 2026-11-18.
+> **MEMÓRIA VIVA DO PROJETO. Toda sessão de agente deve ler este arquivo primeiro e ATUALIZÁ-LO ao final de cada conquista.** Última atualização: 2026-11-21.
 > **Operação (subir/usar/derrubar serviços): ver `run.md`** — guia dedicado com comandos exatos, health checks e armadilhas.
 
 ## 1. O que é o Falador
@@ -121,6 +121,13 @@ App local (macOS, Apple Silicon M4 Pro 48 GB) que traduz conversas de conferênc
 
 ## 6. Estado atual (atualizar SEMPRE)
 
+- **CHATBOX `input.chat` + AGENTE DE WORKFLOWS + `tool.workflow`/`tool.web_search`/`tool.crawler` (2026-11-21, `run_4f8b7c9cb8cf`; W3-QA concluído pela sessão pi após quota do coordinator/worker antigravity)**:
+  - **`input.chat`** (`packages/falador-nodes/src/input-chat.ts`): fonte de texto/prompt — `out` (phrase) + `parcs` (tokens_parcial `{text, final:true}`), params `placeholder`/`initialMessage`, binding `__registerChatInput`; liga em qualquer nó de texto (llm.omlx, agent.tools, exec.command, tts.sts, sink.captions).
+  - **`tool.workflow`** (`tool-workflow.ts`): provedor de tools restrito a `flowsDir/*.json` + `agentsMdPath` — 7 tools (`workflow_list/get/catalog/save/delete`, `knowledge_read/update`); `workflow_save` valida via `validateFlow` ANTES de gravar e auto-atualiza o AGENTS.md; `workflow_delete` protegido por `allowDelete` e **nunca** deleta `agente-workflows`; audit log JSONL; **anti path-traversal + anti-symlink** (`sanitizeFlowName`, `resolveSafeFlowPath`, `lstat`).
+  - **`tool.web_search`** (`tool-web-search.ts`): `web_search` (DuckDuckGo Instant Answer + fallback HTML) e `web_fetch_doc` com anti-SSRF zero-deps (`validateExternalUrl`: só http/https; loopback/RFC1918/link-local/`.local`/`.internal`/`localhost.` com ponto final bloqueados; `redirect:'error'`).
+  - **`tool.crawler`** (`tool-crawler.ts`): scraping/BFS (`web_scrape`/`web_crawl`) com limites clampados (`maxPages 1..20`, `maxDepth 0..3`), `sameOriginOnly`, `allowedDomains`, anti-SSRF, binding `__fetcher` para testes, modo linear `in -> out` + `interrupt`.
+  - **Workflows e UI:** `apps/tui/flows/agente-workflows.json` (chatbox + voz SCK→Voxtral → `agent.tools` com `tool.workflow`+`tool.web_search`, modelo selecionável) e `chat-agente-suporte.json`; botão Carbon **"Agente Workflows"** na TopBar; seleção do "Modelo do Agente" no LiveView; auto-refresh do dropdown de workflows após `workflow_save`/`workflow_delete`; host `POST /api/run/chat` + evento NDJSON `chat_sent`.
+  - **Auditoria W3-QA (concluída pela sessão pi):** **99 testes** (98 PASS + 1 skip gate mic): `falador-graph` **23/23**, `falador-nodes` **74** (73+1 skip), `apps/web-server.test.mjs` **1/1**; `validateFlow` **9/9 fluxos OK** com bindings de runtime injetados (`human.approve.__gate` é injetado pelo runner — a validação crua acusa MISSING_BINDING em 2 fluxos pré-existentes, não é regressão); `apps/web` `tsc --noEmit` + `vite build` OK; zero deps novas. **Fechadas 2 brechas adversariais:** host com ponto final (`http://localhost./` escapava do bloqueio) e workflows que sejam symlinks (`SYMLINK_BLOCKED`, não sobrescreve o alvo). **NÃO VERIFICADO:** DNS-rebinding (`*.nip.io` → IP privado) segue fora da checagem por string; E2E visual do chatbox no browser pelo dono.
 - **ADR-008 IMPLEMENTADO VIA ORCA ORCHESTRATION (2026-11-21, `run_664a493b15cf`)**:
   - **Motor (`packages/falador-graph`):** novo `PortType 'tool'`, contratos `ToolDef`/`ToolCallResult`/`ToolProvider`, exceção controlada de `in-degree >= 1` apenas para portas `'tool'` em `spec.ts` (sem criar ciclos no DAG) e `ctx.getTools(port)` em `runtime.ts`. **23/23 testes PASS** (+5 novos em `tools-port.test.ts`).
   - **Provedores + MCP (`packages/falador-nodes`):** `exec.command` expõe porta `tool` (`exec_local`/`exec_ssh`, 100% dos guardrails mantidos); novo `rag.search` (`rag-search.ts`, BM25 sob demanda); novo `tool.mcp` (`tool-mcp.ts`, cliente JSON-RPC 2.0 zero-deps `stdio` com `shell:false`+`envAllowlist` e Streamable HTTP com `redirect:'error'`, fronteira de barra em `validateMcpUrl`, `allowedTools` obrigatório, `dryRun:true` default, shutdown sem zumbi e audit log).

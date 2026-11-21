@@ -12,11 +12,11 @@ export interface Category {
 }
 
 export const CATEGORIES: Category[] = [
-  { id: 'captura', label: 'Captura', emoji: '🎙️', accent: '#22d3ee', nodes: ['capture.ffmpeg'] },
+  { id: 'captura', label: 'Entrada / Captura', emoji: '🎙️', accent: '#22d3ee', nodes: ['capture.ffmpeg', 'input.chat'] },
   { id: 'transcricao', label: 'Transcrição', emoji: '💡', accent: '#14b8a6', nodes: ['asr.realtime', 'asr.lfm3'] },
   { id: 'pensar', label: 'Pensar', emoji: '🧠', accent: '#8b5cf6', nodes: ['llm.omlx', 'agent.tools'] },
   { id: 'decidir', label: 'Decidir', emoji: '🔀', accent: '#f59e0b', nodes: ['turn.detector', 'decision.llm', 'human.approve'] },
-  { id: 'acoes', label: 'Ações / Conectores', emoji: '⚡', accent: '#f97316', nodes: ['exec.command', 'rag.search', 'tool.mcp'] },
+  { id: 'acoes', label: 'Ações / Conectores', emoji: '⚡', accent: '#f97316', nodes: ['exec.command', 'rag.search', 'tool.mcp', 'tool.workflow', 'tool.web_search', 'tool.crawler'] },
   { id: 'falar', label: 'Falar', emoji: '🗣️', accent: '#d946ef', nodes: ['tts.sts'] },
   { id: 'saida', label: 'Saída', emoji: '📺', accent: '#22c55e', nodes: ['sink.captions', 'sink.playback'] },
   { id: 'teste', label: 'Teste', emoji: '🔧', accent: '#9ca3af', nodes: ['source.tone', 'pipe.delay', 'pipe.parcs', 'sink.collect'], collapsible: true },
@@ -30,6 +30,7 @@ export interface NodeMeta {
 
 export const NODE_META: Record<string, NodeMeta> = {
   'capture.ffmpeg': { title: 'Captura da call', subtitle: 'Zoom · Meet · Teams · mic', desc: 'Ouve o áudio do app que você escolher' },
+  'input.chat':    { title: 'Chat / Prompt de texto', subtitle: 'Entrada escrita interativa', desc: 'Campo de prompt para escrever e ligar em nós de texto' },
   'asr.realtime':  { title: 'Transcrição em tempo real', subtitle: 'Voxtral streaming', desc: 'Converte fala em texto enquanto o outro fala' },
   'asr.lfm3':      { title: 'Transcrição + tradução direta', subtitle: 'LFM3-Audio', desc: 'Ouve e já traduz sem etapa extra de texto' },
   'llm.omlx':      { title: 'Assistente de texto', subtitle: 'Sugestão · Tradução · Resposta', desc: 'Recebe texto e gera resposta, tradução ou sugestão' },
@@ -40,6 +41,9 @@ export const NODE_META: Record<string, NodeMeta> = {
   'exec.command':  { title: 'Executar comando', subtitle: 'Local · SSH (guardrails)', desc: 'Executa comandos aprovados com validação e audit log' },
   'rag.search':    { title: 'Busca RAG (Tool)', subtitle: 'BM25 local · Runbooks', desc: 'Expõe documentos e runbooks locais como ferramenta sob demanda' },
   'tool.mcp':      { title: 'Conector MCP', subtitle: 'stdio · Streamable HTTP', desc: 'Conecta servidores MCP externos com allowlist e dry-run' },
+  'tool.workflow': { title: 'Gerenciar Workflows (Tool)', subtitle: 'flows/*.json · AGENTS.md', desc: 'Lista, lê, valida, salva workflows e atualiza o AGENTS.md' },
+  'tool.web_search': { title: 'Pesquisa Web (Tool)', subtitle: 'DuckDuckGo · anti-SSRF', desc: 'Pesquisa externa e leitura de documentação pública com proteção anti-SSRF' },
+  'tool.crawler':  { title: 'Crawler / Scraping', subtitle: 'HTML · BFS · anti-SSRF', desc: 'Raspa páginas ou faz crawl em sites com limite e proteção anti-SSRF' },
   'tts.sts':       { title: 'Voz (falar em voz alta)', subtitle: 'EN / PT', desc: 'Converte texto em fala sintetizada' },
   'sink.captions': { title: 'Legenda na tela', subtitle: 'Texto ao vivo', desc: 'Mostra o texto gerado na interface' },
   'sink.playback': { title: 'Tocar no alto-falante', subtitle: 'Áudio sintetizado', desc: 'Toca o áudio no seu dispositivo' },
@@ -91,6 +95,10 @@ export const PARAM_HELP: Record<string, Record<string, ParamDoc>> = {
     pythonPath: { help: 'python do .venv (backend sounddevice)', def: '.venv/bin/python' },
     sidecarPath: { help: 'capture-sidecar.py (backend sounddevice)', def: 'services/capture-sidecar.py' },
     sckPath: { help: 'binário capture-sck (backend sck)', def: 'services/capture-sck' },
+  },
+  'input.chat': {
+    placeholder: { help: 'texto exibido no campo de prompt da interface', def: 'Digite sua mensagem ou comando…', control: 'text' },
+    initialMessage: { help: 'mensagem inicial opcional enviada automaticamente ao iniciar o fluxo', def: '', control: 'textarea' },
   },
   'asr.realtime': {
     url: { help: 'WebSocket do server mlx-audio', def: 'ws://127.0.0.1:8090/v1/realtime' },
@@ -205,6 +213,29 @@ export const PARAM_HELP: Record<string, Record<string, ParamDoc>> = {
     dryRun: { help: 'SEGURO POR PADRÃO: valida e audita chamadas MCP sem executar', def: 'true', control: 'toggle' },
     timeoutMs: { help: 'timeout de cada chamada RPC MCP (ms, máx 60000)', def: '15000', control: 'slider', min: 1000, max: 60000, step: 1000, unit: 'ms' },
     auditLogPath: { help: 'arquivo JSONL de auditoria das chamadas MCP', def: 'logs/exec-audit.jsonl' },
+  },
+  'tool.workflow': {
+    flowsDir: { help: 'diretório restrito onde os workflows (.json) são lidos e salvos', def: 'apps/tui/flows', control: 'text' },
+    agentsMdPath: { help: 'caminho do AGENTS.md atualizado ao salvar workflows', def: 'AGENTS.md', control: 'text' },
+    dryRun: { help: 'valida e gera preview sem gravar arquivos em disco', def: 'false', control: 'toggle' },
+    allowDelete: { help: 'permite remover workflows (agente-workflows é sempre protegido)', def: 'false', control: 'toggle' },
+    auditLogPath: { help: 'arquivo JSONL de auditoria das operações de workflow', def: 'logs/exec-audit.jsonl', control: 'text' },
+  },
+  'tool.web_search': {
+    endpoint: { help: 'endpoint de busca (default DuckDuckGo Instant Answer)', def: 'https://api.duckduckgo.com/', control: 'text' },
+    timeoutMs: { help: 'timeout da consulta HTTP (ms, máx 30000)', def: '8000', control: 'slider', min: 1000, max: 30000, step: 1000, unit: 'ms' },
+    maxResults: { help: 'número máximo de resultados retornados pela busca', def: '5', control: 'slider', min: 1, max: 15, step: 1 },
+    maxChars: { help: 'limite máximo de caracteres retornados por busca ou página', def: '4000', control: 'slider', min: 500, max: 16000, step: 500, unit: 'chars' },
+  },
+  'tool.crawler': {
+    maxPages: { help: 'número máximo de páginas visitadas no crawl (1 a 20)', def: '5', control: 'slider', min: 1, max: 20, step: 1 },
+    maxDepth: { help: 'profundidade máxima de links seguidos no BFS (0 a 3)', def: '1', control: 'slider', min: 0, max: 3, step: 1 },
+    sameOriginOnly: { help: 'restringe o crawl à mesma origem (protocolo + host + porta) da URL inicial', def: 'true', control: 'toggle' },
+    allowedDomains: { help: 'JSON array opcional de domínios permitidos (ex.: ["example.com"]). Vazio = qualquer domínio público', def: '[]', control: 'json' },
+    timeoutMs: { help: 'timeout por página HTTP (ms, 1000 a 30000)', def: '8000', control: 'slider', min: 1000, max: 30000, step: 1000, unit: 'ms' },
+    maxCharsPerPage: { help: 'limite máximo de caracteres extraídos por página', def: '4000', control: 'slider', min: 500, max: 16000, step: 500, unit: 'chars' },
+    maxTotalChars: { help: 'limite máximo de caracteres no relatório consolidado', def: '16000', control: 'slider', min: 1000, max: 32000, step: 1000, unit: 'chars' },
+    userAgent: { help: 'cabeçalho User-Agent enviado nas requisições HTTP', def: 'FaladorCrawler/1.0 (local-on-device)', control: 'text' },
   },
   'decision.llm': {
     baseUrl: { help: 'servidor OpenAI-compat (omlx)', def: 'http://127.0.0.1:8080' },
