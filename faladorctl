@@ -8,12 +8,13 @@ mkdir -p logs
 
 SNAP_LFM3_AUDIO="$HOME/.cache/huggingface/hub/models--LiquidAI--LFM3-Audio-2B-MLX-8bit/snapshots/000ea4f93adbfdabd4b24295b5e838f6a1f0ffa8"
 SNAP_VOXTRAL="$HOME/.cache/huggingface/hub/models--mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit/snapshots/fdebf7b2af834a1db4b8a3c99ab7480b333adf9e"
+VENV_PYTHON="/Users/otaviolemos/ml/falador/.venv/bin/python"
 
 # Lista completa: todos os serviços residentes do projeto (run.md §1).
 SERVICES=(
-  "omlx|8080|omlx serve --model-dir "$HOME/.omlx/models" --host 127.0.0.1 --port 8080|30"
-  "asr|8090|.venv/bin/python .venv/lib/python3.12/site-packages/mlx_audio/server.py --host 127.0.0.1 --port 8090 --realtime-model $SNAP_VOXTRAL|60"
-  "tts|8091|.venv/bin/python services/sts-sidecar.py --model $SNAP_LFM3_AUDIO --port 8091|30"
+  "omlx|8080|omlx serve --model-dir \"$HOME/.omlx/models\" --host 127.0.0.1 --port 8080|30"
+  "asr|8090|$VENV_PYTHON /Users/otaviolemos/ml/falador/.venv/lib/python3.12/site-packages/mlx_audio/server.py --host 127.0.0.1 --port 8090 --realtime-model $SNAP_VOXTRAL|60"
+  "tts|8091|$VENV_PYTHON services/sts-sidecar.py --model $SNAP_LFM3_AUDIO --port 8091|30"
   "web|8787|node apps/web-server.mjs|15"
 )
 

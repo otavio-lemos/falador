@@ -106,7 +106,13 @@ export function App() {
 
   const onTest = () => {
     const f = actionsRef.current?.getFlow();
-    if (f) runner.start(applyCaptureOverride(f, captureEnabled), currentFlow);
+    if (!f) return;
+    const prepared = applyCaptureOverride(applyContext(sanitizeFlow(f), contextDocs), captureEnabled);
+    setLiveFlow(prepared);
+    runner.start(prepared, currentFlow);
+    setView('live');
+    fetchApps().then(setApps).catch(() => {});
+    fetchModels().then(setModels).catch(() => {});
   };
   // Override de captura aplicado SEMPRE no start (runtime); `capture` explícito evita ler
   // estado stale logo após um toggle (setState é assíncrono).

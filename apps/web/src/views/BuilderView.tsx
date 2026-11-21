@@ -6,6 +6,7 @@ import { Edit, Play } from '@carbon/icons-react';
 import { useNodesState, useEdgesState, addEdge, type Edge, type Connection } from '@xyflow/react';
 import { Palette } from '../components/Palette';
 import { FlowCanvas } from '../components/FlowCanvas';
+import { LogsPanel } from '../components/LogsPanel';
 import { fetchFlow, saveFlow, type Catalog, type Flow } from '../api';
 import { flowToRf, rfToFlow, newNodeId, type FNode } from '../flow-utils';
 import { NODE_META, accentOf } from '../data';
@@ -191,6 +192,7 @@ export function BuilderView({
           )}
         </div>
       )}
+      <LogsPanel />
     </div>
   );
 }

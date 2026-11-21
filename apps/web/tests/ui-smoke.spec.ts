@@ -30,6 +30,6 @@ test('node editor exposes capture app reload and language controls', async ({ pa
 });
 
 test('new workflow action is exposed in the flow menu', async ({ page }) => {
-  await page.locator('.topbar-flow-btn').click();
-  await expect(page.getByText('Novo workflow')).toBeVisible();
+  await page.getByRole('button', { name: 'Novo workflow' }).click();
+  await expect(page.getByRole('dialog', { name: 'Editar detalhes do workflow' })).toBeVisible();
 });
