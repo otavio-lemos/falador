@@ -233,70 +233,43 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   background: $bg-bar; border-bottom: 1px solid $border-1;
 }
 .live2-mode { display: flex; align-items: center; gap: $spacing-03; }
-.live-dot { width: 8px; height: 8px; border-radius: 2px; background: #525252; }
-.live-dot--on { background: #22c55e; }
+.live-dot { width: 10px; height: 10px; border-radius: 50%; background: #525252; }
+.live-dot--on { background: #22c55e; box-shadow: 0 0 8px #22c55e; animation: pulse 1.6s infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 .live2-mode-label { @include type-style('productive-heading-01'); color: #22c55e; letter-spacing: 0.04em; }
 .live2-scenario { @include type-style('body-01'); color: $txt-2; }
 .live-flow-select { width: 13rem; margin-left: $spacing-03; }
 .live2-top-actions { display: flex; gap: $spacing-03; }
 
-.live2-body {
-  flex: 1; min-height: 0; display: flex; flex-direction: column; gap: $spacing-05;
-  padding: $spacing-05; overflow: hidden;
+.live2-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 300px; gap: $spacing-05; padding: $spacing-05; overflow-y: auto; }
+.live2-main { display: flex; flex-direction: column; gap: $spacing-03; min-width: 0; }
+.live2-error { @include type-style('body-01'); color: #ff8389; background: rgba(218, 30, 40, 0.12); border: 1px solid #da1e28; border-radius: 6px; padding: $spacing-03 $spacing-04; }
+.live2-label { @include type-style('helper-text-01'); color: $txt-2; text-transform: uppercase; letter-spacing: 0.05em; }
+.live2-transcription {
+  background: $bg-panel; border: 1px solid $border-1; border-radius: 8px;
+  padding: $spacing-04; @include type-style('body-02'); color: $txt-1; line-height: 1.5; min-height: 56px;
 }
-
-// Grid dinâmico: colunas definidas inline via style no componente (gridTemplateColumns)
-.live2-grid {
-  flex: 1; min-height: 0; display: grid; gap: $spacing-05;
-  grid-template-rows: minmax(0, 1fr);
-}
-
-// Painéis base — cada um flex coluna, scroll próprio
-.live2-panel {
-  display: flex; flex-direction: column; gap: $spacing-03;
-  min-width: 0; min-height: 0; background: $bg-panel; border: 1px solid $border-1; border-radius: 8px;
-  padding: $spacing-04; overflow-y: auto;
-}
-.live2-left { }
-.live2-center { }
-.live2-right { }
 
 // dropdown por etapa — borda superior na cor da categoria, linha única
-// (o toggle de captura fica na MESMA linha, à esquerda dos dropdowns)
-.live2-stages-row { display: flex; align-items: flex-end; gap: $spacing-05; }
-.live2-capture {
-  display: flex; flex-direction: column; gap: $spacing-01;
-  flex-shrink: 0; padding-bottom: $spacing-02;
-  border-right: 1px solid $border-1; padding-right: $spacing-05;
-}
-.live2-capture .cds--toggle__label-text { @include type-style('helper-text-01'); color: $txt-2; }
-.live2-capture-hint { @include type-style('helper-text-01'); color: $txt-2; }
-.live2-stages { flex: 1 1 auto; display: flex; flex-wrap: nowrap; gap: $spacing-04; min-width: 0; }
+.live2-stages { display: flex; flex-wrap: nowrap; gap: $spacing-04; }
 .stage-dd { flex: 1 1 0; min-width: 0; border-top: 3px solid var(--accent); padding-top: $spacing-02; }
 .stage-dd-label { @include type-style('helper-text-01'); color: $txt-2; display: block; margin-bottom: $spacing-02; white-space: nowrap; }
 .stage-dd .cds--dropdown { width: 100%; }
 
 .live2-suggestion {
-  background: $bg-panel; border: 1px solid $border-1; border-left: 3px solid #22c55e; border-radius: 6px;
-  padding: $spacing-04; min-height: 0;
-  flex: 1 1 auto;
-  display: flex; flex-direction: column; overflow-y: auto;
+  background: rgba(34, 197, 94, 0.06); border: 2px solid #22c55e; border-radius: 8px;
+  padding: $spacing-05; min-height: 88px;
 }
-.live2-suggestion .cds--text-area__wrapper { flex: 1; }
-.live2-suggestion-text { @include type-style('body-02'); color: $txt-1; line-height: 1.5; flex: 1; white-space: pre-wrap; word-break: break-word; }
+.live2-suggestion-text { @include type-style('productive-heading-04'); color: #4ade80; line-height: 1.5; }
 .live-cursor { display: inline-block; width: 3px; height: 1.1em; background: #4ade80; margin-left: 4px; vertical-align: text-bottom; animation: pulse 1s infinite; }
 .live2-actions { display: flex; align-items: center; gap: $spacing-03; }
 .approve-btn { background: #16a34a !important; }
 .approve-btn:hover { background: #15803d !important; }
 .live2-hint { @include type-style('helper-text-01'); color: #6f6f6f; margin: 0; }
 
-.live2-transcription {
-  background: $bg-panel; border: 1px solid $border-1; border-radius: 8px;
-  padding: $spacing-04; @include type-style('body-02'); color: $txt-1; line-height: 1.5; min-height: 56px;
-}
-
-.live2-label { @include type-style('helper-text-01'); color: $txt-2; text-transform: uppercase; letter-spacing: 0.05em; }
-.live2-error { @include type-style('body-01'); color: #ff8389; background: rgba(218, 30, 40, 0.12); border: 1px solid #da1e28; border-radius: 6px; padding: $spacing-03 $spacing-04; }
+// sidebar contexto & cheatsheet
+.live2-side { background: $bg-panel; border: 1px solid $border-1; border-radius: 8px; padding: $spacing-05; align-self: start; display: flex; flex-direction: column; gap: $spacing-05; }
+.live2-side-title { @include type-style('productive-heading-01'); color: $txt-1; text-transform: uppercase; letter-spacing: 0.04em; }
 .ctx-doc { display: flex; gap: $spacing-03; align-items: flex-start; padding: $spacing-03; background: $bg-card; border: 1px solid $border-1; border-radius: 6px; color: $txt-2; }
 .ctx-doc-name { @include type-style('body-01'); color: $txt-1; }
 .ctx-doc-sub { @include type-style('helper-text-01'); color: #6f6f6f; }
@@ -319,162 +292,7 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 .ctx-level--on span { background: #22c55e; animation: bar 0.9s ease-in-out infinite; animation-delay: calc(var(--i) * 0.07s); }
 @keyframes bar { 0%, 100% { height: 5px; } 50% { height: 17px; } }
 
-// Divider simples
-.live2-divider {
-  width: 1px;
-  height: 24px;
-  background: $border-1;
-  flex-shrink: 0;
-  margin: 0 $spacing-02;
-}
-
-// Toolbar header
-.live2-toolbar {
-  display: flex;
-  align-items: center;
-  height: 100%;
-  gap: $spacing-02;
-}
-.live2-toolbar-item {
-  display: flex;
-  align-items: center;
-}
-.live2-toolbar-item.live2-workflow-item {
-  min-width: 180px;
-}
-.live2-toolbar-spacer {
-  flex: 1;
-}
-
-// Audio toggle
-.live2-audio-toggle {
-  display: flex;
-  align-items: center;
-  gap: $spacing-02;
-}
-.live2-audio-toggle .cds--toggle__label-text {
-  @include type-style('helper-text-01');
-  color: $txt-2;
-}
-.live2-capture-hint {
-  @include type-style('helper-text-01');
-  color: $txt-2;
-  font-size: 11px;
-}
-
-// Linha 2: Componentes do workflow
-.live2-components-bar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: $spacing-03;
-  padding: $spacing-03 $spacing-04;
-  background: $bg-panel;
-  border: 1px solid $border-1;
-  border-radius: 8px;
-}
-.live2-component-item {
-  display: flex;
-  align-items: center;
-  gap: $spacing-02;
-  padding: $spacing-02 $spacing-03;
-  background: $bg-card;
-  border: 1px solid $border-1;
-  border-radius: 6px;
-  border-left: 3px solid var(--accent, #9ca3af);
-}
-.live2-component-label {
-  display: flex;
-  align-items: center;
-  gap: $spacing-02;
-  @include type-style('code-01');
-  color: $txt-1;
-  font-weight: 600;
-  font-size: 12px;
-}
-.live2-component-dropdown {
-  display: flex;
-  align-items: center;
-  gap: $spacing-02;
-}
-.live2-component-divider {
-  width: 1px;
-  height: 24px;
-  background: $border-1;
-  flex-shrink: 0;
-}
-
-// Linha 3: Roles
-.live2-roles-bar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: $spacing-03;
-  padding: $spacing-02 $spacing-04;
-  background: $bg-panel;
-  border: 1px solid $border-1;
-  border-radius: 8px;
-}
-.live2-role-item {
-  display: flex;
-  align-items: center;
-  gap: $spacing-02;
-  padding: $spacing-01 $spacing-03;
-  background: $bg-card;
-  border: 1px solid $border-1;
-  border-radius: 999px;
-  border-left: 3px solid var(--role-color, #9ca3af);
-}
-.live2-role-label {
-  @include type-style('code-01');
-  color: $txt-1;
-  font-weight: 600;
-  font-size: 12px;
-  text-transform: uppercase;
-}
-
-// Suggestion
-.live2-suggestion {
-  background: $bg-panel;
-  border: 1px solid $border-1;
-  border-left: 3px solid #22c55e;
-  border-radius: 6px;
-  padding: $spacing-04;
-  min-height: 0;
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-}
-.live2-suggestion .cds--text-area__wrapper {
-  flex: 1;
-}
-.live2-suggestion-text {
-  @include type-style('body-02');
-  color: $txt-1;
-  line-height: 1.5;
-  flex: 1;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.live2-cursor {
-  display: inline-block;
-  width: 3px;
-  height: 1.1em;
-  background: #4ade80;
-  margin-left: 4px;
-  vertical-align: text-bottom;
-  animation: pulse 1s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-
-.live2-transcription-section {
-  margin-top: $spacing-04;
-}
+.app-toast { position: fixed; bottom: $spacing-05; right: $spacing-05; z-index: 100; }
 
 // ---- chatbox (input.chat no LiveView e BuilderView) ----
 .chatbox-panel {
@@ -539,15 +357,13 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   border: 1px solid $border-1;
   border-radius: 8px;
   padding: $spacing-04;
-  flex: 1 1 auto;                 // conversa preenche a altura livre
-  min-height: 0;
 }
 .live-chat-log {
   display: flex;
   flex-direction: column;
   gap: $spacing-04;
   overflow-y: auto;
-  flex: 1 1 auto;
+  max-height: 46vh;
   min-height: 120px;
   padding-right: $spacing-02;
 }
@@ -556,45 +372,43 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   color: $txt-2;
   margin: 0;
 }
-// Chat em formato de TRANSCRIPT: tudo à esquerda, linha por linha, sem caixas coloridas.
-.live-chat-line {
+.live-chat-bubble {
   display: flex;
-  align-items: baseline;
-  gap: $spacing-03;
-  width: 100%;
-  padding: $spacing-02 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  flex-direction: column;
+  gap: 2px;
+  max-width: 78%;
+  padding: $spacing-03 $spacing-04;
+  border-radius: 10px;
   font-family: 'IBM Plex Sans', system-ui, sans-serif;
   font-size: 14px;
   line-height: 1.5;
+}
+.live-chat-bubble--user {
+  align-self: flex-end;
+  background: #333333;        // cinza mais claro que o painel
   color: $txt-1;
+  border-bottom-right-radius: 2px;
 }
-.live-chat-line--user { }
-.live-chat-line--agent { }
-.live-chat-role {
-  @include type-style('label-01');
-  font-weight: 700;
-  flex-shrink: 0;
-  min-width: 52px;
+.live-chat-bubble--agent {
+  align-self: flex-start;
+  background: rgba(34, 197, 94, 0.14);   // verde (mesmo tom da sugestão)
+  border: 1px solid #22c55e;
+  color: #4ade80;
+  border-bottom-left-radius: 2px;
 }
-.live-chat-line--user .live-chat-role { color: $txt-2; }
-.live-chat-line--agent .live-chat-role { color: #22c55e; }
 .live-chat-ts {
   font-family: 'IBM Plex Sans', system-ui, sans-serif;
-  font-size: 10px;
+  font-size: 10px;             // data/hora bem pequena e discreta
   line-height: 1.2;
   color: $txt-2;
   opacity: 0.85;
-  flex-shrink: 0;
-  min-width: 64px;
 }
+.live-chat-bubble--agent .live-chat-ts { color: #86efac; }
 .live-chat-text {
   font-family: inherit;
-  font-size: 14px;
+  font-size: 14px;             // MESMA fonte/tamanho nas duas bolhas
   white-space: pre-wrap;
   word-break: break-word;
-  flex: 1 1 auto;
-  min-width: 0;
 }
 .live-chat-input {
   display: flex;
@@ -611,41 +425,19 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 
 // ---- logs dos serviços residentes (terminal pequeno no rodapé do Live) ----
 .logs-panel {
-  flex-shrink: 0;
-  height: var(--logs-h, 220px);
-  display: flex;
-  flex-direction: column;
   margin: 0 $spacing-05 $spacing-05;
   background: $bg-panel;
   border: 1px solid $border-1;
   border-radius: 8px;
-  padding: 0 $spacing-04 $spacing-03;
+  padding: $spacing-03 $spacing-04;
 }
-.logs-panel--collapsed { height: auto; }
-// alça de resize (topo do painel) — arrastar para cima aumenta a altura
-.logs-resizer {
-  height: 10px;
-  flex-shrink: 0;
-  margin: 0 (-$spacing-04);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: row-resize;
-  touch-action: none;
-}
-.logs-resizer:focus-visible { outline: 2px solid #4589ff; outline-offset: -2px; }
-.logs-resizer:hover .logs-resizer-grip,
-.logs-resizer:focus-visible .logs-resizer-grip { background: #4589ff; }
-.logs-resizer-grip { width: 48px; height: 3px; border-radius: 2px; background: $border-2; }
 .logs-panel-head {
   display: flex;
   align-items: center;
   gap: $spacing-03;
   margin-bottom: $spacing-02;
-  flex-shrink: 0;
   .cds--dropdown__wrapper { min-width: 200px; }
 }
-.logs-panel-services { min-width: 220px; }
 .logs-panel-title {
   @include type-style('label-01');
   color: $txt-1;
@@ -653,31 +445,14 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   align-items: center;
   gap: $spacing-02;
 }
-.logs-panel-count { @include type-style('label-01'); color: $txt-2; white-space: nowrap; }
-.logs-panel-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: $spacing-03;
-  overflow-y: auto;
+.logs-panel-hint {
+  @include type-style('label-01');
+  color: $txt-2;
+  margin-left: auto;
 }
-.logs-panel-empty { @include type-style('helper-text-01'); color: $txt-2; margin: 0; }
-.logs-block { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; }
-.logs-block-head {
-  display: flex;
-  align-items: center;
-  gap: $spacing-03;
-  flex-shrink: 0;
-  padding: 2px 0;
-}
-.logs-block-title { @include type-style('label-01'); color: $txt-1; }
-.logs-block-path { @include type-style('code-01'); color: $txt-2; }
-.logs-block-count { @include type-style('label-01'); color: $txt-2; margin-left: auto; white-space: nowrap; }
 .logs-terminal {
   margin: 0;
-  flex: 1 1 auto;
-  min-height: 56px;
+  max-height: 170px;
   overflow: auto;
   background: #0b0e13;
   color: #c6d0dc;

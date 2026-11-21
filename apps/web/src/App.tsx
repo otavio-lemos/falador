@@ -11,30 +11,6 @@ import { useRunner } from './useRunner';
 import { fetchCatalog, fetchFlows, fetchFlow, fetchModels, fetchApps, fetchContext, saveFlow, uploadDoc, removeDoc, type Catalog, type Flow, type ContextDoc } from './api';
 import { applyContext, sanitizeFlow } from './live-utils';
 
-// Captura de áudio LIGADA/DESLIGADA é um controle de RUNTIME: vive na tela de execução,
-// não no workflow salvo (o canvas e o JSON continuam intocados).
-const CAPTURE_STORAGE_KEY = 'falador.captureEnabled';
-
-function readCaptureEnabled(): boolean {
-  try {
-    const raw = localStorage.getItem(CAPTURE_STORAGE_KEY);
-    if (raw === null) return true;
-    return raw === 'true';
-  } catch {
-    return true;
-  }
-}
-
-// O motor remove nós `enabled:false` junto com suas edges (packages/falador-graph/src/spec.ts:79),
-// então desligar a captura basta desabilitar todo nó capture.ffmpeg — nenhuma edição de workflow.
-function applyCaptureOverride(flow: Flow, enabled: boolean): Flow {
-  if (!flow.nodes.some((n) => n.type === 'capture.ffmpeg')) return flow;
-  return {
-    ...flow,
-    nodes: flow.nodes.map((n) => (n.type === 'capture.ffmpeg' ? { ...n, enabled } : n)),
-  };
-}
-
 function scenarioLabel(name: string): string {
   if (name === 'agente-workflows') return 'Agente de Workflows';
   if (name.includes('entrevista') || name.startsWith('cenario2')) return 'Entrevista Técnica';
@@ -65,7 +41,6 @@ export function App() {
   const [apps, setApps] = useState<string[]>([]);
   const [contextDocs, setContextDocs] = useState<ContextDoc[]>([]);
   const [toast, setToast] = useState<string | null>(null);
-  const [captureEnabled, setCaptureEnabled] = useState(readCaptureEnabled);
   const runner = useRunner();
   const actionsRef = useRef<{ getFlow: () => Flow; save: () => void } | null>(null);
   const seenAgentStepsRef = useRef(0);
@@ -104,20 +79,8 @@ export function App() {
     }
   }, [runner.agentSteps, refreshFlows]);
 
-  const onTest = () => {
-    const f = actionsRef.current?.getFlow();
-    if (!f) return;
-    const prepared = applyCaptureOverride(applyContext(sanitizeFlow(f), contextDocs), captureEnabled);
-    setLiveFlow(prepared);
-    runner.start(prepared, currentFlow);
-    setView('live');
-    fetchApps().then(setApps).catch(() => {});
-    fetchModels().then(setModels).catch(() => {});
-  };
-  // Override de captura aplicado SEMPRE no start (runtime); `capture` explícito evita ler
-  // estado stale logo após um toggle (setState é assíncrono).
-  const startWithContext = (f: Flow, name?: string, capture = captureEnabled) =>
-    runner.start(applyCaptureOverride(applyContext(sanitizeFlow(f), contextDocs), capture), name ?? currentFlow);
+  const onTest = () => { const f = actionsRef.current?.getFlow(); if (f) runner.start(f, currentFlow); };
+  const startWithContext = (f: Flow, name?: string) => runner.start(applyContext(sanitizeFlow(f), contextDocs), name ?? currentFlow);
   const onGoLive = () => {
     const f = actionsRef.current?.getFlow();
     if (!f) return;
@@ -126,18 +89,6 @@ export function App() {
     fetchModels().then(setModels).catch(() => {});
   };
   const onSave = () => { actionsRef.current?.save(); setToast('Workflow salvo'); };
-
-  // Ligar/desligar captura direto na execução: com a sessão ATIVA reinicia o run aplicando o
-  // override (runner.start já para o anterior de forma idempotente); com a sessão PARADA só
-  // atualiza o flow em memória — NÃO abre run/captura (mesma regra dos dropdowns de etapa).
-  const onToggleCapture = (next: boolean) => {
-    setCaptureEnabled(next);
-    try { localStorage.setItem(CAPTURE_STORAGE_KEY, String(next)); } catch { /* storage indisponível */ }
-    if (!liveFlow) return;
-    const overridden = applyCaptureOverride(liveFlow, next);
-    setLiveFlow(overridden);
-    if (runner.running) startWithContext(overridden, currentFlow, next);
-  };
 
   const onNewFlow = async () => {
     const name = `workflow-${Date.now()}`;
@@ -159,28 +110,17 @@ export function App() {
     setToast('Detalhes do workflow salvos');
   };
 
-  // Trocar uma etapa atualiza o param real. Só reinicia o run se a sessão estiver ATIVA
-  // (para aplicar a troca); com a sessão parada, apenas persiste a configuração — NÃO
-  // abre captura/run só por selecionar um dropdown.
   const onUpdateStage = (nodeId: string, param: string, value: unknown) => {
     if (!liveFlow) return;
     const next: Flow = { ...liveFlow, nodes: liveFlow.nodes.map((n) => (n.id === nodeId ? { ...n, params: { ...n.params, [param]: value } } : n)) };
-    setLiveFlow(next);
-    if (runner.running) startWithContext(next);
+    setLiveFlow(next); startWithContext(next);
   };
-  // Regerar só faz sentido numa sessão em andamento; com a sessão parada, avisa.
-  const onRegenerate = () => {
-    if (!liveFlow) return;
-    if (!runner.running) { setToast('Inicie a sessão para regerar'); return; }
-    startWithContext(liveFlow);
-  };
+  const onRegenerate = () => { if (liveFlow) startWithContext(liveFlow); };
   const onExit = () => { runner.stop(); setView('builder'); };
-  // Trocar de workflow no Live carrega o flow, mas só inicia run/captura se a sessão estiver ativa.
   const onSwitchLiveFlow = async (name: string) => {
     try {
       const f = await fetchFlow(name);
-      setCurrentFlow(name); setLiveFlow(f);
-      if (runner.running) startWithContext(f, name);
+      setCurrentFlow(name); setLiveFlow(f); startWithContext(f, name);
     } catch { setToast('Falha ao carregar o flow'); }
   };
 
@@ -264,8 +204,6 @@ export function App() {
               onUpdateStage={onUpdateStage} onRegenerate={onRegenerate}
               onRefreshApps={() => fetchApps().then(setApps).catch(() => {})}
               onNotify={(msg) => setToast(msg)}
-              captureEnabled={captureEnabled}
-              onToggleCapture={onToggleCapture}
               onExit={onExit}
             />
           )}

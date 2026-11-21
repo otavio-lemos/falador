@@ -1,18 +1,14 @@
-// Tela de EXECUÇÃO — Layout derivado do workflow (nada fixo).
-// Header: Workflow selector + Reload + Audio toggle
-// Linha 2: Todos os componentes do workflow como dropdowns (uma linha)
-// Linha 3: Linha simples TRANSCRIÇÃO | AGENTE | TRANSLATE | DECISOR | VOCÊ
+// Tela de EXECUÇÃO — LIVE MODE + latência com breakdown + DRY-RUN/EXEC ATIVO + Limpar contexto +
+// Exportar sessão (.md / webhook) + card rico de aprovação (comandos/host/risco d1) +
+// sidebar de Documentos/Runbooks (RAG BM25 com tags e chunks).
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import {
   Button,
   Dropdown,
   Modal,
-  MultiSelect,
   Tag,
   TextArea,
   TextInput,
-  Toggle,
   Toggletip,
   ToggletipButton,
   ToggletipContent,
@@ -34,16 +30,6 @@ import {
   Download,
   Reset,
   Terminal,
-  ChevronDown,
-  ChevronUp,
-  Restart,
-  Settings,
-  UserAvatar,
-  Chat,
-  Language,
-  ArrowRight,
-  ArrowLeft,
-  ListNumbered,
 } from '@carbon/icons-react';
 import type { Runner, Gate, AgentStep } from '../useRunner';
 import { exportSession, fetchLogs, fetchTopics, resetHistory, type Flow, type ContextDoc } from '../api';
@@ -51,9 +37,6 @@ import { deriveStages, classifySinks, shortModel, isTextModel, isAsrModel, type 
 import { LANGS } from '../data';
 
 const WEBHOOK_STORAGE_KEY = 'falador.webhookUrl';
-const LOG_SERVICES_KEY = 'falador.logServices';
-const LOG_HEIGHT_KEY = 'falador.logsHeight';
-const LOG_COLLAPSED_KEY = 'falador.logsCollapsed';
 
 const LOG_SERVICES = [
   { id: 'omlx', label: 'LLM (omlx :8080)' },
@@ -61,53 +44,6 @@ const LOG_SERVICES = [
   { id: 'tts', label: 'TTS (:8091)' },
   { id: 'web', label: 'Host/UI (:8787)' },
 ];
-
-interface LogService { id: string; label: string }
-
-const LOG_MIN_HEIGHT = 160;
-const LOG_MAX_VH = 0.85;
-const LOG_DEFAULT_VH = 0.42;
-
-function viewportHeight(): number {
-  if (typeof window === 'undefined') return 900;
-  return window.innerHeight || 900;
-}
-
-function clampLogHeight(h: number): number {
-  const max = Math.max(320, Math.round(viewportHeight() * LOG_MAX_VH));
-  if (!Number.isFinite(h)) return clampLogHeight(Math.round(viewportHeight() * LOG_DEFAULT_VH));
-  return Math.min(max, Math.max(LOG_MIN_HEIGHT, Math.round(h)));
-}
-
-function readLogServices(): string[] {
-  try {
-    const raw = localStorage.getItem(LOG_SERVICES_KEY);
-    if (!raw) return ['omlx'];
-    const parsed: unknown = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      const ids = parsed.filter((v): v is string => typeof v === 'string');
-      return LOG_SERVICES.map((s) => s.id).filter((id) => ids.includes(id));
-    }
-  } catch { }
-  return ['omlx'];
-}
-
-function readLogHeight(): number {
-  try {
-    const raw = localStorage.getItem(LOG_HEIGHT_KEY);
-    if (raw !== null) return clampLogHeight(Number(raw));
-  } catch { }
-  return clampLogHeight(Math.round(viewportHeight() * LOG_DEFAULT_VH));
-}
-
-function readLogCollapsed(): boolean {
-  try {
-    const raw = localStorage.getItem(LOG_COLLAPSED_KEY);
-    if (raw === 'true') return true;
-    if (raw === 'false') return false;
-  } catch { }
-  return false;
-}
 
 interface Props {
   runner: Runner;
@@ -126,8 +62,6 @@ interface Props {
   onRegenerate: () => void;
   onRefreshApps: () => void;
   onNotify?: (msg: string) => void;
-  captureEnabled: boolean;
-  onToggleCapture: (next: boolean) => void;
   onExit: () => void;
 }
 
@@ -179,7 +113,7 @@ function parseGateCommand(gate: Gate | undefined): {
         if (typeof obj.reason === 'string' && !reason) reason = obj.reason;
         if (typeof obj.decision === 'string' && !decision) decision = obj.decision;
       }
-    } catch { }
+    } catch { /* não é JSON */ }
   }
 
   const isCommand = Boolean(command || tool || meta?.host || meta?.command || meta?.reason || meta?.tool);
@@ -211,89 +145,13 @@ function riskTagType(decision?: string): 'green' | 'warm-gray' | 'red' | 'magent
   return 'purple';
 }
 
-// ── Helpers de módulo (NÃO duplicar dentro do componente) ─────────────────────
-
-function nodeTypeColor(type: string): string {
-  switch (type) {
-    case 'llm.omlx': return '#22c55e';
-    case 'agent.tools': return '#0ea5e9';
-    case 'decision.llm': return '#f59e0b';
-    case 'asr.realtime': return '#a855f7';
-    case 'asr.lfm3': return '#a855f7';
-    case 'capture.ffmpeg': return '#ec4899';
-    case 'human.approve': return '#f97316';
-    case 'rag.search': return '#06b6d4';
-    case 'sink.captions': return '#22d3ee';
-    default: return '#9ca3af';
-  }
-}
-
-function componentLabel(type: string): string {
-  switch (type) {
-    case 'capture.ffmpeg': return 'CAPTURA';
-    case 'asr.realtime': return 'TRANSCRIÇÃO';
-    case 'asr.lfm3': return 'TRANSCRIÇÃO';
-    case 'llm.omlx': return 'AGENTE';
-    case 'agent.tools': return 'AGENTE';
-    case 'decision.llm': return 'DECISOR';
-    case 'human.approve': return 'REVISÃO';
-    case 'tts.sts': return 'VOZ';
-    case 'rag.search': return 'RAG';
-    case 'sink.captions': return 'LEGENDA';
-    case 'exec.command': return 'EXEC';
-    case 'tool.mcp': return 'MCP';
-    case 'tool.workflow': return 'WF';
-    case 'tool.web_search': return 'WEB';
-    case 'tool.crawler': return 'CRAWL';
-    default: return type.toUpperCase();
-  }
-}
-
-function NodeIcon({ type }: { type: string }) {
-  switch (type) {
-    case 'capture.ffmpeg': return <Microphone size={16} />;
-    case 'asr.realtime':
-    case 'asr.lfm3': return <Language size={16} />;
-    case 'llm.omlx':
-    case 'agent.tools': return <Chat size={16} />;
-    case 'decision.llm': return <ListNumbered size={16} />;
-    case 'human.approve': return <UserAvatar size={16} />;
-    case 'tts.sts': return <Microphone size={16} />;
-    case 'rag.search': return <Settings size={16} />;
-    case 'sink.captions': return <Document size={16} />;
-    default: return <Settings size={16} />;
-  }
-}
-
-function roleColor(role: 'user' | 'agent', sourceNodeType?: string): string {
-  if (role === 'user') return '#9ca3af';
-  if (!sourceNodeType) return '#22c55e';
-  switch (sourceNodeType) {
-    case 'llm.omlx': return '#22c55e';
-    case 'agent.tools': return '#0ea5e9';
-    case 'decision.llm': return '#f59e0b';
-    case 'asr.realtime': return '#a855f7';
-    case 'asr.lfm3': return '#a855f7';
-    case 'capture.ffmpeg': return '#ec4899';
-    default: return '#22c55e';
-  }
-}
-
-// Divider simples (Carbon não exporta Divider standalone)
-function Divider() {
-  return <hr className="live2-divider" />;
-}
-
 export function LiveView({
   runner, flow, scenarioName, models, apps, contextDocs,
   onUploadDoc, onRemoveDoc, onStart, flows, currentFlow,
-  onSwitchFlow, onUpdateStage, onRegenerate, onRefreshApps, onNotify,
-  captureEnabled, onToggleCapture, onExit,
+  onSwitchFlow, onUpdateStage, onRegenerate, onRefreshApps, onNotify, onExit,
 }: Props) {
   const stages = useMemo(() => deriveStages(flow), [flow]);
   const sinks = useMemo(() => classifySinks(flow), [flow]);
-
-  // ── Estado UI (UMA VEZ SÓ) ────────────────────────────────────────────────
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [cmdDraft, setCmdDraft] = useState('');
@@ -308,14 +166,74 @@ export function LiveView({
     try { return localStorage.getItem(WEBHOOK_STORAGE_KEY) ?? ''; } catch { return ''; }
   });
   const fileRef = useRef<HTMLInputElement>(null);
-  const logsRefs = useRef<Record<string, HTMLPreElement | null>>({});
-  const [logServices, setLogServices] = useState<string[]>(readLogServices);
-  const [logsByService, setLogsByService] = useState<Record<string, string[]>>({});
-  const [logsHeight, setLogsHeight] = useState<number>(readLogHeight);
-  const [logsCollapsed, setLogsCollapsed] = useState<boolean>(readLogCollapsed);
-  const logsHeightRef = useRef(logsHeight);
+  const logsRef = useRef<HTMLPreElement>(null);
+  const [logService, setLogService] = useState('web');
+  const [logs, setLogs] = useState<string[]>([]);
 
-  // ── Funções de ação ────────────────────────────────────────────────────────
+  // Logs dos 4 serviços residentes (logs/<nome>.log): poll do serviço selecionado no dropdown.
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetchLogs(logService, 300);
+        if (alive) setLogs(r.lines);
+      } catch {
+        if (alive) setLogs([`(falha ao ler logs/${logService}.log)`]);
+      }
+    };
+    void load();
+    const t = setInterval(() => void load(), 1500);
+    return () => { alive = false; clearInterval(t); };
+  }, [logService]);
+
+  // auto-scroll do terminal para o fim
+  useEffect(() => {
+    const el = logsRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [logs]);
+
+  const lastOf = (set: Set<string>) => [...runner.captions].reverse().find((c) => set.has(c.nodeId));
+  const transcription = lastOf(sinks.transcription)?.text ?? '';
+  const gate = runner.gates[0];
+  const gateInfo = useMemo(() => parseGateCommand(gate), [gate]);
+
+  // Sincroniza rascunho editável do comando sempre que chegar um novo gate de comando
+  useEffect(() => {
+    if (gate && gateInfo.isCommand) {
+      setCmdDraft(gateInfo.command);
+    }
+  }, [gate, gateInfo.isCommand, gateInfo.command]);
+
+  const suggestion = gate ? gate.text : (lastOf(sinks.suggestion)?.text ?? '');
+  const captureApp = stages.find((s) => s.kind === 'app')?.value ?? '—';
+
+  // NADA FIXO: painéis e indicadores derivam dos nós presentes no workflow.
+  const hasGate = flow.nodes.some(
+    (n) => n.type === 'human.approve' || (n.type === 'agent.tools' && n.params.approvalPolicy !== 'never'),
+  );
+  const hasTTS = flow.nodes.some((n) => n.type === 'tts.sts');
+  const hasLLM = flow.nodes.some((n) => n.type === 'llm.omlx' || n.type === 'agent.tools');
+  const execNodes = flow.nodes.filter((n) => n.type === 'exec.command' || n.type === 'tool.mcp');
+  const hasExec = execNodes.length > 0;
+  const execActive = execNodes.some((n) => n.params.dryRun === false);
+  const hasAgent = flow.nodes.some((n) => n.type === 'agent.tools');
+  const isAssisted = flow.nodes.some(
+    (n) => n.type === 'decision.llm' || n.type === 'human.approve' || n.type === 'exec.command' || n.type === 'agent.tools',
+  );
+  const isInterview = flow.nodes.some((n) => (n.type === 'decision.llm' || n.type === 'human.approve')) && !hasExec && !hasAgent;
+  const allSinks = new Set([...sinks.transcription, ...sinks.suggestion]);
+
+  const heroText = isAssisted ? (gate ? gate.text : (lastOf(sinks.suggestion)?.text ?? '')) : (lastOf(allSinks)?.text ?? '');
+  const heroLabel = hasExec || hasAgent
+    ? 'Diagnóstico / Comando sugerido'
+    : isInterview
+      ? 'Sugestão de resposta (para você falar)'
+      : 'Tradução ao vivo';
+
+  const lastError = [...runner.events].reverse().find(
+    (e) => e.type === 'node_error' && !String((e as { code?: string }).code ?? '').startsWith('log_'),
+  ) as { message?: string; nodeId?: string } | undefined;
+
   const approve = () => {
     if (!gate) return;
     if (gateInfo.isCommand) {
@@ -328,7 +246,11 @@ export function LiveView({
     runner.gate(gate.nodeId, editing ? draft : suggestion);
     setEditing(false);
   };
-  const rejectGate = () => { if (!gate) return; runner.gate(gate.nodeId, null); setEditing(false); };
+  const rejectGate = () => {
+    if (!gate) return;
+    runner.gate(gate.nodeId, null);
+    setEditing(false);
+  };
   const startEdit = () => { setDraft(suggestion); setEditing(true); };
 
   const handleResetHistory = async () => {
@@ -339,6 +261,30 @@ export function LiveView({
       onNotify?.('Falha ao limpar contexto');
     }
   };
+
+  const chatNode = flow.nodes.find((n) => n.type === 'input.chat');
+  const chatPlaceholder =
+    (typeof chatNode?.params?.placeholder === 'string' && chatNode.params.placeholder.trim()) ||
+    'Digite sua mensagem ou comando (Enter para enviar)...';
+
+  // Conversa do CHAT (flow com nó input.chat): prompts do usuário + respostas FINAIS do
+  // agente (captions de sugestão), intercalados por ts. A última legenda de sugestão ainda
+  // não-final vira uma bolha de agente "ao vivo" no fim.
+  const suggestionCaption = lastOf(sinks.suggestion);
+  const liveAgent = suggestionCaption && !suggestionCaption.final && runner.running ? suggestionCaption : null;
+  const conversation = useMemo(() => {
+    const items: { role: 'user' | 'agent'; text: string; ts: number }[] = [];
+    for (const m of runner.chatMessages) items.push({ role: 'user', text: m.text, ts: m.ts });
+    for (const c of runner.captions) {
+      if (c.final && sinks.suggestion.has(c.nodeId)) items.push({ role: 'agent', text: c.text, ts: c.ts });
+    }
+    return items.sort((a, b) => a.ts - b.ts);
+  }, [runner.chatMessages, runner.captions, sinks.suggestion]);
+  const chatLogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = chatLogRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [conversation.length, liveAgent?.text]);
 
   const handleSendChat = async () => {
     const text = chatInput.trim();
@@ -359,7 +305,7 @@ export function LiveView({
     setExportResult(null);
     try {
       const trimmedUrl = webhookUrl.trim();
-      try { localStorage.setItem(WEBHOOK_STORAGE_KEY, trimmedUrl); } catch { }
+      try { localStorage.setItem(WEBHOOK_STORAGE_KEY, trimmedUrl); } catch { /* ignore */ }
       const res = await exportSession({
         saveMarkdown: true,
         flowName: currentFlow || scenarioName,
@@ -381,167 +327,7 @@ export function LiveView({
     }
   };
 
-  // ── Logs dos serviços residentes ───────────────────────────────────────────
-  useEffect(() => {
-    if (!logServices.length) { setLogsByService({}); return; }
-    let alive = true;
-    const load = async () => {
-      const entries = await Promise.all(logServices.map(async (svc) => {
-        try {
-          const r = await fetchLogs(svc, 300);
-          return [svc, r.lines] as const;
-        } catch {
-          return [svc, [`(falha ao ler logs/${svc}.log)`]] as const;
-        }
-      }));
-      if (alive) setLogsByService(Object.fromEntries(entries));
-    };
-    void load();
-    const t = setInterval(() => void load(), 1500);
-    return () => { alive = false; clearInterval(t); };
-  }, [logServices]);
-
-  useEffect(() => {
-    for (const svc of logServices) {
-      const el = logsRefs.current[svc];
-      if (!el) continue;
-      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
-      if (atBottom) el.scrollTop = el.scrollHeight;
-    }
-  }, [logsByService, logServices]);
-
-  const persistLogServices = (next: string[]) => {
-    setLogServices(next);
-    try { localStorage.setItem(LOG_SERVICES_KEY, JSON.stringify(next)); } catch { }
-  };
-  const onLogServicesChange = (selected: LogService[] | null) => {
-    const ids = (selected ?? []).map((s) => s.id);
-    persistLogServices(LOG_SERVICES.map((s) => s.id).filter((id) => ids.includes(id)));
-  };
-  const removeLogService = (id: string) => persistLogServices(logServices.filter((s) => s !== id));
-
-  const persistLogsHeight = (h: number) => {
-    try { localStorage.setItem(LOG_HEIGHT_KEY, String(clampLogHeight(h))); } catch { }
-  };
-  const applyLogsHeight = (h: number) => {
-    const next = clampLogHeight(h);
-    logsHeightRef.current = next;
-    setLogsHeight(next);
-  };
-  const onLogsResizeStart = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (logsCollapsed) return;
-    e.preventDefault();
-    const startY = e.clientY;
-    const startH = logsHeightRef.current;
-    const onMove = (ev: PointerEvent) => applyLogsHeight(startH + (startY - ev.clientY));
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      persistLogsHeight(logsHeightRef.current);
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-  };
-  const onLogsResizeKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-    e.preventDefault();
-    applyLogsHeight(logsHeightRef.current + (e.key === 'ArrowUp' ? 24 : -24));
-    persistLogsHeight(logsHeightRef.current);
-  };
-  const toggleLogsCollapsed = () => {
-    const next = !logsCollapsed;
-    setLogsCollapsed(next);
-    try { localStorage.setItem(LOG_COLLAPSED_KEY, String(next)); } catch { }
-  };
-
-  const totalLogLines = logServices.reduce((sum, svc) => sum + (logsByService[svc]?.length ?? 0), 0);
-
-  // ── Dados derivados ────────────────────────────────────────────────────────
-  const lastOf = (set: Set<string>) => [...runner.captions].reverse().find((c) => set.has(c.nodeId));
-  const transcription = lastOf(sinks.transcription)?.text ?? '';
-  const gate = runner.gates[0];
-  const gateInfo = useMemo(() => parseGateCommand(gate), [gate]);
-
-  useEffect(() => {
-    if (gate && gateInfo.isCommand) setCmdDraft(gateInfo.command);
-  }, [gate, gateInfo.isCommand, gateInfo.command]);
-
-  const suggestion = gate ? gate.text : (lastOf(sinks.suggestion)?.text ?? '');
-  const captureApp = stages.find((s) => s.kind === 'app')?.value ?? '—';
-
-  // ── Presença de capacidades no workflow ─────────────────────────────────────
-  const hasCapture = flow.nodes.some((n) => n.type === 'capture.ffmpeg');
-  const hasGate = flow.nodes.some(
-    (n) => n.type === 'human.approve' || (n.type === 'agent.tools' && n.params.approvalPolicy !== 'never'),
-  );
-  const hasTTS = flow.nodes.some((n) => n.type === 'tts.sts');
-  const hasLLM = flow.nodes.some((n) => n.type === 'llm.omlx' || n.type === 'agent.tools');
-  const execNodes = flow.nodes.filter((n) => n.type === 'exec.command' || n.type === 'tool.mcp');
-  const hasExec = execNodes.length > 0;
-  const execActive = execNodes.some((n) => n.params.dryRun === false);
-  const hasAgent = flow.nodes.some((n) => n.type === 'agent.tools');
-  const hasRAG = contextDocs.length > 0 || flow.nodes.some((n) => n.type === 'rag.search');
-  const isInterview = flow.nodes.some((n) => n.type === 'decision.llm' || n.type === 'human.approve') && !hasExec && !hasAgent;
-
-  // ── Componentes do workflow para a barra de componentes (Linha 2) ───────────
-  const workflowComponents = useMemo(() => {
-    const excluded = new Set(['input.chat', 'source.tone', 'pipe.delay', 'pipe.parcs', 'sink.collect']);
-    return flow.nodes
-      .filter((n) => !excluded.has(n.type))
-      .map((n) => ({
-        id: n.id,
-        type: n.type,
-        label: componentLabel(n.type),
-        color: nodeTypeColor(n.type),
-        hasStage: stages.some(s => s.nodeId === n.id),
-        stageKey: stages.find(s => s.nodeId === n.id)?.key,
-      }));
-  }, [flow.nodes, stages]);
-
-  // ── Conversa sequencial (VOCÊ / AGENTE / tradutor / decisor) ────────────────
-  const chatNode = flow.nodes.find((n) => n.type === 'input.chat');
-  const chatPlaceholder =
-    (typeof chatNode?.params?.placeholder === 'string' && chatNode.params.placeholder.trim()) ||
-    'Digite sua mensagem ou comando (Enter para enviar)...';
-
-  const suggestionCaption = lastOf(sinks.suggestion);
-  const liveAgent = suggestionCaption && !suggestionCaption.final && runner.running ? suggestionCaption : null;
-
-  const captionSourceType = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const n of flow.nodes) {
-      if (n.type !== 'sink.captions') continue;
-      const edge = flow.edges.find((e) => e.to.split('.')[0] === n.id);
-      if (edge) {
-        const srcId = edge.from.split('.')[0];
-        const srcNode = flow.nodes.find((nn) => nn.id === srcId);
-        if (srcNode) map.set(n.id, srcNode.type);
-      }
-    }
-    return map;
-  }, [flow.nodes, flow.edges]);
-
-  const conversation = useMemo(() => {
-    const items: Array<{ role: 'user' | 'agent'; text: string; ts: number; sourceType?: string }> = [];
-    for (const m of runner.chatMessages) items.push({ role: 'user', text: m.text, ts: m.ts });
-    for (const c of runner.captions) {
-      if (c.final && sinks.suggestion.has(c.nodeId)) {
-        items.push({ role: 'agent', text: c.text, ts: c.ts, sourceType: captionSourceType.get(c.nodeId) });
-      }
-      if (c.final && sinks.transcription.has(c.nodeId)) {
-        items.push({ role: 'user', text: c.text, ts: c.ts, sourceType: 'asr' });
-      }
-    }
-    return items.sort((a, b) => a.ts - b.ts);
-  }, [runner.chatMessages, runner.captions, sinks.suggestion, sinks.transcription, captionSourceType]);
-
-  const chatLogRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = chatLogRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [conversation.length, liveAgent?.text]);
-
-  // tópicos ao vivo (debounce 2,5s)
+  // tópicos ao vivo: detecta da transcrição (debounce 2,5 s)
   useEffect(() => {
     if (!runner.running || transcription.trim().length < 20) return;
     const t = setTimeout(() => {
@@ -552,16 +338,23 @@ export function LiveView({
 
   const bd = runner.latencyBreakdown;
 
-  // ── Comandos de gate ────────────────────────────────────────────────────────
+  // Card de aprovação de comando (exec.command / agent.tools) — compartilhado pelo layout
+  // de chat (flows com input.chat) e pelo layout clássico de sugestão.
   const commandGateCard = gate && gateInfo.isCommand ? (
     <div className="cmd-gate-card">
       <div className="cmd-gate-head">
         <span className="cmd-gate-title"><Terminal size={16} /> Aprovação de Comando ({gate.nodeId})</span>
         <div className="cmd-gate-badges">
-          {gateInfo.tool && <Tag type="teal" size="sm">Tool: {gateInfo.tool}</Tag>}
+          {gateInfo.tool && (
+            <Tag type="teal" size="sm">Tool: {gateInfo.tool}</Tag>
+          )}
           <Tag type="cyan" size="sm">Host: {gateInfo.host}</Tag>
-          {gateInfo.decision && <Tag type={riskTagType(gateInfo.decision)} size="sm">Risco d1: {gateInfo.decision}</Tag>}
-          {hasExec && <Tag type={execActive ? 'red' : 'blue'} size="sm">{execActive ? 'EXEC ATIVO' : 'DRY-RUN'}</Tag>}
+          {gateInfo.decision && (
+            <Tag type={riskTagType(gateInfo.decision)} size="sm">Risco d1: {gateInfo.decision}</Tag>
+          )}
+          {hasExec && (
+            <Tag type={execActive ? 'red' : 'blue'} size="sm">{execActive ? 'EXEC ATIVO' : 'DRY-RUN'}</Tag>
+          )}
         </div>
       </div>
       {gateInfo.reason && <p className="cmd-gate-reason">{gateInfo.reason}</p>}
@@ -584,189 +377,102 @@ export function LiveView({
     </div>
   ) : null;
 
-  const lastError = [...runner.events].reverse().find(
-    (e) => e.type === 'node_error' && !String((e as { code?: string }).code ?? '').startsWith('log_'),
-  ) as { message?: string; nodeId?: string } | undefined;
-
-  // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <div className="live2">
-      {/* ===== HEADER (Linha 1) ===== */}
       <header className="live2-top">
-        <div className="live2-toolbar" role="toolbar" aria-label="Falador Live Controls">
-          {/* Workflow selector */}
-          <div className="live2-toolbar-item live2-workflow-item">
+        <div className="live2-mode">
+          <span className={`live-dot${runner.running ? ' live-dot--on' : ''}`} />
+          <span className="live2-mode-label">LIVE MODE</span>
+          <span className="live2-scenario">— {scenarioName}</span>
+          <div className="live-flow-select">
             <Dropdown
-              id="live-flow"
-              size="sm"
-              titleText="Workflow"
-              hideLabel
-              label="Workflow"
+              id="live-flow" size="sm" titleText="Workflow" hideLabel label="Workflow"
               items={flows.map((f) => ({ id: f.name, label: f.name }))}
               itemToString={(it) => (it ? it.label : '')}
               selectedItem={flows.map((f) => ({ id: f.name, label: f.name })).find((i) => i.id === currentFlow) ?? null}
               onChange={({ selectedItem }) => selectedItem && onSwitchFlow(selectedItem.id)}
             />
           </div>
-
-          <Divider />
-
-          {/* Reload button */}
-          <div className="live2-toolbar-item">
-            <Button
-              kind="ghost"
-              size="sm"
-              hasIconOnly
-              renderIcon={Restart}
-              iconDescription="Recarregar workflow"
-              tooltipPosition="bottom"
-              tooltipAlignment="center"
-              onClick={() => { if (runner.running) runner.stop(); onStart(flow); }}
-              disabled={!runner.running}
-            />
-          </div>
-
-          <Divider />
-
-          {/* Audio capture toggle - REPLACE LIVE MODE TEXT */}
-          <div className="live2-toolbar-item">
-            <div className="live2-audio-toggle">
-              <Toggle
-                id="live-capture-toggle"
-                size="sm"
-                labelText="Captura de áudio"
-                labelA="Desligada"
-                labelB="Ligada"
-                toggled={captureEnabled}
-                onToggle={onToggleCapture}
-              />
-              <span className="live2-capture-hint">
-                {captureEnabled
-                  ? (runner.running ? 'capturando' : 'aplicada ao iniciar')
-                  : (runner.running ? 'captura desligada' : 'será ignorada no run')}
-                </span>
-              </div>
-          </div>
-
-          <div className="live2-toolbar-spacer" />
-
-          {/* Latency pill */}
-          <div className="live2-toolbar-item">
-            <Toggletip align="bottom">
-              <ToggletipButton label="Detalhes de latência por etapa" className="latency-trigger">
-                <Tag type="green" size="md" className="latency-pill">
-                  Latência: {runner.latency != null ? `${Math.round(runner.latency)}ms` : '—'}
-                </Tag>
-              </ToggletipButton>
-              <ToggletipContent>
-                <div className="latency-breakdown">
-                  <div className="latency-breakdown-title">Latência do último turno</div>
-                  {bd ? (
-                    <ul className="latency-breakdown-list">
-                      {bd.asrMs != null && <li><span>ASR</span><strong>{bd.asrMs} ms</strong></li>}
-                      {bd.turnMs != null && <li><span>Turn Detector</span><strong>{bd.turnMs} ms</strong></li>}
-                      {bd.llmTtftMs != null && <li><span>LLM TTFT</span><strong>{bd.llmTtftMs} ms</strong></li>}
-                      {bd.decisionMs != null && <li><span>Decisão d1</span><strong>{bd.decisionMs} ms</strong></li>}
-                      {bd.totalMs != null && <li className="latency-total"><span>Total</span><strong>{bd.totalMs} ms</strong></li>}
-                    </ul>
-                  ) : (
-                    <p className="latency-empty">Aguardando trace do primeiro turno completo.</p>
-                  )}
-                </div>
-              </ToggletipContent>
-            </Toggletip>
-          </div>
-
-          <Divider />
-
-          {/* Actions */}
-          <div className="live2-toolbar-item">
-            {hasLLM && (
-              <Button kind="ghost" size="sm" renderIcon={Reset} onClick={handleResetHistory} title="Limpa memória conversacional do LLM sem reiniciar o fluxo">
-                Limpar contexto
-              </Button>
-            )}
-          </div>
-          <div className="live2-toolbar-item">
-            <Button kind="ghost" size="sm" renderIcon={Download} onClick={() => { setExportResult(null); setExportOpen(true); }}>
-              Exportar sessão
-            </Button>
-          </div>
-          <div className="live2-toolbar-item">
-            <Button kind="secondary" size="sm" renderIcon={runner.running ? Pause : Play} onClick={() => (runner.running ? runner.stop() : onStart(flow))}>
-              {runner.running ? 'Pausar' : 'Retomar'}
-            </Button>
-          </div>
-          <div className="live2-toolbar-item">
-            <Button kind="danger" size="sm" renderIcon={Stop} onClick={onExit}>Encerrar Sessão</Button>
-          </div>
+          {hasExec && (
+            <Tag type={execActive ? 'red' : 'blue'} size="md" className="exec-mode-tag">
+              {execActive ? 'EXEC ATIVO' : 'DRY-RUN'}
+            </Tag>
+          )}
         </div>
 
-        {/* Error banner */}
-        {lastError && <div className="live2-error">⚠ [{lastError.nodeId}] {lastError.message}</div>}
-        {!lastError && runner.lastRunError && <div className="live2-error">⚠ {runner.lastRunError}</div>}
+        <div className="live2-metrics-bar">
+          <Toggletip align="bottom">
+            <ToggletipButton label="Detalhes de latência por etapa" className="latency-trigger">
+              <Tag type="green" size="md" className="latency-pill">
+                Latência: {runner.latency != null ? `${Math.round(runner.latency)}ms` : '—'}
+              </Tag>
+            </ToggletipButton>
+            <ToggletipContent>
+              <div className="latency-breakdown">
+                <div className="latency-breakdown-title">Latência do último turno</div>
+                {bd ? (
+                  <ul className="latency-breakdown-list">
+                    {bd.asrMs != null && <li><span>ASR</span><strong>{bd.asrMs} ms</strong></li>}
+                    {bd.turnMs != null && <li><span>Turn Detector</span><strong>{bd.turnMs} ms</strong></li>}
+                    {bd.llmTtftMs != null && <li><span>LLM TTFT</span><strong>{bd.llmTtftMs} ms</strong></li>}
+                    {bd.decisionMs != null && <li><span>Decisão d1</span><strong>{bd.decisionMs} ms</strong></li>}
+                    {bd.totalMs != null && <li className="latency-total"><span>Total</span><strong>{bd.totalMs} ms</strong></li>}
+                  </ul>
+                ) : (
+                  <p className="latency-empty">Aguardando trace do primeiro turno completo.</p>
+                )}
+              </div>
+            </ToggletipContent>
+          </Toggletip>
+        </div>
+
+        <div className="live2-top-actions">
+          {hasLLM && (
+            <Button kind="ghost" size="sm" renderIcon={Reset} onClick={handleResetHistory} title="Limpa memória conversacional do LLM sem reiniciar o fluxo">
+              Limpar contexto
+            </Button>
+          )}
+          <Button kind="ghost" size="sm" renderIcon={Download} onClick={() => { setExportResult(null); setExportOpen(true); }}>
+            Exportar sessão
+          </Button>
+          <Button kind="secondary" size="sm" renderIcon={runner.running ? Pause : Play} onClick={() => (runner.running ? runner.stop() : onStart(flow))}>
+            {runner.running ? 'Pausar' : 'Retomar'}
+          </Button>
+          <Button kind="danger" size="sm" renderIcon={Stop} onClick={onExit}>Encerrar Sessão</Button>
+        </div>
       </header>
 
-      {/* ===== LINHA 2: COMPONENTES DO WORKFLOW (dropdowns) ===== */}
-      <div className="live2-components-bar">
-        {workflowComponents.map((comp) => (
-          <div key={comp.id} className="live2-component-item" data-accent={comp.color}>
-            <span className="live2-component-label">
-              <NodeIcon type={comp.type} />
-              {comp.label}
-            </span>
-            {comp.hasStage && (
-              <>
-                <Divider />
-                <div className="live2-component-dropdown">
-                  {(() => {
-                    const stage = stages.find(s => s.nodeId === comp.id);
-                    if (!stage) return null;
-                    const items = stageItems(stage, models, apps);
-                    return (
-                      <Dropdown
-                        id={`stage-${stage.key}`}
-                        size="sm"
-                        titleText={stage.label}
-                        hideLabel
-                        label={stage.label}
-                        items={items}
-                        itemToString={(it) => (it ? it.label : '')}
-                        selectedItem={items.find((i) => i.id === stage.value) ?? items[0]}
-                        onChange={({ selectedItem }) => selectedItem && onUpdateStage(stage.nodeId, stage.param, selectedItem.id)}
-                      />
-                    );
-                  })()}
-                  {comp.type === 'capture.ffmpeg' && (
-                    <Button kind="ghost" size="sm" hasIconOnly renderIcon={Restart} iconDescription="Recarregar apps" tooltipPosition="bottom" onClick={onRefreshApps} />
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {/* ===== LINHA 3: LABELS SIMPLES (TRANSCRIÇÃO | AGENTE | TRANSLATE | DECISOR | VOCÊ) ===== */}
-      <div className="live2-roles-bar">
-        {[
-          { key: 'transcricao', label: 'TRANSCRIÇÃO', color: '#a855f7', icon: <Language size={12} />, hasNode: flow.nodes.some(n => n.type.startsWith('asr')) },
-          { key: 'agente', label: 'AGENTE', color: '#22c55e', icon: <Chat size={12} />, hasNode: flow.nodes.some(n => n.type === 'llm.omlx' || n.type === 'agent.tools') },
-          { key: 'translate', label: 'TRANSLATE', color: '#06b6d4', icon: <><ArrowLeft size={12} /> <ArrowRight size={12} /></>, hasNode: flow.nodes.some(n => n.type === 'llm.omlx' && n.params.targetLanguage) },
-          { key: 'decisor', label: 'DECISOR', color: '#f59e0b', icon: <ListNumbered size={12} />, hasNode: flow.nodes.some(n => n.type === 'decision.llm') },
-          { key: 'voce', label: 'VOCÊ', color: '#9ca3af', icon: <UserAvatar size={12} />, hasNode: true },
-        ].map((role) => (
-          <div key={role.key} className="live2-role-item" data-role-color={role.color}>
-            {role.icon}
-            <span className="live2-role-label">{role.label}</span>
-          </div>
-        ))}
-      </div>
-
-      {/* ===== MAIN CONTENT ===== */}
       <div className="live2-body">
         <main className="live2-main">
-          {/* Área principal: sugestão HERÓI ou chat sequencial */}
+          {lastError && <div className="live2-error">⚠ [{lastError.nodeId}] {lastError.message}</div>}
+          {!lastError && runner.lastRunError && <div className="live2-error">⚠ {runner.lastRunError}</div>}
+          {isAssisted && (
+            <>
+              <div className="live2-label">{hasExec ? 'Solicitação por voz (transcrição ao vivo)' : 'Transcrição ao vivo (entrevistador)'}</div>
+              <div className="live2-transcription">{transcription || (runner.running ? 'Ouvindo...' : '—')}</div>
+            </>
+          )}
+
+          <div className="live2-stages">
+            {stages.map((s) => {
+              const items = stageItems(s, models, apps);
+              return (
+                <div key={s.key} className="stage-dd" style={{ ['--accent' as string]: s.accent }}>
+                  <span className="stage-dd-label">{s.label}</span>
+                  <Dropdown
+                    id={`stage-${s.key}`} size="sm" titleText={s.label} hideLabel label={s.label}
+                    items={items} itemToString={(it) => (it ? it.label : '')}
+                    selectedItem={items.find((i) => i.id === s.value) ?? items[0]}
+                    onChange={({ selectedItem }) => selectedItem && onUpdateStage(s.nodeId, s.param, selectedItem.id)}
+                  />
+                  {s.kind === 'app' && (
+                    <Button kind="ghost" size="sm" hasIconOnly renderIcon={Renew} iconDescription="Recarregar apps" tooltipPosition="bottom" onClick={onRefreshApps} />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
           {chatNode ? (
             <>
               {commandGateCard}
@@ -791,6 +497,7 @@ export function LiveView({
               )}
 
               <div className="live-chat">
+                <div className="live2-label">Conversa</div>
                 <div className="live-chat-log" ref={chatLogRef}>
                   {conversation.length === 0 && !liveAgent && (
                     <p className="live-chat-empty">
@@ -798,25 +505,14 @@ export function LiveView({
                     </p>
                   )}
                   {conversation.map((m, idx) => (
-                    <div
-                      key={`${m.ts}-${idx}`}
-                      className="live-chat-line"
-                      style={{ borderLeftColor: roleColor(m.role, m.sourceType) }}
-                    >
+                    <div key={`${m.ts}-${idx}`} className={`live-chat-bubble live-chat-bubble--${m.role}`}>
                       <span className="live-chat-ts">{new Date(m.ts).toLocaleTimeString()}</span>
-                      <span
-                        className="live-chat-role"
-                        style={{ color: roleColor(m.role, m.sourceType) }}
-                      >
-                        {m.role === 'user' ? (m.sourceType === 'asr' ? 'Entrevistador' : 'Você') : 'Agente'}
-                      </span>
                       <span className="live-chat-text">{m.text}</span>
                     </div>
                   ))}
                   {liveAgent && (
-                    <div className="live-chat-line live-chat-line--live" style={{ borderLeftColor: roleColor('agent', 'llm.omlx') }}>
+                    <div className="live-chat-bubble live-chat-bubble--agent live-chat-bubble--live">
                       <span className="live-chat-ts">{new Date(liveAgent.ts).toLocaleTimeString()}</span>
-                      <span className="live-chat-role" style={{ color: roleColor('agent', 'llm.omlx') }}>Agente</span>
                       <span className="live-chat-text">{liveAgent.text}<span className="live-cursor" /></span>
                     </div>
                   )}
@@ -852,39 +548,44 @@ export function LiveView({
             </>
           ) : (
             <>
-              <div className="live2-suggestion">
-                {editing && hasGate ? (
-                  <TextArea labelText="Editar sugestão" hideLabel rows={4} value={draft} onChange={(e) => setDraft(e.target.value)} />
-                ) : (
-                  <div className="live2-suggestion-text">
-                    {suggestion || (runner.running ? (isInterview ? 'Gerando resposta...' : 'Aguardando áudio...') : 'Inicie a sessão.')}
-                    {runner.running && !editing && <span className="live-cursor" />}
+              <div className="live2-label">{heroLabel}</div>
+              {commandGateCard ? commandGateCard : (
+                <>
+                  <div className="live2-suggestion">
+                    {editing && hasGate ? (
+                      <TextArea labelText="Editar sugestão" hideLabel rows={4} value={draft} onChange={(e) => setDraft(e.target.value)} />
+                    ) : (
+                      <div className="live2-suggestion-text">
+                        {heroText || (runner.running ? (isAssisted ? 'Gerando resposta...' : 'Aguardando áudio...') : 'Inicie a sessão.')}
+                        {runner.running && !editing && <span className="live-cursor" />}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-              {(hasLLM || hasGate) && (
-                <div className="live2-actions">
-                  {hasLLM && <Button kind="ghost" size="sm" renderIcon={Renew} onClick={onRegenerate}>Regerar</Button>}
-                  {hasGate && (editing ? (
-                    <>
-                      <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={approve} disabled={!gate}>Enviar editada</Button>
-                      <Button kind="ghost" size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
-                    </>
-                  ) : (
-                    <>
-                      <Button kind="ghost" size="sm" renderIcon={Edit} onClick={startEdit} disabled={!gate}>Editar</Button>
-                      <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve} disabled={!gate}>
-                        {hasTTS ? 'Aprovar & Falar' : 'Aprovar'}
-                      </Button>
-                      {gate && (
-                        <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>Rejeitar</Button>
-                      )}
-                    </>
-                  ))}
-                </div>
-              )}
-              {hasGate && !gate && runner.running && (
-                <p className="live2-hint">Roteamento automático — sem gate humano pendente.</p>
+                  {(hasLLM || hasGate) && (
+                    <div className="live2-actions">
+                      {hasLLM && <Button kind="ghost" size="sm" renderIcon={Renew} onClick={onRegenerate}>Regerar</Button>}
+                      {hasGate && (editing ? (
+                        <>
+                          <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={approve} disabled={!gate}>Enviar editada</Button>
+                          <Button kind="ghost" size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button kind="ghost" size="sm" renderIcon={Edit} onClick={startEdit} disabled={!gate}>Editar</Button>
+                          <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve} disabled={!gate}>
+                            {hasTTS ? 'Aprovar & Falar' : 'Aprovar'}
+                          </Button>
+                          {gate && (
+                            <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>Rejeitar</Button>
+                          )}
+                        </>
+                      ))}
+                    </div>
+                  )}
+                  {hasGate && !gate && runner.running && (
+                    <p className="live2-hint">Roteamento automático — sem gate humano pendente.</p>
+                  )}
+                </>
               )}
             </>
           )}
@@ -909,195 +610,117 @@ export function LiveView({
               </div>
             </section>
           )}
+        </main>
 
-          {/* Transcrição ao vivo (se tem ASR) */}
-          {flow.nodes.some(n => n.type.startsWith('asr')) && (
-            <div className="live2-transcription-section">
-              <div className="live2-label">Transcrição ao vivo (entrevistador)</div>
-              <div className="live2-transcription">
-                {transcription || (runner.running ? 'Ouvindo...' : '—')}
+        <aside className="live2-side">
+          <div className="live2-side-title">Documentos &amp; Runbooks (RAG)</div>
+
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".md,.markdown,.txt,.pdf,.yaml,.yml,.json"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) {
+                const tags = uploadTags.split(',').map((t) => t.trim()).filter(Boolean);
+                onUploadDoc(f, tags);
+                setUploadTags('');
+              }
+              e.target.value = '';
+            }}
+          />
+          <div className="ctx-upload">
+            <TextInput
+              id="ctx-tags-input"
+              size="sm"
+              labelText="Tags opcionais (separadas por vírgula)"
+              placeholder="ex.: nginx, ops, runbook"
+              value={uploadTags}
+              onChange={(e) => setUploadTags(e.target.value)}
+            />
+            <Button kind="ghost" size="sm" renderIcon={Add} onClick={() => fileRef.current?.click()}>
+              Carregar documento
+            </Button>
+          </div>
+
+          {contextDocs.map((d) => (
+            <div key={d.name} className="ctx-doc">
+              <Document size={18} />
+              <div className="ctx-doc-body">
+                <div className="ctx-doc-name">{d.name}</div>
+                <div className="ctx-doc-sub ctx-doc-sub--ok">
+                  <Checkmark size={12} /> {d.chunksCount ?? 0} chunks · {d.points.length} pontos
+                </div>
+                {d.tags && d.tags.length > 0 && (
+                  <div className="ctx-chips" style={{ marginTop: 4 }}>
+                    {d.tags.map((t, i) => <Tag key={i} type="cool-gray" size="sm">{t}</Tag>)}
+                  </div>
+                )}
+                {d.points.length > 0 && <ul className="ctx-points">{d.points.map((p, i) => <li key={i}>{p}</li>)}</ul>}
+              </div>
+              <button className="ctx-doc-remove" onClick={() => onRemoveDoc(d.name)} title="Remover documento"><TrashCan size={14} /></button>
+            </div>
+          ))}
+          {contextDocs.length === 0 && (
+            <div className="ctx-doc ctx-doc--empty">
+              <Document size={18} />
+              <div>
+                <div className="ctx-doc-name">Runbooks / Documentos locais</div>
+                <div className="ctx-doc-sub">Carregue .md, .pdf, .txt, .yaml ou .json para busca BM25 on-device</div>
               </div>
             </div>
           )}
-        </main>
 
-        {/* ===== SIDEBAR: RAG / Documentos / Microfone ===== */}
-        {(hasRAG || isInterview) && (
-          <aside className="live2-side" aria-label="Documentos e Runbooks">
-            <div className="live2-side-title">Documentos & Runbooks (RAG)</div>
-
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".md,.markdown,.txt,.pdf,.yaml,.yml,.json"
-              hidden
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) {
-                  const tags = uploadTags.split(',').map((t) => t.trim()).filter(Boolean);
-                  onUploadDoc(f, tags);
-                  setUploadTags('');
-                }
-                e.target.value = '';
-              }}
-            />
-            <div className="ctx-upload">
-              <TextInput
-                id="ctx-tags-input"
-                size="sm"
-                labelText="Tags opcionais (separadas por vírgula)"
-                placeholder="ex.: nginx, ops, runbook"
-                value={uploadTags}
-                onChange={(e) => setUploadTags(e.target.value)}
-              />
-              <Button kind="ghost" size="sm" renderIcon={Add} onClick={() => fileRef.current?.click()}>
-                Carregar documento
-              </Button>
+          <div className="ctx-block">
+            <div className="ctx-block-title">Tópicos detectados</div>
+            <div className="ctx-chips">
+              {topics.length
+                ? topics.map((t, i) => <Tag key={i} type="purple" size="sm">{t}</Tag>)
+                : <span className="ctx-empty">{runner.running ? 'detectando…' : 'aparecem durante a fala'}</span>}
             </div>
+          </div>
 
-            {contextDocs.map((d) => (
-              <div key={d.name} className="ctx-doc">
-                <Document size={18} />
-                <div className="ctx-doc-body">
-                  <div className="ctx-doc-name">{d.name}</div>
-                  <div className="ctx-doc-sub ctx-doc-sub--ok">
-                    <Checkmark size={12} /> {d.chunksCount ?? 0} chunks · {d.points.length} pontos
-                  </div>
-                  {d.tags && d.tags.length > 0 && (
-                    <div className="ctx-chips" style={{ marginTop: 4 }}>
-                      {d.tags.map((t, i) => <Tag key={i} type="cool-gray" size="sm">{t}</Tag>)}
-                    </div>
-                  )}
-                  {d.points.length > 0 && <ul className="ctx-points">{d.points.map((p, i) => <li key={i}>{p}</li>)}</ul>}
-                </div>
-                <button className="ctx-doc-remove" onClick={() => onRemoveDoc(d.name)} title="Remover documento"><TrashCan size={14} /></button>
+          {isInterview && (
+            <>
+              <div className="ctx-block">
+                <div className="ctx-block-title"><Information size={16} /> Dica de estrutura</div>
+                <p className="ctx-text">Use o método <strong>STAR</strong> (Situação, Tarefa, Ação, Resultado) para responder.</p>
               </div>
-            ))}
-            {contextDocs.length === 0 && (
-              <div className="ctx-doc ctx-doc--empty">
-                <Document size={18} />
-                <div>
-                  <div className="ctx-doc-name">Runbooks / Documentos locais</div>
-                  <div className="ctx-doc-sub">Carregue .md, .pdf, .txt, .yaml ou .json para busca BM25 on-device</div>
-                </div>
-              </div>
-            )}
 
-            <div className="ctx-block">
-              <div className="ctx-block-title">Tópicos detectados</div>
-              <div className="ctx-chips">
-                {topics.length
-                  ? topics.map((t, i) => <Tag key={i} type="purple" size="sm">{t}</Tag>)
-                  : <span className="ctx-empty">{runner.running ? 'detectando…' : 'aparecem durante a fala'}</span>}
+              <div className="ctx-block ctx-block--warn">
+                <div className="ctx-block-title"><Warning size={16} /> Pontos de atenção</div>
+                <p className="ctx-text">Não fale mal de monolitos — cite os trade-offs.</p>
+              </div>
+            </>
+          )}
+
+          <div className="ctx-mic">
+            <Microphone size={18} />
+            <div className="ctx-mic-info">
+              <div className="ctx-mic-name">Capturando: {captureApp}</div>
+              <div className={`ctx-level${runner.running ? ' ctx-level--on' : ''}`}>
+                {Array.from({ length: 12 }).map((_, i) => <span key={i} style={{ ['--i' as string]: i }} />)}
               </div>
             </div>
-
-            {isInterview && (
-              <>
-                <div className="ctx-block">
-                  <div className="ctx-block-title"><Information size={16} /> Dica de estrutura</div>
-                  <p className="ctx-text">Use o método <strong>STAR</strong> (Situação, Tarefa, Ação, Resultado) para responder.</p>
-                </div>
-                <div className="ctx-block ctx-block--warn">
-                  <div className="ctx-block-title"><Warning size={16} /> Pontos de atenção</div>
-                  <p className="ctx-text">Não fale mal de monolitos — cite os trade-offs.</p>
-                </div>
-              </>
-            )}
-
-            <div className="ctx-mic">
-              <Microphone size={18} />
-              <div className="ctx-mic-info">
-                <div className="ctx-mic-name">Capturando: {captureApp}</div>
-                <div className={`ctx-level${runner.running ? ' ctx-level--on' : ''}`}>
-                  {Array.from({ length: 12 }).map((_, i) => <span key={i} style={{ ['--i' as string]: i }} />)}
-                </div>
-              </div>
-            </div>
-          </aside>
-        )}
-
+          </div>
+        </aside>
       </div>
 
-      {/* ===== LOGS DOS SERVIÇOS ===== */}
-      <section
-        className={`logs-panel${logsCollapsed ? ' logs-panel--collapsed' : ''}`}
-        aria-label="Logs dos serviços"
-        style={{ ['--logs-h' as string]: `${logsHeight}px` }}
-      >
-        {!logsCollapsed && (
-          <div
-            className="logs-resizer"
-            role="separator"
-            aria-orientation="horizontal"
-            aria-label="Redimensionar painel de logs (arraste ou use as setas)"
-            tabIndex={0}
-            onPointerDown={onLogsResizeStart}
-            onKeyDown={onLogsResizeKeyDown}
-          >
-            <span className="logs-resizer-grip" />
-          </div>
-        )}
+      <section className="logs-panel" aria-label="Logs dos serviços">
         <div className="logs-panel-head">
           <span className="logs-panel-title"><Terminal size={16} /> Logs dos serviços</span>
-          <div className="logs-panel-services">
-            <MultiSelect
-              id="logs-services"
-              size="sm"
-              titleText="Serviços"
-              hideLabel
-              label="Serviços"
-              items={LOG_SERVICES}
-              itemToString={(it) => (it ? it.label : '')}
-              selectedItems={LOG_SERVICES.filter((s) => logServices.includes(s.id))}
-              onChange={({ selectedItems }) => onLogServicesChange(selectedItems)}
-            />
-          </div>
-          <Tag type="green" size="sm">auto 1,5s</Tag>
-          <span className="logs-panel-count">{totalLogLines} linhas</span>
-          <Button
-            kind="ghost"
-            size="sm"
-            hasIconOnly
-            renderIcon={logsCollapsed ? ChevronDown : ChevronUp}
-            iconDescription={logsCollapsed ? 'Expandir logs' : 'Recolher logs'}
-            tooltipPosition="left"
-            onClick={toggleLogsCollapsed}
+          <Dropdown
+            id="logs-service-dd" size="sm" titleText="Serviço" hideLabel label="Serviço"
+            items={LOG_SERVICES}
+            itemToString={(it) => (it ? it.label : '')}
+            selectedItem={LOG_SERVICES.find((s) => s.id === logService) ?? LOG_SERVICES[0]}
+            onChange={({ selectedItem }) => setLogService(selectedItem?.id ?? 'web')}
           />
+          <Tag type="green" size="sm">auto 1,5s</Tag>
+          <span className="logs-panel-hint">logs/&lt;serviço&gt;.log · estilo terminal</span>
         </div>
-        {!logsCollapsed && (
-          <div className="logs-panel-body">
-            {logServices.length === 0 && (
-              <p className="logs-panel-empty">Nenhum serviço selecionado — escolha os serviços no seletor acima.</p>
-            )}
-            {logServices.map((svc) => {
-              const meta = LOG_SERVICES.find((s) => s.id === svc);
-              const lines = logsByService[svc] ?? [];
-              return (
-                <div key={svc} className="logs-block">
-                  <div className="logs-block-head">
-                    <span className="logs-block-title">{meta?.label ?? svc}</span>
-                    <code className="logs-block-path">logs/{svc}.log</code>
-                    <span className="logs-block-count">{lines.length} linhas</span>
-                    <Button
-                      kind="ghost"
-                      size="sm"
-                      hasIconOnly
-                      renderIcon={Close}
-                      iconDescription={`Remover logs de ${svc}`}
-                      tooltipPosition="left"
-                      onClick={() => removeLogService(svc)}
-                    />
-                  </div>
-                  <pre
-                    className="logs-terminal"
-                    ref={(el) => { logsRefs.current[svc] = el; }}
-                  >{lines.length ? lines.join('\n') : `sem linhas — logs/${svc}.log (suba com ./faladorctl start)`}</pre>
-                </div>
-              );
-            })}
-          </div>
-        )}
+        <pre ref={logsRef} className="logs-terminal">{logs.length ? logs.join('\n') : 'sem linhas ainda...'}</pre>
       </section>
 
       <Modal
