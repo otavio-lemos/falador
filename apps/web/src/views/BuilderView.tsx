@@ -1,8 +1,8 @@
 // Tela de CRIAÇÃO do workflow — paleta + faixa de nome/descrição + canvas + editor inline.
 // Carrega/salva flows, adiciona nós (drag/duplo clique), edita params no próprio nó, testa o fluxo.
 import { useCallback, useEffect, useState } from 'react';
-import { Button, Tag } from '@carbon/react';
-import { Edit } from '@carbon/icons-react';
+import { Button, Tag, TextInput } from '@carbon/react';
+import { Edit, Play } from '@carbon/icons-react';
 import { useNodesState, useEdgesState, addEdge, type Edge, type Connection } from '@xyflow/react';
 import { Palette } from '../components/Palette';
 import { FlowCanvas } from '../components/FlowCanvas';
@@ -31,6 +31,7 @@ export function BuilderView({
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [meta, setMeta] = useState<Flow>({ version: 1, nodes: [], edges: [], stopWhenSourcesDone: false, description: '' });
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [chatDraft, setChatDraft] = useState('');
 
   useEffect(() => {
     if (!currentFlow) return;
@@ -74,7 +75,13 @@ export function BuilderView({
             ? { transport: 'stdio', dryRun: true, allowedTools: [] }
             : type === 'agent.tools'
               ? { approvalPolicy: 'always', maxSteps: 5, enableThinking: false }
-              : {};
+              : type === 'tool.workflow'
+                ? { flowsDir: 'apps/tui/flows', agentsMdPath: 'AGENTS.md', dryRun: false, allowDelete: false }
+                : type === 'tool.web_search'
+                  ? { timeoutMs: 8000, maxResults: 5 }
+                  : type === 'tool.crawler'
+                    ? { maxPages: 5, maxDepth: 1, sameOriginOnly: true }
+                    : {};
     const node: FNode = {
       id, type: 'falador', position: pos,
       data: {
@@ -103,6 +110,13 @@ export function BuilderView({
   const finalCaptions = runner.captions.filter((c) => c.final);
   const lastCaption = runner.captions.at(-1);
   const displayDesc = description || meta.description;
+  const chatNode = nodes.find((n) => n.data.type === 'input.chat');
+  const sendBuilderChat = async () => {
+    const t = chatDraft.trim();
+    if (!t || !runner.running) return;
+    setChatDraft('');
+    try { await runner.sendChat(t, chatNode?.id); } catch { /* erro já aparece no status */ }
+  };
 
   return (
     <div className="builder-wrap">
@@ -148,6 +162,23 @@ export function BuilderView({
             <span className="builder-status-state">{runner.running ? 'Rodando' : 'Parado'}</span>
             {statusMsg && <span className="builder-status-msg">{statusMsg}</span>}
           </div>
+          {runner.running && chatNode && (
+            <div className="builder-chat-row">
+              <TextInput
+                id="builder-chat-input"
+                size="sm"
+                labelText="Enviar prompt"
+                hideLabel
+                placeholder={String(chatNode.data.params.placeholder ?? 'Digite seu prompt e pressione Enter…')}
+                value={chatDraft}
+                onChange={(e) => setChatDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void sendBuilderChat(); } }}
+              />
+              <Button kind="primary" size="sm" renderIcon={Play} disabled={!chatDraft.trim()} onClick={() => void sendBuilderChat()}>
+                Enviar
+              </Button>
+            </div>
+          )}
           {(finalCaptions.length > 0 || (lastCaption && !lastCaption.final)) && (
             <div className="builder-output">
               {finalCaptions.map((c, i) => (

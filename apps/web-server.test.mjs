@@ -137,6 +137,28 @@ describe('apps/web-server.mjs — RAG genérico, reset-history e exportação p�
       const resetBody = await resetRes.json();
       assert.equal(resetBody.ok, true);
       assert.equal(resetBody.nodeId, 'assistente');
+
+      // 5) POST /api/run/chat — 400 sem text e 409 sem run ativo
+      const chatNoTextRes = await fetch(`${baseUrl}/api/run/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      assert.equal(chatNoTextRes.status, 400);
+
+      const chatEmptyTextRes = await fetch(`${baseUrl}/api/run/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: '   ' }),
+      });
+      assert.equal(chatEmptyTextRes.status, 400);
+
+      const chatNoRunRes = await fetch(`${baseUrl}/api/run/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: 'Crie um workflow de transcrição' }),
+      });
+      assert.equal(chatNoRunRes.status, 409);
     } finally {
       if (prevCtx === undefined) delete process.env.FALADOR_CONTEXT_DIR;
       else process.env.FALADOR_CONTEXT_DIR = prevCtx;

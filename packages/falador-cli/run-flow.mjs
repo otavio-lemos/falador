@@ -80,6 +80,8 @@ async function main() {
 
   // reset de histórico em runtime para nós llm.omlx e agent.tools (ADR-006 Fase 4 / ADR-008 Fase 5)
   const resetters = new Map(); // nodeId -> () => void
+  // chatbox interativo (input.chat): envia prompts digitados para os nós input.chat
+  const chatSenders = new Map(); // nodeId -> (text: string) => Promise<void>
   for (const n of flow.nodes ?? []) {
     if (n.type === 'llm.omlx' || n.type === 'agent.tools') {
       flow.bindings[n.id] = {
@@ -91,6 +93,12 @@ async function main() {
       flow.bindings[n.id] = {
         ...(flow.bindings[n.id] ?? {}),
         __onAgentStep: (ev) => line({ type: 'agent_step', ...ev }),
+      };
+    }
+    if (n.type === 'input.chat' && !(flow.bindings[n.id]?.__registerChatInput)) {
+      flow.bindings[n.id] = {
+        ...(flow.bindings[n.id] ?? {}),
+        __registerChatInput: (fn) => { chatSenders.set(n.id, fn); },
       };
     }
   }
@@ -152,6 +160,19 @@ async function main() {
             resetters.get(target)();
           }
           line({ type: 'history_reset', nodeId: target });
+        } else if (m.type === 'chat_input' && typeof m.text === 'string') {
+          const text = m.text.trim();
+          if (!text) continue;
+          const target = typeof m.nodeId === 'string' && m.nodeId.trim() ? m.nodeId.trim() : '*';
+          if (target === '*') {
+            for (const [id, fn] of chatSenders.entries()) {
+              Promise.resolve(fn(text)).catch(() => {});
+              line({ type: 'chat_sent', nodeId: id, text });
+            }
+          } else if (chatSenders.has(target)) {
+            Promise.resolve(chatSenders.get(target)(text)).catch(() => {});
+            line({ type: 'chat_sent', nodeId: target, text });
+          }
         }
       } catch { /* linha inválida: ignora */ }
     }

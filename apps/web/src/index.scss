@@ -294,6 +294,59 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 
 .app-toast { position: fixed; bottom: $spacing-05; right: $spacing-05; z-index: 100; }
 
+// ---- chatbox (input.chat no LiveView e BuilderView) ----
+.chatbox-panel {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-03;
+  background: $bg-panel;
+  border: 1px solid $border-1;
+  border-radius: 8px;
+  padding: $spacing-04;
+}
+.chatbox-history {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-02;
+  max-height: 140px;
+  overflow-y: auto;
+}
+.chatbox-msg {
+  display: flex;
+  align-items: baseline;
+  gap: $spacing-03;
+  padding: $spacing-02 $spacing-03;
+  background: $bg-card;
+  border-left: 3px solid #22d3ee;
+  border-radius: 3px;
+}
+.chatbox-msg-role {
+  @include type-style('label-01');
+  color: #22d3ee;
+  font-weight: 700;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+.chatbox-msg-text {
+  @include type-style('body-compact-01');
+  color: $txt-1;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chatbox-input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: $spacing-03;
+  .cds--form-item { flex: 1; }
+}
+.builder-chat-row {
+  display: flex;
+  align-items: center;
+  gap: $spacing-03;
+  margin-top: $spacing-02;
+  .cds--form-item { flex: 1; }
+}
+
 // ADR-006 / ADR-007 — latência breakdown, card de comando, export modal, upload com tags
 .live2-metrics-bar { display: flex; align-items: center; gap: $spacing-03; }
 .latency-trigger { background: none; border: none; padding: 0; cursor: pointer; }

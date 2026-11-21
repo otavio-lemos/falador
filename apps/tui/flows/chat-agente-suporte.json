@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "stopWhenSourcesDone": false,
+  "description": "Agente de suporte por Chat/Prompt (sem voz): digite sua pergunta ou pedido no chatbox → agente multi-step consulta runbooks (rag.search) e executa diagnósticos locais (exec.command, dryRun: true) com aprovação humana antes de responder.",
+  "nodes": [
+    {
+      "id": "chat",
+      "type": "input.chat",
+      "params": {
+        "placeholder": "Digite sua pergunta ou pedido de diagnóstico (Enter para enviar)…"
+      }
+    },
+    {
+      "id": "agente",
+      "type": "agent.tools",
+      "params": {
+        "baseUrl": "http://127.0.0.1:8080",
+        "model": "LiquidAI--LFM3-1.7B-MLX-4bit",
+        "enableThinking": false,
+        "maxSteps": 5,
+        "maxToolOutputChars": 8000,
+        "approvalPolicy": "always",
+        "historyMax": 6,
+        "historyCharBudget": 4000,
+        "system": "Você é um agente SRE/suporte técnico. Use as ferramentas conectadas (search_docs para consultar runbooks e exec_local para diagnósticos read-only) para investigar o pedido do usuário e responda em português de forma clara e objetiva."
+      }
+    },
+    {
+      "id": "exec_local",
+      "type": "exec.command",
+      "params": {
+        "transport": "local",
+        "mode": "readonly",
+        "dryRun": true
+      }
+    },
+    {
+      "id": "rag_docs",
+      "type": "rag.search",
+      "params": {
+        "toolName": "search_docs",
+        "topK": 3,
+        "maxChars": 2400
+      }
+    },
+    {
+      "id": "resposta",
+      "type": "sink.captions",
+      "params": {
+        "mode": "callback",
+        "showParcials": true
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "chat.out",
+      "to": "agente.in",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "exec_local.tool",
+      "to": "agente.tools",
+      "capacity": 4,
+      "overflow": "block"
+    },
+    {
+      "from": "rag_docs.tool",
+      "to": "agente.tools",
+      "capacity": 4,
+      "overflow": "block"
+    },
+    {
+      "from": "agente.out",
+      "to": "resposta.in",
+      "capacity": 16,
+      "overflow": "drop_oldest"
+    }
+  ]
+}

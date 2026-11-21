@@ -12,6 +12,7 @@ import { fetchCatalog, fetchFlows, fetchFlow, fetchModels, fetchApps, fetchConte
 import { applyContext, sanitizeFlow } from './live-utils';
 
 function scenarioLabel(name: string): string {
+  if (name === 'agente-workflows') return 'Agente de Workflows';
   if (name.includes('entrevista') || name.startsWith('cenario2')) return 'Entrevista Técnica';
   if (name.includes('ops') || name.includes('servidor')) return 'Ops / Revisão de Servidor';
   if (name.includes('legendas') || name.startsWith('cenario1')) return 'Legendas ao vivo';
@@ -42,6 +43,7 @@ export function App() {
   const [toast, setToast] = useState<string | null>(null);
   const runner = useRunner();
   const actionsRef = useRef<{ getFlow: () => Flow; save: () => void } | null>(null);
+  const seenAgentStepsRef = useRef(0);
 
   useEffect(() => {
     fetchCatalog().then(setCatalog).catch(() => setToast('Falha ao carregar catálogo'));
@@ -56,6 +58,26 @@ export function App() {
 
   const registerActions = useCallback((a: { getFlow: () => Flow; save: () => void }) => { actionsRef.current = a; }, []);
   const refreshFlows = useCallback(() => { fetchFlows().then(setFlows).catch(() => {}); }, []);
+
+  // Atualiza automaticamente o dropdown de workflows quando o agente salvar ou remover um workflow
+  useEffect(() => {
+    const steps = runner.agentSteps;
+    if (steps.length < seenAgentStepsRef.current) {
+      seenAgentStepsRef.current = 0;
+    }
+    const fresh = steps.slice(seenAgentStepsRef.current);
+    seenAgentStepsRef.current = steps.length;
+    if (
+      fresh.some(
+        (s) =>
+          s.phase === 'result' &&
+          s.ok === true &&
+          (s.tool === 'workflow_save' || s.tool === 'workflow_delete'),
+      )
+    ) {
+      refreshFlows();
+    }
+  }, [runner.agentSteps, refreshFlows]);
 
   const onTest = () => { const f = actionsRef.current?.getFlow(); if (f) runner.start(f, currentFlow); };
   const startWithContext = (f: Flow, name?: string) => runner.start(applyContext(sanitizeFlow(f), contextDocs), name ?? currentFlow);
@@ -102,6 +124,20 @@ export function App() {
     } catch { setToast('Falha ao carregar o flow'); }
   };
 
+  const onOpenWorkflowAgent = async () => {
+    try {
+      const f = await fetchFlow('agente-workflows');
+      setCurrentFlow('agente-workflows');
+      setLiveFlow(f);
+      startWithContext(f, 'agente-workflows');
+      setView('live');
+      fetchApps().then(setApps).catch(() => {});
+      fetchModels().then(setModels).catch(() => {});
+    } catch {
+      setToast('Falha ao abrir o Agente de Workflows');
+    }
+  };
+
   const onUploadDoc = async (file: File, tags?: string[]) => {
     try {
       const isPdf = file.name.toLowerCase().endsWith('.pdf');
@@ -140,6 +176,7 @@ export function App() {
             onRename={onRename} onNewFlow={onNewFlow}
             onTest={onTest} onGoLive={onGoLive}
             onGoBuilder={() => setView('builder')} onStop={runner.stop}
+            onOpenWorkflowAgent={() => void onOpenWorkflowAgent()}
           />
         )}
         <div className="app-body">

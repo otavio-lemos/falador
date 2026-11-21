@@ -120,6 +120,7 @@ EOF
 - **Edição INLINE:** clique num nó → o editor abre **ancorado no próprio nó** (acompanha pan/zoom/drag; flipa pro lado se não couber). Abas **Configuração / Regras / Logs**; campos reais com controle certo (dropdown/slider/toggle/textarea/JSON) + helper + default real (incl. `useContext`/BM25 no `llm.omlx`, `emitInterruptOnSpeech`/`maxPendingMs` no `asr.realtime`, `dryRun`/`allowedHosts`/`allowedPrefixes` no `exec.command`).
 - **Tela 2 — Execução (Live):** header **LIVE MODE** + cenário + pill **Latência** com breakdown ponta-a-ponta (`trace`: ASR / Turn / LLM TTFT / Decisão / Total) + badge `DRY-RUN` / `EXEC ATIVO` (quando há `exec.command`) + **Limpar contexto** (`POST /api/run/reset-history`) + **Exportar sessão** (`POST /api/session/export` → `.md` em `sessions/` + webhook opt-in) + **Pausar/Retomar** + **Encerrar Sessão**. Card de aprovação (`human.approve`) suporta texto simples e comando estruturado (badges de Host + Risco `d1` + comando monospaced editável). Sidebar **Contexto / Documentos** com **RAG BM25 local** (`.md`, `.pdf`, `.txt`, `.yaml`, `.json` + tags).
 - Salvar/carregar flows: `apps/tui/flows/*.json` (host lista via `/api/flows`; descrição dentro do flow).
+- **Chatbox (`input.chat`)**: novo nó de entrada por TEXTO (além da voz) — aparece no `LiveView` e no `BuilderView`; envie prompt com Enter → `POST /api/run/chat` → `chat_input` no runner → nós `input.chat` emitem `out`/`parcs`. O botão **«Agente Workflows»** (TopBar) abre o workflow `agente-workflows` com chat+voz+seletor de modelo.
 
 ### 4b. Fluxos prontos
 
@@ -132,6 +133,8 @@ EOF
 | `tradutor-voz-en.json` | Pipeline completo de interpretação por voz: STT → Tradução PT→EN → Legenda + TTS EN → Alto-falante |
 | `revisao-servidor-ops.json` | **Ops / SRE single-shot (ADR-007):** voz → `turn.detector` (`d1`) → planejador LLM (`useContext: true` RAG BM25) → triagem `d1` (`leitura_segura` / `sensivel` / `bloqueado`) → `human.approve` → `exec.command` (`dryRun: true`, `mode: "readonly"`) → analista LLM → diagnóstico |
 | `agente-suporte-ops.json` | **Agente de Suporte multi-step (ADR-008):** voz → `turn.detector` → `agent.tools` (loop `tool_calls`, `approvalPolicy: "always"`, `maxSteps: 5`) conectado via porta bidirecional `tool` a `exec.command` (`dryRun: true`) e `rag.search` (BM25) → diagnóstico |
+| `agente-workflows.json` | **Agente Especialista em Workflows:** chatbox (`input.chat`) + voz (SCK→Voxtral) → `agent.tools` com `tool.workflow` (valida/salva workflows e auto-atualiza o AGENTS.md) + `tool.web_search` (anti-SSRF) → legendas. Botão **«Agente Workflows»** na TopBar; modelo selecionável no Live |
+| `chat-agente-suporte.json` | **Suporte por Chat/Prompt (sem voz):** chatbox → `agent.tools` (`approvalPolicy: "always"`) com `rag.search` + `exec.command` (`dryRun: true`) → resposta |
 | `test/demo-engine` / `test/demo-live` | fixtures de smoke (sintético / integração omlx+sidecar) — em `flows/test/`, fora do dropdown |
 
 > Captura nos flows: `backend: 'sck'`, `input: ''` — **escolha o app da call** no Inspector (Teams, zoom.us, Google Chrome…). SCK ouve SÓ esse app; precisa de permissão de Gravação de Tela (Ajustes → Privacidade e Segurança).
@@ -141,7 +144,7 @@ EOF
 ```bash
 cd /Users/otaviolemos/orca/workspaces/falador/sweetlips
 node packages/falador-cli/run-flow.mjs apps/tui/flows/legendas-traducao-direta.json --run-seconds 30
-node packages/falador-cli/run-flow.mjs --catalog            # catálogo JSON (15 nós)
+node packages/falador-cli/run-flow.mjs --catalog            # catálogo JSON (22 nós)
 ```
 
 Eventos saem em NDJSON (`caption` com `trace`, `gate` com metadados estruturados, `run_stopped`, …). Comandos via stdin: `{"type":"gate_action","nodeId":"...","text":"editado ou null"}` e `{"type":"reset_history","nodeId":"*"}`.

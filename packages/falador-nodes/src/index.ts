@@ -13,6 +13,10 @@ import { execCommand } from './exec-command.ts';
 import { agentTools } from './agent-tools.ts';
 import { ragSearch } from './rag-search.ts';
 import { toolMcp } from './tool-mcp.ts';
+import { inputChat } from './input-chat.ts';
+import { toolWorkflow } from './tool-workflow.ts';
+import { toolWebSearch } from './tool-web-search.ts';
+import { toolCrawler } from './tool-crawler.ts';
 
 export { llmOmlx, type ContextProvider } from './llm-omlx.ts';
 export { ttsSts, type AudioChunkPayload } from './tts-sts.ts';
@@ -53,6 +57,20 @@ export {
 } from './agent-tools.ts';
 export { ragSearch } from './rag-search.ts';
 export { toolMcp, validateMcpCommand, validateMcpUrl, buildFilteredEnv } from './tool-mcp.ts';
+export { inputChat, type ChatSendFn } from './input-chat.ts';
+export {
+  toolWorkflow,
+  sanitizeFlowName,
+  resolveSafeFlowPath,
+  type WorkflowAuditEntry,
+} from './tool-workflow.ts';
+export { toolWebSearch, validateExternalUrl, type FetcherFn } from './tool-web-search.ts';
+export {
+  toolCrawler,
+  extractPageData,
+  isDomainAllowed,
+  type ExtractedPageData,
+} from './tool-crawler.ts';
 export { inheritTrace, type TraceMeta } from './trace.ts';
 export { postJsonBytes, postSse, payloadText } from './sse.ts';
 
@@ -72,5 +90,9 @@ export function registerFaladorNodes(registry: Registry): Registry {
     .register(execCommand)
     .register(agentTools)
     .register(ragSearch)
-    .register(toolMcp);
+    .register(toolMcp)
+    .register(inputChat)
+    .register(toolWorkflow)
+    .register(toolWebSearch)
+    .register(toolCrawler);
 }

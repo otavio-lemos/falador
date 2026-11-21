@@ -24,7 +24,7 @@ export function deriveStages(flow: Flow): Stage[] {
     } else if (n.type === 'asr.realtime' || n.type === 'asr.lfm3') {
       out.push({ key: 'asr', label: 'Transcrição', accent: accentOf(n.type), nodeId: n.id, param: 'model', kind: 'model-asr', value: String(p.model ?? '') });
     } else if (n.type === 'llm.omlx' || n.type === 'agent.tools') {
-      out.push({ key: 'llm', label: n.type === 'agent.tools' ? 'Agente' : 'Sugestão / Tradução', accent: accentOf(n.type), nodeId: n.id, param: 'model', kind: 'model-llm', value: String(p.model ?? '') });
+      out.push({ key: 'llm', label: n.type === 'agent.tools' ? 'Modelo do Agente' : 'Sugestão / Tradução', accent: accentOf(n.type), nodeId: n.id, param: 'model', kind: 'model-llm', value: String(p.model ?? '') });
     } else if (n.type === 'decision.llm') {
       out.push({ key: 'gate', label: 'Revisão', accent: accentOf(n.type), nodeId: n.id, param: 'defaultOption', kind: 'gate', value: String(p.defaultOption ?? 'humano') });
     } else if (n.type === 'tts.sts') {
