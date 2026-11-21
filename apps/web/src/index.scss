@@ -323,3 +323,43 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 .ctx-upload { display: flex; flex-direction: column; gap: $spacing-03; }
 .export-modal-desc { @include type-style('body-01'); color: $txt-2; margin-bottom: $spacing-04; }
 .export-modal-result { @include type-style('helper-text-01'); color: #4ade80; margin-top: $spacing-03; word-break: break-all; }
+
+// ADR-008 — timeline compacta de passos do agente (LiveView)
+.agent-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-02;
+  margin-top: $spacing-02;
+}
+.agent-timeline-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: $bg-panel;
+  border: 1px solid $border-1;
+  border-left: 3px solid #0ea5e9;
+  border-radius: 6px;
+  padding: $spacing-03 $spacing-04;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.agent-step-row {
+  display: flex;
+  align-items: center;
+  gap: $spacing-03;
+  padding: 2px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.agent-step-row:last-child { border-bottom: none; }
+.agent-step-num { @include type-style('label-01'); color: $txt-2; min-width: 56px; }
+.agent-step-tool {
+  @include type-style('code-01');
+  color: #38bdf8;
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-step-dur { @include type-style('helper-text-01'); color: $txt-2; white-space: nowrap; }

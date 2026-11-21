@@ -170,13 +170,13 @@ export function validateFlow(raw: FlowSpec, registry: Map<string, NodeTypeDef>):
     outEdges.get(fromNode)!.push(ve);
   }
 
-  // V2: in-degree <= 1 por (nó, porta)
+  // V2: in-degree <= 1 por (nó, porta), exceto portas do tipo 'tool' (ADR-008)
   const inEdges = new Map<string, ValidatedEdge[]>();
   for (const e of edges) {
     const key = `${e.toNode}.${e.toPort}`;
     if (!inEdges.has(key)) inEdges.set(key, []);
     inEdges.get(key)!.push(e);
-    if (inEdges.get(key)!.length > 1) {
+    if (e.portType !== 'tool' && inEdges.get(key)!.length > 1) {
       throw new GraphError('IN_DEGREE_EXCEEDED', `edges→${key}`, 'porta de entrada recebe no máximo 1 edge (use merge.*)');
     }
   }
@@ -185,7 +185,9 @@ export function validateFlow(raw: FlowSpec, registry: Map<string, NodeTypeDef>):
   for (const n of nodes.values()) {
     const hasIn = edges.some((e) => e.toNode === n.id);
     const hasOut = edges.some((e) => e.fromNode === n.id);
-    if (!hasIn && !n.def.sourceOnly && !n.def.sink) {
+    const hasToolOut = edges.some((e) => e.fromNode === n.id && e.portType === 'tool');
+    const isToolOnlyNode = n.def.outputs.length > 0 && n.def.outputs.every((p) => p.type === 'tool');
+    if (!hasIn && !n.def.sourceOnly && !n.def.sink && !hasToolOut && !isToolOnlyNode) {
       throw new GraphError('DISCONNECTED_NODE', `nodes[${n.id}]`, 'nó sem entrada: declare sourceOnly (ou é um sink?)');
     }
     for (const p of n.def.outputs) {

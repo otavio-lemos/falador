@@ -10,6 +10,9 @@ import { humanApprove } from './human-approve.ts';
 import { decisionLlm } from './decision-llm.ts';
 import { turnDetector } from './turn-detector.ts';
 import { execCommand } from './exec-command.ts';
+import { agentTools } from './agent-tools.ts';
+import { ragSearch } from './rag-search.ts';
+import { toolMcp } from './tool-mcp.ts';
 
 export { llmOmlx, type ContextProvider } from './llm-omlx.ts';
 export { ttsSts, type AudioChunkPayload } from './tts-sts.ts';
@@ -41,6 +44,15 @@ export {
   type ChunkOptions,
   type SearchOptions,
 } from './context-store.ts';
+export {
+  agentTools,
+  type ApprovalPolicy,
+  type AgentGateMeta,
+  type AgentGateHolder,
+  type AgentStepEvent,
+} from './agent-tools.ts';
+export { ragSearch } from './rag-search.ts';
+export { toolMcp, validateMcpCommand, validateMcpUrl, buildFilteredEnv } from './tool-mcp.ts';
 export { inheritTrace, type TraceMeta } from './trace.ts';
 export { postJsonBytes, postSse, payloadText } from './sse.ts';
 
@@ -57,5 +69,8 @@ export function registerFaladorNodes(registry: Registry): Registry {
     .register(humanApprove)
     .register(decisionLlm)
     .register(turnDetector)
-    .register(execCommand);
+    .register(execCommand)
+    .register(agentTools)
+    .register(ragSearch)
+    .register(toolMcp);
 }

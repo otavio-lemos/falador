@@ -30,7 +30,7 @@ function modelsForNode(nodeType: string, models: { omlx: string[]; cache: string
   if (nodeType === 'asr.realtime' || nodeType === 'asr.lfm3') return all.filter(isAsrModel);
   if (nodeType === 'tts.sts') return all.filter((m) => isTtsModel(m) || isStsModel(m));
   if (nodeType === 'decision.llm' || nodeType === 'turn.detector') return all.filter(isDecisionModel);
-  if (nodeType === 'llm.omlx') return all.filter(isTextModel);
+  if (nodeType === 'llm.omlx' || nodeType === 'agent.tools') return all.filter(isTextModel);
   return all;
 }
 

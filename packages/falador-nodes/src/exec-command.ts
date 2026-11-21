@@ -10,6 +10,9 @@ import {
   type NodeRuntime,
   type NodeTypeDef,
   type ParamError,
+  type ToolCallResult,
+  type ToolDef,
+  type ToolProvider,
 } from '../../falador-graph/src/index.ts';
 import { payloadText } from './sse.ts';
 
@@ -529,12 +532,16 @@ export const execCommand: NodeTypeDef = {
     'timeoutMs',
     'maxOutputBytes',
     'auditLogPath',
+    'toolName',
   ],
   inputs: [
     { name: 'in', type: 'phrase' },
     { name: 'parcs', type: 'tokens_parcial' },
   ],
-  outputs: [{ name: 'out', type: 'phrase', required: true }],
+  outputs: [
+    { name: 'out', type: 'phrase', required: false },
+    { name: 'tool', type: 'tool', required: false },
+  ],
   validateParams: (p): ParamError[] => {
     const errs: ParamError[] = [];
     if (p.transport !== undefined && p.transport !== 'local' && p.transport !== 'ssh') {
@@ -567,6 +574,9 @@ export const execCommand: NodeTypeDef = {
     if (p.maxOutputBytes !== undefined && (typeof p.maxOutputBytes !== 'number' || p.maxOutputBytes <= 0)) {
       errs.push({ path: 'params.maxOutputBytes', code: 'INVALID_PARAM', message: 'maxOutputBytes deve ser número positivo' });
     }
+    if (p.toolName !== undefined && (typeof p.toolName !== 'string' || p.toolName.trim().length === 0)) {
+      errs.push({ path: 'params.toolName', code: 'INVALID_PARAM', message: 'toolName deve ser string não vazia' });
+    }
     return errs;
   },
   create: (ctx: NodeCtx): NodeRuntime => {
@@ -585,6 +595,8 @@ export const execCommand: NodeTypeDef = {
     const timeoutMs = Math.min(Math.max(50, rawTimeout), MAX_TIMEOUT_MS);
     const maxOutputBytes = Math.max(64, (ctx.params.maxOutputBytes as number | undefined) ?? DEFAULT_MAX_OUTPUT_BYTES);
     const auditLogPath = (ctx.params.auditLogPath as string | undefined) ?? DEFAULT_AUDIT_LOG_PATH;
+    const customToolName = (ctx.params.toolName as string | undefined)?.trim();
+    const resolvedToolName = customToolName || (transport === 'ssh' ? 'exec_ssh' : 'exec_local');
 
     const policy: ExecPolicy = {
       transport,
@@ -595,29 +607,398 @@ export const execCommand: NodeTypeDef = {
       sshUser,
     };
 
-    const runId = typeof ctx.bindings?.runId === 'string' ? ctx.bindings.runId : 'unknown';
+    const defaultRunId = typeof ctx.bindings?.runId === 'string' ? ctx.bindings.runId : 'unknown';
 
-    let activeChild: ChildProcess | null = null;
-    let activeInterrupted = false;
+    const activeChildren = new Set<ChildProcess>();
+    let controlInterrupted = false;
+
+    const killAllActive = () => {
+      for (const child of activeChildren) {
+        killProcessTree(child);
+      }
+    };
 
     const onAbort = () => {
-      if (activeChild) {
-        activeInterrupted = true;
-        killProcessTree(activeChild);
-      }
+      controlInterrupted = true;
+      killAllActive();
     };
     ctx.signal.addEventListener('abort', onAbort, { once: true });
 
+    type ExecRunOutcome =
+      | {
+          kind: 'denied';
+          reason: string;
+          command: string;
+          host: string;
+        }
+      | {
+          kind: 'ok';
+          command: string;
+          host: string;
+          dryRun: boolean;
+          exitCode: number | null;
+          durationMs: number;
+          tExecStartMs: number;
+          tExecEndMs: number;
+          timedOut: boolean;
+          truncated: boolean;
+          interrupted: boolean;
+          report: string;
+          errorMsg?: string;
+        };
+
+    async function executePayload(
+      input: unknown,
+      execOpts: { runId: string; signal?: AbortSignal },
+    ): Promise<ExecRunOutcome> {
+      const validation = validateCommand(input, policy);
+      if (!validation.ok) {
+        const deniedHost = validation.host ?? (transport === 'ssh' ? (defaultHost ?? 'unknown') : 'local');
+        const deniedCommand = validation.command ?? String(payloadText(input)?.text ?? '');
+        ctx.metrics.counter('exec.command.denied', 1);
+        ctx.log('warn', `exec.command bloqueado (${validation.code}): ${validation.reason}`);
+        writeAuditEntry(
+          auditLogPath,
+          {
+            ts: new Date().toISOString(),
+            runId: execOpts.runId,
+            nodeId: ctx.id,
+            transport,
+            host: deniedHost,
+            command: deniedCommand,
+            dryRun,
+            decision: 'denied',
+            reason: validation.reason,
+          },
+          ctx,
+        );
+        return {
+          kind: 'denied',
+          reason: validation.reason,
+          command: deniedCommand,
+          host: deniedHost,
+        };
+      }
+
+      const { command, argv, host, reason } = validation;
+      const tExecStartMs = Date.now();
+
+      if (dryRun) {
+        const tExecEndMs = Date.now();
+        const durationMs = tExecEndMs - tExecStartMs;
+        ctx.metrics.counter('exec.command.dry_run', 1);
+        writeAuditEntry(
+          auditLogPath,
+          {
+            ts: new Date().toISOString(),
+            runId: execOpts.runId,
+            nodeId: ctx.id,
+            transport,
+            host,
+            command,
+            dryRun: true,
+            decision: 'dry_run',
+            reason,
+            exitCode: 0,
+            durationMs,
+            timedOut: false,
+          },
+          ctx,
+        );
+        const report = formatReport({
+          command,
+          host,
+          transport,
+          dryRun: true,
+          exitCode: 0,
+          durationMs,
+          timedOut: false,
+          stdout: '',
+          stderr: '',
+          reason,
+        });
+        return {
+          kind: 'ok',
+          command,
+          host,
+          dryRun: true,
+          exitCode: 0,
+          durationMs,
+          tExecStartMs,
+          tExecEndMs,
+          timedOut: false,
+          truncated: false,
+          interrupted: false,
+          report,
+        };
+      }
+
+      // Execução real controlada (shell: false sempre)
+      controlInterrupted = false;
+      let callInterrupted = false;
+      const stdoutBuf = new TailBuffer(maxOutputBytes);
+      const stderrBuf = new TailBuffer(maxOutputBytes);
+      let timedOut = false;
+
+      if (ctx.signal.aborted || execOpts.signal?.aborted) {
+        const tExecEndMs = Date.now();
+        return {
+          kind: 'ok',
+          command,
+          host,
+          dryRun: false,
+          exitCode: null,
+          durationMs: tExecEndMs - tExecStartMs,
+          tExecStartMs,
+          tExecEndMs,
+          timedOut: false,
+          truncated: false,
+          interrupted: true,
+          report: 'Execução cancelada (signal abortado).',
+        };
+      }
+
+      const execResult = await new Promise<{ exitCode: number | null; errorMsg?: string }>((resolve) => {
+        let settled = false;
+        let child: ChildProcess | null = null;
+        let timer: ReturnType<typeof setTimeout> | null = null;
+
+        const onCallAbort = () => {
+          callInterrupted = true;
+          if (child) killProcessTree(child);
+        };
+
+        const finish = (res: { exitCode: number | null; errorMsg?: string }) => {
+          if (settled) return;
+          settled = true;
+          if (timer) clearTimeout(timer);
+          if (execOpts.signal) {
+            execOpts.signal.removeEventListener('abort', onCallAbort);
+          }
+          if (child) activeChildren.delete(child);
+          resolve(res);
+        };
+
+        try {
+          if (transport === 'local') {
+            child = spawn(argv[0], argv.slice(1), {
+              shell: false,
+              cwd,
+              stdio: ['ignore', 'pipe', 'pipe'],
+            });
+          } else {
+            const target = sshUser ? `${sshUser}@${host}` : host;
+            const remoteCommand = buildSshRemoteCommand(argv);
+            child = spawn(
+              'ssh',
+              [
+                '-o', 'BatchMode=yes',
+                '-o', 'ConnectTimeout=5',
+                '-o', 'StrictHostKeyChecking=yes',
+                '-o', 'IdentitiesOnly=yes',
+                '-p', String(sshPort),
+                '--',
+                target,
+                remoteCommand,
+              ],
+              {
+                shell: false,
+                stdio: ['ignore', 'pipe', 'pipe'],
+              },
+            );
+          }
+        } catch (err: unknown) {
+          finish({ exitCode: null, errorMsg: (err as Error)?.message ?? String(err) });
+          return;
+        }
+
+        activeChildren.add(child);
+        if (execOpts.signal) {
+          execOpts.signal.addEventListener('abort', onCallAbort, { once: true });
+        }
+
+        const spawned = child;
+        timer = setTimeout(() => {
+          timedOut = true;
+          ctx.metrics.counter('exec.command.killed', 1);
+          ctx.log('warn', `exec.command timeout após ${timeoutMs} ms: ${command}`);
+          killProcessTree(spawned);
+        }, timeoutMs);
+
+        spawned.stdout?.on('data', (chunk: Buffer) => stdoutBuf.append(chunk));
+        spawned.stderr?.on('data', (chunk: Buffer) => stderrBuf.append(chunk));
+
+        spawned.once('error', (err) => {
+          finish({ exitCode: null, errorMsg: err.message });
+        });
+
+        spawned.once('close', (code) => {
+          finish({ exitCode: code });
+        });
+      });
+
+      const interrupted = controlInterrupted || callInterrupted;
+      const tExecEndMs = Date.now();
+      const durationMs = tExecEndMs - tExecStartMs;
+      const truncated = stdoutBuf.truncated || stderrBuf.truncated;
+      const stderrText = execResult.errorMsg
+        ? `${stderrBuf.toString()}\n${execResult.errorMsg}`.trim()
+        : stderrBuf.toString();
+
+      ctx.metrics.counter('exec.command.executed', 1);
+      ctx.metrics.timer('exec.command.durationMs', durationMs);
+
+      writeAuditEntry(
+        auditLogPath,
+        {
+          ts: new Date().toISOString(),
+          runId: execOpts.runId,
+          nodeId: ctx.id,
+          transport,
+          host,
+          command,
+          dryRun: false,
+          decision: 'allowed',
+          reason: interrupted ? 'interrupted' : reason,
+          exitCode: execResult.exitCode,
+          durationMs,
+          timedOut,
+        },
+        ctx,
+      );
+
+      const report = formatReport({
+        command,
+        host,
+        transport,
+        dryRun: false,
+        exitCode: execResult.exitCode,
+        durationMs,
+        timedOut,
+        stdout: stdoutBuf.toString(),
+        stderr: stderrText,
+        reason,
+      });
+
+      return {
+        kind: 'ok',
+        command,
+        host,
+        dryRun: false,
+        exitCode: execResult.exitCode,
+        durationMs,
+        tExecStartMs,
+        tExecEndMs,
+        timedOut,
+        truncated,
+        interrupted,
+        report,
+        errorMsg: execResult.errorMsg,
+      };
+    }
+
+    const prefixSummary =
+      allowedPrefixes.length > 0 ? allowedPrefixes.slice(0, 12).join(', ') + (allowedPrefixes.length > 12 ? ', ...' : '') : '(nenhum)';
+    const hostSummary =
+      transport === 'ssh'
+        ? ` | hosts permitidos: ${allowedHosts.length > 0 ? allowedHosts.join(', ') : '(nenhum)'}`
+        : '';
+
+    const toolDef: ToolDef = {
+      name: resolvedToolName,
+      description: `Executa comando único via ${transport} (mode=${mode}, dryRun=${dryRun}${hostSummary} | prefixos: ${prefixSummary}).`,
+      parameters: {
+        type: 'object',
+        properties: {
+          command: {
+            type: 'string',
+            description: 'Comando único a executar (sem metacaracteres de shell).',
+          },
+          ...(transport === 'ssh'
+            ? {
+                host: {
+                  type: 'string',
+                  description: `Host SSH de destino (permitidos: ${allowedHosts.length > 0 ? allowedHosts.join(', ') : 'nenhum'}).`,
+                },
+              }
+            : {}),
+          reason: {
+            type: 'string',
+            description: 'Motivo opcional da execução para registro no audit log.',
+          },
+        },
+        required: transport === 'ssh' ? ['command', 'host'] : ['command'],
+      },
+      readonly: mode === 'readonly',
+      sourceNodeId: ctx.id,
+    };
+
+    const toolProvider: ToolProvider = {
+      listTools(): ToolDef[] {
+        return [toolDef];
+      },
+      async invoke(
+        name: string,
+        args: Record<string, unknown>,
+        opts: { signal: AbortSignal; runId: string; callerNodeId: string },
+      ): Promise<ToolCallResult> {
+        if (name !== resolvedToolName) {
+          return {
+            ok: false,
+            output: `Tool desconhecida para ${ctx.id}: ${name} (esperado: ${resolvedToolName})`,
+            durationMs: 0,
+          };
+        }
+        const outcome = await executePayload(args, {
+          runId: opts.runId || defaultRunId,
+          signal: opts.signal,
+        });
+        if (outcome.kind === 'denied') {
+          return {
+            ok: false,
+            output: `EXEC_POLICY_DENIED: ${outcome.reason}`,
+            durationMs: 0,
+            meta: {
+              code: 'EXEC_POLICY_DENIED',
+              command: outcome.command,
+              host: outcome.host,
+              transport,
+            },
+          };
+        }
+        const ok = outcome.dryRun
+          ? true
+          : !outcome.timedOut && !outcome.interrupted && outcome.exitCode === 0 && !outcome.errorMsg;
+        return {
+          ok,
+          output: outcome.report,
+          exitCode: outcome.exitCode ?? undefined,
+          dryRun: outcome.dryRun,
+          durationMs: outcome.durationMs,
+          meta: {
+            command: outcome.command,
+            host: outcome.host,
+            transport,
+            truncated: outcome.truncated,
+            timedOut: outcome.timedOut,
+            interrupted: outcome.interrupted,
+          },
+        };
+      },
+    };
+
     return {
+      toolProvider,
+
       async start() {},
 
       onControl(c: ControlMsg) {
         if (c.kind === 'interrupt') {
-          activeInterrupted = true;
-          if (activeChild) {
-            ctx.metrics.counter('exec.command.killed', 1);
+          controlInterrupted = true;
+          if (activeChildren.size > 0) {
+            ctx.metrics.counter('exec.command.killed', activeChildren.size);
             ctx.log('info', `exec.command interrompido por controle (${c.reason ?? 'interrupt'})`);
-            killProcessTree(activeChild);
+            killAllActive();
           }
         }
       },
@@ -631,227 +1012,37 @@ export const execCommand: NodeTypeDef = {
           if (!pl || !pl.final) return;
         }
 
-        const validation = validateCommand(msg.payload, policy);
-        if (!validation.ok) {
-          ctx.metrics.counter('exec.command.denied', 1);
-          ctx.log('warn', `exec.command bloqueado (${validation.code}): ${validation.reason}`);
-          writeAuditEntry(
-            auditLogPath,
-            {
-              ts: new Date().toISOString(),
-              runId,
-              nodeId: ctx.id,
-              transport,
-              host: validation.host ?? (transport === 'ssh' ? (defaultHost ?? 'unknown') : 'local'),
-              command: validation.command ?? String(payloadText(msg.payload)?.text ?? ''),
-              dryRun,
-              decision: 'denied',
-              reason: validation.reason,
-            },
-            ctx,
-          );
-          throw new GraphError('EXEC_POLICY_DENIED', ctx.id, validation.reason);
+        const outcome = await executePayload(msg.payload, { runId: defaultRunId });
+        if (outcome.kind === 'denied') {
+          throw new GraphError('EXEC_POLICY_DENIED', ctx.id, outcome.reason);
         }
 
-        const { command, argv, host, reason } = validation;
+        if (outcome.interrupted) {
+          return;
+        }
+
         const prevTrace =
           msg.meta && typeof msg.meta.trace === 'object' && msg.meta.trace !== null
             ? (msg.meta.trace as Record<string, unknown>)
             : {};
 
-        const tExecStartMs = Date.now();
-
-        if (dryRun) {
-          const tExecEndMs = Date.now();
-          const durationMs = tExecEndMs - tExecStartMs;
-          ctx.metrics.counter('exec.command.dry_run', 1);
-          writeAuditEntry(
-            auditLogPath,
-            {
-              ts: new Date().toISOString(),
-              runId,
-              nodeId: ctx.id,
-              transport,
-              host,
-              command,
-              dryRun: true,
-              decision: 'dry_run',
-              reason,
-              exitCode: 0,
-              durationMs,
-              timedOut: false,
-            },
-            ctx,
-          );
-          const report = formatReport({
-            command,
-            host,
-            transport,
-            dryRun: true,
-            exitCode: 0,
-            durationMs,
-            timedOut: false,
-            stdout: '',
-            stderr: '',
-            reason,
-          });
-          await ctx.emit('out', report, {
-            meta: {
-              ...msg.meta,
-              exec: {
-                command,
-                host,
-                exitCode: 0,
-                durationMs,
-                dryRun: true,
-                truncated: false,
-                timedOut: false,
-              },
-              trace: {
-                ...prevTrace,
-                tExecStartMs,
-                tExecEndMs,
-                exitCode: 0,
-              },
-            },
-          });
-          return;
-        }
-
-        // Execução real controlada (shell: false sempre)
-        activeInterrupted = false;
-        const stdoutBuf = new TailBuffer(maxOutputBytes);
-        const stderrBuf = new TailBuffer(maxOutputBytes);
-        let timedOut = false;
-
-        const execResult = await new Promise<{ exitCode: number | null; errorMsg?: string }>((resolve) => {
-          let settled = false;
-          const finish = (res: { exitCode: number | null; errorMsg?: string }) => {
-            if (settled) return;
-            settled = true;
-            clearTimeout(timer);
-            activeChild = null;
-            resolve(res);
-          };
-
-          let child: ChildProcess;
-          try {
-            if (transport === 'local') {
-              child = spawn(argv[0], argv.slice(1), {
-                shell: false,
-                cwd,
-                stdio: ['ignore', 'pipe', 'pipe'],
-              });
-            } else {
-              const target = sshUser ? `${sshUser}@${host}` : host;
-              const remoteCommand = buildSshRemoteCommand(argv);
-              child = spawn(
-                'ssh',
-                [
-                  '-o', 'BatchMode=yes',
-                  '-o', 'ConnectTimeout=5',
-                  '-o', 'StrictHostKeyChecking=yes',
-                  '-o', 'IdentitiesOnly=yes',
-                  '-p', String(sshPort),
-                  '--',
-                  target,
-                  remoteCommand,
-                ],
-                {
-                  shell: false,
-                  stdio: ['ignore', 'pipe', 'pipe'],
-                },
-              );
-            }
-          } catch (err: unknown) {
-            finish({ exitCode: null, errorMsg: (err as Error)?.message ?? String(err) });
-            return;
-          }
-
-          activeChild = child;
-
-          const timer = setTimeout(() => {
-            timedOut = true;
-            ctx.metrics.counter('exec.command.killed', 1);
-            ctx.log('warn', `exec.command timeout após ${timeoutMs} ms: ${command}`);
-            killProcessTree(child);
-          }, timeoutMs);
-
-          child.stdout?.on('data', (chunk: Buffer) => stdoutBuf.append(chunk));
-          child.stderr?.on('data', (chunk: Buffer) => stderrBuf.append(chunk));
-
-          child.once('error', (err) => {
-            finish({ exitCode: null, errorMsg: err.message });
-          });
-
-          child.once('close', (code) => {
-            finish({ exitCode: code });
-          });
-        });
-
-        const tExecEndMs = Date.now();
-        const durationMs = tExecEndMs - tExecStartMs;
-        const truncated = stdoutBuf.truncated || stderrBuf.truncated;
-        const stderrText = execResult.errorMsg
-          ? `${stderrBuf.toString()}\n${execResult.errorMsg}`.trim()
-          : stderrBuf.toString();
-
-        ctx.metrics.counter('exec.command.executed', 1);
-        ctx.metrics.timer('exec.command.durationMs', durationMs);
-
-        writeAuditEntry(
-          auditLogPath,
-          {
-            ts: new Date().toISOString(),
-            runId,
-            nodeId: ctx.id,
-            transport,
-            host,
-            command,
-            dryRun: false,
-            decision: 'allowed',
-            reason: activeInterrupted ? 'interrupted' : reason,
-            exitCode: execResult.exitCode,
-            durationMs,
-            timedOut,
-          },
-          ctx,
-        );
-
-        if (activeInterrupted) {
-          return;
-        }
-
-        const report = formatReport({
-          command,
-          host,
-          transport,
-          dryRun: false,
-          exitCode: execResult.exitCode,
-          durationMs,
-          timedOut,
-          stdout: stdoutBuf.toString(),
-          stderr: stderrText,
-          reason,
-        });
-
-        await ctx.emit('out', report, {
+        await ctx.emit('out', outcome.report, {
           meta: {
             ...msg.meta,
             exec: {
-              command,
-              host,
-              exitCode: execResult.exitCode,
-              durationMs,
-              dryRun: false,
-              truncated,
-              timedOut,
+              command: outcome.command,
+              host: outcome.host,
+              exitCode: outcome.exitCode,
+              durationMs: outcome.durationMs,
+              dryRun: outcome.dryRun,
+              truncated: outcome.truncated,
+              timedOut: outcome.timedOut,
             },
             trace: {
               ...prevTrace,
-              tExecStartMs,
-              tExecEndMs,
-              exitCode: execResult.exitCode,
+              tExecStartMs: outcome.tExecStartMs,
+              tExecEndMs: outcome.tExecEndMs,
+              exitCode: outcome.exitCode,
             },
           },
         });
@@ -859,9 +1050,9 @@ export const execCommand: NodeTypeDef = {
 
       async stop() {
         ctx.signal.removeEventListener('abort', onAbort);
-        if (activeChild) {
-          activeInterrupted = true;
-          killProcessTree(activeChild);
+        if (activeChildren.size > 0) {
+          controlInterrupted = true;
+          killAllActive();
         }
       },
     };

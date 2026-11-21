@@ -78,23 +78,33 @@ async function main() {
     }
   }
 
-  // reset de histórico em runtime para nós llm.omlx (ADR-006 Fase 4)
+  // reset de histórico em runtime para nós llm.omlx e agent.tools (ADR-006 Fase 4 / ADR-008 Fase 5)
   const resetters = new Map(); // nodeId -> () => void
   for (const n of flow.nodes ?? []) {
-    if (n.type === 'llm.omlx') {
+    if (n.type === 'llm.omlx' || n.type === 'agent.tools') {
       flow.bindings[n.id] = {
         ...(flow.bindings[n.id] ?? {}),
         __registerReset: (fn) => { resetters.set(n.id, fn); },
       };
     }
+    if (n.type === 'agent.tools' && !(flow.bindings[n.id]?.__onAgentStep)) {
+      flow.bindings[n.id] = {
+        ...(flow.bindings[n.id] ?? {}),
+        __onAgentStep: (ev) => line({ type: 'agent_step', ...ev }),
+      };
+    }
   }
 
-  // gates human.approve: runner cria holder por nó, anuncia {"type":"gate","nodeId","text","meta"?} e
+  // gates human.approve e agent.tools (quando approvalPolicy !== 'never'):
+  // runner cria holder por nó, anuncia {"type":"gate","nodeId","text","meta"?} e
   // resolve via stdin JSON {"type":"gate_action","nodeId","text"} (null = rejeitar).
   const gates = new Map(); // nodeId -> resolve
   const pendingGates = new Set(); // resolvers abertos (reject all no stop do run)
   for (const n of flow.nodes ?? []) {
-    if (n.type === 'human.approve') {
+    const needsGate =
+      n.type === 'human.approve' ||
+      (n.type === 'agent.tools' && n.params?.approvalPolicy !== 'never');
+    if (needsGate) {
       flow.bindings[n.id] = {
         ...(flow.bindings[n.id] ?? {}),
         __gate: {

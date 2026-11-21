@@ -23,8 +23,8 @@ export function deriveStages(flow: Flow): Stage[] {
       out.push({ key: 'captura', label: 'App da call', accent: accentOf(n.type), nodeId: n.id, param: 'input', kind: 'app', value: String(p.input ?? '') });
     } else if (n.type === 'asr.realtime' || n.type === 'asr.lfm3') {
       out.push({ key: 'asr', label: 'Transcrição', accent: accentOf(n.type), nodeId: n.id, param: 'model', kind: 'model-asr', value: String(p.model ?? '') });
-    } else if (n.type === 'llm.omlx') {
-      out.push({ key: 'llm', label: 'Sugestão / Tradução', accent: accentOf(n.type), nodeId: n.id, param: 'model', kind: 'model-llm', value: String(p.model ?? '') });
+    } else if (n.type === 'llm.omlx' || n.type === 'agent.tools') {
+      out.push({ key: 'llm', label: n.type === 'agent.tools' ? 'Agente' : 'Sugestão / Tradução', accent: accentOf(n.type), nodeId: n.id, param: 'model', kind: 'model-llm', value: String(p.model ?? '') });
     } else if (n.type === 'decision.llm') {
       out.push({ key: 'gate', label: 'Revisão', accent: accentOf(n.type), nodeId: n.id, param: 'defaultOption', kind: 'gate', value: String(p.defaultOption ?? 'humano') });
     } else if (n.type === 'tts.sts') {
@@ -107,7 +107,7 @@ export function sanitizeFlow(flow: Flow): Flow {
   return {
     ...flow,
     nodes: flow.nodes.map((n) => {
-      if (n.type === 'llm.omlx' && typeof n.params.model === 'string' && !isTextModel(n.params.model)) {
+      if ((n.type === 'llm.omlx' || n.type === 'agent.tools') && typeof n.params.model === 'string' && !isTextModel(n.params.model)) {
         const { model: _bad, ...rest } = n.params;
         return { ...n, params: rest };
       }
