@@ -16,7 +16,7 @@ function requiredString(p: Record<string, unknown>, key: string, errs: { path: s
 
 export const llmOmlx: NodeTypeDef = {
   type: 'llm.omlx',
-  paramNames: ['baseUrl', 'model', 'targetLanguage', 'system', 'template', 'temperature', 'maxTokens', 'enableThinking', 'historyMax'],
+  paramNames: ['baseUrl', 'model', 'system', 'template', 'temperature', 'maxTokens', 'enableThinking', 'historyMax'],
   inputs: [
     { name: 'in', type: 'phrase' },
     { name: 'parcs', type: 'tokens_parcial' },
@@ -47,13 +47,13 @@ export const llmOmlx: NodeTypeDef = {
     const baseUrl = (ctx.params.baseUrl as string | undefined) ?? DEFAULT_BASE;
     const model = (ctx.params.model as string | undefined) ?? DEFAULT_MODEL;
     const system = ctx.params.system as string | undefined;
-    // targetLanguage: atalho conveniente — se definido, injeta instrução de tradução no template.
-    // O flow pode usar template explícito OU targetLanguage, não os dois.
-    const targetLanguage = ctx.params.targetLanguage as string | undefined;
-    const baseTemplate = (ctx.params.template as string[] | undefined) ?? [];
-    const template = targetLanguage && baseTemplate.length === 0
-      ? [`Translate to ${targetLanguage}, natural and spoken. Reply ONLY with the translation, no comments.`]
-      : baseTemplate;
+    // template: FRAGMENTO com '{text}' que antecede a fala do usuário.
+    // DEFAULT NEUTRO (só o texto) — cada flow declara sua instrução (nada fixo):
+    //   cenário 1 (legendar): ["Traduza para brasileiro natural. Só a tradução, sem comentários."]
+    //   entrevista EN:        ["Suggest a short first-person ANSWER in ENGLISH…"]
+    // (o default antigo era uma instrução de tradução PT embutida — sobrescrevia o
+    //  system prompt de outros flows; bug apanhado no pivô ADR-005)
+    const template = (ctx.params.template as string[] | undefined) ?? [];
     const temperature = (ctx.params.temperature as number | undefined) ?? 0.2;
     const maxTokens = (ctx.params.maxTokens as number | undefined) ?? 256;
     const enableThinking = (ctx.params.enableThinking as boolean | undefined) ?? false;

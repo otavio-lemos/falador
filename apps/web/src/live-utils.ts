@@ -9,27 +9,26 @@ export interface Stage {
   accent: string;
   nodeId: string;
   param: string;
-  kind: 'app' | 'model-asr' | 'model-llm' | 'gate' | 'voice' | 'language';
+  kind: 'app' | 'model-asr' | 'model-llm' | 'gate' | 'voice';
   value: string;
 }
 
-const ORDER = ['captura', 'asr', 'llm', 'gate', 'voz', 'idioma'];
+const ORDER = ['captura', 'asr', 'llm', 'gate', 'voz'];
 
 export function deriveStages(flow: Flow): Stage[] {
   const out: Stage[] = [];
   for (const n of flow.nodes) {
     const p = n.params as Record<string, unknown>;
     if (n.type === 'capture.ffmpeg') {
-      out.push({ key: 'captura', label: 'App da call', accent: accentOf(n.type), nodeId: n.id, param: 'input', kind: 'app', value: String(p.input ?? '') });
+      out.push({ key: 'captura', label: 'Captura', accent: accentOf(n.type), nodeId: n.id, param: 'input', kind: 'app', value: String(p.input ?? '') });
     } else if (n.type === 'asr.realtime' || n.type === 'asr.lfm3') {
-      out.push({ key: 'asr', label: 'Transcrição', accent: accentOf(n.type), nodeId: n.id, param: 'model', kind: 'model-asr', value: String(p.model ?? '') });
+      out.push({ key: 'asr', label: n.type === 'asr.realtime' ? 'ASR (Voxtral)' : 'ASR (LFM3)', accent: accentOf(n.type), nodeId: n.id, param: 'model', kind: 'model-asr', value: String(p.model ?? '') });
     } else if (n.type === 'llm.omlx') {
-      out.push({ key: 'llm', label: 'Sugestão / Tradução', accent: accentOf(n.type), nodeId: n.id, param: 'model', kind: 'model-llm', value: String(p.model ?? '') });
+      out.push({ key: 'llm', label: 'LLM (Sugestão)', accent: accentOf(n.type), nodeId: n.id, param: 'model', kind: 'model-llm', value: String(p.model ?? '') });
     } else if (n.type === 'decision.llm') {
-      out.push({ key: 'gate', label: 'Revisão', accent: accentOf(n.type), nodeId: n.id, param: 'defaultOption', kind: 'gate', value: String(p.defaultOption ?? 'humano') });
+      out.push({ key: 'gate', label: 'Gate', accent: accentOf(n.type), nodeId: n.id, param: 'defaultOption', kind: 'gate', value: String(p.defaultOption ?? 'humano') });
     } else if (n.type === 'tts.sts') {
-      out.push({ key: 'voz', label: 'Voz', accent: accentOf(n.type), nodeId: n.id, param: 'voice', kind: 'voice', value: String(p.voice ?? 'female') });
-      out.push({ key: 'idioma', label: 'Idioma da fala', accent: accentOf(n.type), nodeId: n.id, param: 'language', kind: 'language', value: String(p.language ?? 'English') });
+      out.push({ key: 'voz', label: 'Voz (TTS)', accent: accentOf(n.type), nodeId: n.id, param: 'voice', kind: 'voice', value: String(p.voice ?? 'female') });
     }
   }
   return out.sort((a, b) => ORDER.indexOf(a.key) - ORDER.indexOf(b.key));
@@ -60,45 +59,10 @@ export function shortModel(id: string): string {
   return base.replace(/^models--/, '').replace(/--/g, '/');
 }
 
-// ── Classificação de modelos por capacidade ──────────────────────────────────
-// Baseado nos modelos suportados pelo mlx-audio (https://github.com/Neywa-Labs/mlx-audio)
-// e pelos modelos servidos pelo omlx.
-//
-// IDs podem ter formato "org--nome-do-modelo" (omlx) ou "org/nome" (HF cache).
-// Normalizamos para comparação: -- e / viram espaço, lowercase.
-function norm(id: string): string {
-  return id.replace(/--|[/_]/g, ' ').toLowerCase();
-}
-
-// STT / ASR — reconhecimento de fala
-export function isAsrModel(id: string): boolean {
-  const s = norm(id);
-  return /whisper|voxtral(?!.*tts)|nemotron.*(asr|speech|transcribe)|qwen.*(asr|forced.align)|parakeet|moonshine|canary|granite.*speech|distil.*whisper|mimo.*asr|phonon.*(asr|\d)|vibevoice|medasr|moss.*transcribe|ming.*asr|sov.*transcribe|lfm3.*audio|lfm2.?5.*audio|fluid.*speech|mega.*asr/i.test(s);
-}
-
-// TTS — síntese de voz
-export function isTtsModel(id: string): boolean {
-  const s = norm(id);
-  return /kokoro|qwen.*tts|voxtral.*tts|fish.*audio.*drama|csm.1b|miso.*tts|\bdia\b.*1\.|outetts|spark.*tts|higgs.*audio|chatterbox|melo.*tts|moss.*tts|ming.*tts|ming.*omni.*tts|rumik|voxcpm|kugelaudio|lfm3.*audio|lfm2.?5.*audio|maya.*native|soprano|reverb.*tts|longcat.*audio|omnivoice|zonos|audio8.*tts/i.test(s);
-}
-
-// STS — speech-to-speech
-export function isStsModel(id: string): boolean {
-  const s = norm(id);
-  return /lfm3.*audio|lfm2.?5.*audio|dialogue.*sidon|fastdialogue|haru.*4b|nemotronlabs.*voice|mimo.*audio|ming.*audio|mossformer|deepfilter|sam.*audio|re.*use/i.test(s);
-}
-
-// Decisão (System-1, d1, Laya): roteamento calibrado, NÃO gera texto via chat.
-export function isDecisionModel(id: string): boolean {
-  const s = norm(id);
-  return /\bd1\b|\bd1 |\bd1-|laya/i.test(s);
-}
-
-// Modelo de TEXTO puro (chat/completions). Exclui áudio/ASR/TTS/STS/decisão/VAD.
+// Modelo de TEXTO (gera resposta via chat/completions). d1 = decisão (systemone),
+// LFM3-Audio/Voxtral = áudio, silero = VAD — NENHUM desses gera texto de sugestão.
 export function isTextModel(id: string): boolean {
-  const s = norm(id);
-  return !isAsrModel(id) && !isTtsModel(id) && !isStsModel(id) && !isDecisionModel(id)
-    && !/silero|vad |diar |sortformer|mossformer|deepfilter|sam audio/i.test(s);
+  return !/d1|omni|audio|voxtral|silero|vad/i.test(id);
 }
 
 // Remove modelo de LLM inválido (não-texto) pra o nó usar o default de texto —

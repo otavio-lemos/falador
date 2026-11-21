@@ -8,7 +8,7 @@ import { TopBar } from './components/TopBar';
 import { BuilderView } from './views/BuilderView';
 import { LiveView } from './views/LiveView';
 import { useRunner } from './useRunner';
-import { fetchCatalog, fetchFlows, fetchFlow, fetchModels, fetchApps, fetchContext, saveFlow, uploadDoc, removeDoc, type Catalog, type Flow, type ContextDoc } from './api';
+import { fetchCatalog, fetchFlows, fetchFlow, fetchModels, fetchApps, fetchContext, uploadDoc, removeDoc, type Catalog, type Flow, type ContextDoc } from './api';
 import { applyContext, sanitizeFlow } from './live-utils';
 
 function scenarioLabel(name: string): string {
@@ -65,25 +65,6 @@ export function App() {
   };
   const onSave = () => { actionsRef.current?.save(); setToast('Flow salvo'); };
 
-  const onNewFlow = async () => {
-    const name = `workflow-${Date.now()}`;
-    const blank: Flow = { version: 1, nodes: [], edges: [], stopWhenSourcesDone: true, description: 'Novo workflow' };
-    await saveFlow(name, blank);
-    await refreshFlows();
-    setCurrentFlow(name);
-    setToast(`Workflow "${name}" criado`);
-  };
-
-  const onRename = async (newName: string, newDesc: string) => {
-    const f = actionsRef.current?.getFlow();
-    if (!f) return;
-    const updated: Flow = { ...f, description: newDesc };
-    await saveFlow(newName, updated, newName !== currentFlow ? currentFlow : undefined);
-    setCurrentFlow(newName);
-    await refreshFlows();
-    setToast('Workflow renomeado');
-  };
-
   // trocar uma etapa = atualiza o param REAL do nó e reinicia a sessão (motor não faz hot-swap)
   const onUpdateStage = (nodeId: string, param: string, value: unknown) => {
     if (!liveFlow) return;
@@ -127,10 +108,7 @@ export function App() {
           <TopBar
             view={view} latencyMs={runner.latency} running={runner.running}
             flows={flows} currentFlow={currentFlow}
-            description={flows.find((f) => f.name === currentFlow)?.description ?? ''}
-            models={models}
             onSelectFlow={setCurrentFlow} onSave={onSave}
-            onRename={onRename} onNewFlow={onNewFlow}
             onTest={onTest} onGoLive={onGoLive}
             onGoBuilder={() => setView('builder')} onStop={runner.stop}
           />
@@ -142,8 +120,6 @@ export function App() {
                 <BuilderView
                   catalog={catalog} currentFlow={currentFlow} runner={runner}
                   registerActions={registerActions} onSaved={refreshFlows}
-                  models={models} apps={apps}
-                  onRefreshApps={() => fetchApps().then(setApps).catch(() => {})}
                 />
               </div>
             </ReactFlowProvider>
@@ -155,7 +131,7 @@ export function App() {
               contextDocs={contextDocs} onUploadDoc={onUploadDoc} onRemoveDoc={onRemoveDoc}
               onStart={startWithContext}
               flows={flows} currentFlow={currentFlow} onSwitchFlow={onSwitchLiveFlow}
-              onUpdateStage={onUpdateStage} onRegenerate={onRegenerate} onRefreshApps={() => fetchApps().then(setApps).catch(() => {})} onExit={onExit}
+              onUpdateStage={onUpdateStage} onRegenerate={onRegenerate} onExit={onExit}
             />
           )}
         </div>
