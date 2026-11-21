@@ -189,7 +189,30 @@ async function handleApi(req, res, pathname) {
     child.stdout.on('data', (d) => (out += d));
     child.on('exit', () => {
       clearTimeout(to);
-      try { return json(res, 200, { apps: JSON.parse(out) }); } catch { return json(res, 200, { apps: [] }); }
+      try {
+        const raw = JSON.parse(out);
+        // Filtra só apps de usuário reais: bundle não vazio, não-Apple, não XPC/helper/agent
+        const SKIP_PREFIXES = [
+          'com.apple.', // exclui serviços Apple e helpers do sistema
+        ];
+        const SKIP_SUFFIXES = [
+          '.xpc', '.helper', 'Service', 'Agent', 'Daemon',
+        ];
+        const SKIP_NAMES = [
+          'loginwindow', 'Dock', 'Finder', 'WindowManager',
+          'CursorUIViewService', 'LocalAuthenticationRemoteService',
+          'AccessibilityVisualsAgent', 'MenuBarAgent', 'TextInputSwitcher',
+          'UserNotificationCenter',
+        ];
+        const apps = raw.filter(a => {
+          if (!a.bundleId) return false;
+          if (SKIP_PREFIXES.some(p => a.bundleId.startsWith(p))) return false;
+          if (SKIP_SUFFIXES.some(s => a.bundleId.endsWith(s) || a.name.endsWith(s))) return false;
+          if (SKIP_NAMES.includes(a.name)) return false;
+          return true;
+        });
+        return json(res, 200, { apps });
+      } catch { return json(res, 200, []); }
     });
     return true;
   }

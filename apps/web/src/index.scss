@@ -33,22 +33,92 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 }
 .topbar-left { display: flex; align-items: center; gap: $spacing-05; min-width: 0; }
 .topbar-title { @include type-style('productive-heading-03'); color: $txt-1; white-space: nowrap; }
-.topbar-flow { display: flex; align-items: center; gap: $spacing-02; width: 18rem; }
+.topbar-flow { display: flex; align-items: center; gap: $spacing-02; min-width: 0; position: relative; }
 .topbar-center { flex: 1; display: flex; justify-content: center; }
 .latency-pill { font-size: 13px; }
 .topbar-right { display: flex; align-items: center; gap: $spacing-03; }
+
+// botão selector do flow atual
+.topbar-flow-btn {
+  display: flex; align-items: center; gap: $spacing-02;
+  background: $bg-panel; border: 1px solid $border-1; border-radius: 4px;
+  padding: $spacing-02 $spacing-03; cursor: pointer; min-width: 160px; max-width: 280px;
+  color: $txt-1; @include type-style('body-compact-01');
+  &:hover { background: #2a2a2a; }
+}
+.topbar-flow-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topbar-flow-desc { @include type-style('helper-text-01'); color: $txt-2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
+.topbar-flow-caret { margin-left: auto; flex-shrink: 0; color: $txt-2; }
+
+// dropdown de seleção de flow
+.topbar-dropdown {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 9999;
+  background: #1e1e1e; border: 1px solid $border-1; border-radius: 4px;
+  min-width: 260px; max-height: 320px; overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+.topbar-dd-item {
+  padding: $spacing-03 $spacing-04; cursor: pointer;
+  display: flex; flex-direction: column; gap: 2px;
+  &:hover { background: #2a2a2a; }
+  &--active { background: #252525; }
+  &--action { flex-direction: row; align-items: center; color: $blue; @include type-style('body-compact-01'); }
+}
+.topbar-dd-sep { height: 1px; background: $border-1; margin: $spacing-02 0; }
+.tdi-name { @include type-style('body-compact-01'); color: $txt-1; font-weight: 600; }
+.tdi-desc { @include type-style('helper-text-01'); color: $txt-2; }
+
+// edição inline de nome/descrição
+.topbar-edit {
+  display: flex; align-items: center; gap: $spacing-02;
+  background: $bg-panel; border: 1px solid $blue; border-radius: 4px; padding: $spacing-02;
+}
+.topbar-edit-name {
+  background: transparent; border: none; outline: none; color: $txt-1;
+  @include type-style('body-compact-01'); font-weight: 600; width: 140px;
+}
+.topbar-edit-desc {
+  background: transparent; border: none; outline: none; color: $txt-2;
+  @include type-style('helper-text-01'); width: 180px;
+  border-left: 1px solid $border-1; padding-left: $spacing-02;
+}
+
+// modal de modelos
+.models-modal-list { margin-top: $spacing-04; display: flex; flex-direction: column; gap: $spacing-04; max-height: 420px; overflow-y: auto; }
+.models-modal-empty { @include type-style('body-compact-01'); color: $txt-2; }
+.models-modal-group { display: flex; flex-direction: column; gap: $spacing-02; }
+.models-modal-group-title { @include type-style('label-01'); color: $txt-2; text-transform: uppercase; letter-spacing: 0.08em; padding-bottom: $spacing-01; border-bottom: 1px solid $border-1; }
+.models-modal-item { display: flex; align-items: center; gap: $spacing-03; padding: $spacing-02 0; }
+.models-modal-name { @include type-style('body-compact-01'); color: $txt-1; font-weight: 600; flex-shrink: 0; }
+.models-modal-id { @include type-style('helper-text-01'); color: $txt-2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.models-modal-badge { @include type-style('label-01'); padding: 1px 6px; border-radius: 10px; flex-shrink: 0; }
+.models-modal-badge--live { background: #14432a; color: #22c55e; }
+.models-modal-badge--cache { background: #1e3a5f; color: #60a5fa; }
 
 // ---- builder: paleta + canvas ----
 .builder-wrap { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .builder { flex: 1; min-height: 0; display: flex; }
 .builder-status {
-  display: flex; align-items: center; gap: $spacing-03; flex-shrink: 0;
-  padding: $spacing-02 $spacing-05; background: $bg-bar; border-top: 1px solid $border-1;
+  display: flex; flex-direction: column; gap: $spacing-02; flex-shrink: 0;
+  padding: $spacing-03 $spacing-05; background: $bg-bar; border-top: 1px solid $border-1;
+  max-height: 260px;
   @include type-style('helper-text-01'); color: $txt-2;
 }
-.builder-status--err { color: #ff8389; }
+.builder-status-top { display: flex; align-items: center; gap: $spacing-03; }
+.builder-status--err .builder-status-top { color: #ff8389; }
 .builder-status-state { color: $txt-1; font-weight: 600; }
 .builder-status-msg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.builder-output {
+  overflow-y: auto; display: flex; flex-direction: column; gap: $spacing-02;
+  padding: $spacing-02 0;
+}
+.builder-output-line {
+  @include type-style('body-compact-01'); color: $txt-1;
+  padding: $spacing-02 $spacing-03;
+  background: #1e1e1e; border-left: 3px solid #22c55e; border-radius: 2px;
+  white-space: pre-wrap; word-break: break-word;
+}
+.builder-output-line--partial { color: $txt-2; border-left-color: #525252; }
 
 .palette {
   width: 280px; flex-shrink: 0; background: $bg-panel;
@@ -111,10 +181,20 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 .fnode-meta { display: flex; align-items: center; gap: $spacing-02; margin-top: $spacing-02; }
 .fnode-latency { @include type-style('helper-text-01'); color: $txt-2; }
 .fnode-io { @include type-style('helper-text-01'); color: #6f6f6f; }
-.fnode-handle { background: var(--accent); }
+.fnode-handle { width: 12px; height: 12px; border: 2px solid $bg-app; }
+.fnode-handle--in  { border-radius: 2px; }   /* quadrado = input */
+.fnode-handle--out { border-radius: 50%; }   /* círculo  = output */
+.fnode-port-legend {
+  position: absolute; bottom: -22px; left: 0; right: 0;
+  display: flex; justify-content: space-between; padding: 0 $spacing-02;
+  pointer-events: none;
+}
+.fnode-port-label { @include type-style('label-01'); font-size: 9px; opacity: 0.85; }
+.fnode-port-label--in  { text-align: left; }
+.fnode-port-label--out { text-align: right; }
 
 // ---- editor inline (ancorado no nó) ----
-.node-editor-anchor { position: absolute; z-index: 20; width: 320px; }
+.node-editor-anchor { position: absolute; z-index: 20; width: 480px; }
 .node-editor {
   background: $bg-panel; border: 1px solid $border-2; border-radius: 6px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6); overflow: hidden;
@@ -124,12 +204,15 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   padding: $spacing-03 $spacing-04; border-bottom: 1px solid $border-1;
 }
 .node-editor-title { @include type-style('productive-heading-01'); color: $txt-1; }
-.node-editor-fields { padding: $spacing-04; display: flex; flex-direction: column; gap: $spacing-05; max-height: 380px; overflow-y: auto; }
+.node-editor-fields { padding: $spacing-04; display: flex; flex-direction: column; gap: $spacing-05; max-height: 520px; overflow-y: auto; }
 .node-editor-empty { @include type-style('body-01'); color: $txt-2; margin: 0; }
 .node-editor-metrics { @include type-style('helper-text-01'); color: $txt-2; display: flex; flex-direction: column; gap: 2px; }
 .node-editor-log { @include type-style('code-01'); color: #c6c6c6; padding: 2px 0; border-bottom: 1px solid $border-1; }
 .pe-field { display: flex; flex-direction: column; }
+.pe-field--app { flex-direction: row; align-items: flex-end; gap: $spacing-02; }
+.pe-field--app .cds--combo-box { flex: 1; }
 .pe-help { @include type-style('helper-text-01'); color: $txt-2; margin-top: $spacing-02; }
+.pe-warn { @include type-style('helper-text-01'); color: #f1c21b; margin-top: $spacing-02; }
 
 // ---- tela de execução (layout do dono) ----
 .live2 { flex: 1; min-width: 0; display: flex; flex-direction: column; height: 100%; }

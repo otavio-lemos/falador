@@ -7,7 +7,8 @@ import { Button, Dropdown, Tag, TextArea } from '@carbon/react';
 import { Pause, Play, Stop, Renew, Edit, Checkmark, Document, Warning, Information, Microphone, Add, TrashCan } from '@carbon/icons-react';
 import type { Runner } from '../useRunner';
 import { fetchTopics, type Flow, type ContextDoc } from '../api';
-import { deriveStages, classifySinks, shortModel, isTextModel, type Stage } from '../live-utils';
+import { deriveStages, classifySinks, shortModel, isTextModel, isAsrModel, type Stage } from '../live-utils';
+import { LANGS } from '../data';
 
 interface Props {
   runner: Runner;
@@ -24,6 +25,7 @@ interface Props {
   onSwitchFlow: (name: string) => void;
   onUpdateStage: (nodeId: string, param: string, value: unknown) => void;
   onRegenerate: () => void;
+  onRefreshApps: () => void;
   onExit: () => void;
 }
 
@@ -32,10 +34,11 @@ interface Item { id: string; label: string }
 function stageItems(stage: Stage, models: { omlx: string[]; cache: string[] }, apps: string[]): Item[] {
   if (stage.kind === 'gate') return [{ id: 'humano', label: 'Manual' }, { id: 'auto', label: 'Auto' }];
   if (stage.kind === 'voice') return [{ id: 'female', label: 'Feminino' }, { id: 'male', label: 'Masculino' }];
+  if (stage.kind === 'language') return LANGS.map((l) => ({ id: l.val, label: l.label }));
   let vals: string[] = [];
   if (stage.kind === 'app') vals = apps.length ? apps : [stage.value];
-  // ASR: o param é o SNAPSHOT PATH real (não o nome do repo, que quebraria o load)
-  else if (stage.kind === 'model-asr') vals = stage.value ? [stage.value] : [];
+  // ASR: modelos compatíveis vindos do omlx e do cache HF, preservando o atual.
+  else if (stage.kind === 'model-asr') vals = [...models.omlx, ...models.cache.filter((m) => !models.omlx.includes(m))].filter(isAsrModel);
   // LLM de sugestão: SÓ modelos de texto (d1/áudio/VAD não geram resposta)
   else if (stage.kind === 'model-llm') vals = models.omlx.filter(isTextModel);
   const items = vals.filter(Boolean).map((v) => ({ id: v, label: stage.kind.startsWith('model') ? shortModel(v) : v }));
@@ -47,7 +50,7 @@ function stageItems(stage: Stage, models: { omlx: string[]; cache: string[] }, a
   return items.length ? items : [{ id: stage.value || '—', label: stage.value || '—' }];
 }
 
-export function LiveView({ runner, flow, scenarioName, models, apps, contextDocs, onUploadDoc, onRemoveDoc, onStart, flows, currentFlow, onSwitchFlow, onUpdateStage, onRegenerate, onExit }: Props) {
+export function LiveView({ runner, flow, scenarioName, models, apps, contextDocs, onUploadDoc, onRemoveDoc, onStart, flows, currentFlow, onSwitchFlow, onUpdateStage, onRegenerate, onRefreshApps, onExit }: Props) {
   const stages = useMemo(() => deriveStages(flow), [flow]);
   const sinks = useMemo(() => classifySinks(flow), [flow]);
   const [editing, setEditing] = useState(false);
@@ -130,6 +133,9 @@ export function LiveView({ runner, flow, scenarioName, models, apps, contextDocs
                     selectedItem={items.find((i) => i.id === s.value) ?? items[0]}
                     onChange={({ selectedItem }) => selectedItem && onUpdateStage(s.nodeId, s.param, selectedItem.id)}
                   />
+                  {s.kind === 'app' && (
+                    <Button kind="ghost" size="sm" hasIconOnly renderIcon={Renew} iconDescription="Recarregar apps" tooltipPosition="bottom" onClick={onRefreshApps} />
+                  )}
                 </div>
               );
             })}
