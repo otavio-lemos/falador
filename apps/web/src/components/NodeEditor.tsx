@@ -1,13 +1,14 @@
-// Editor INLINE de nó — abre ancorado no próprio nó clicado (não num painel direito
-// apertado). Abas Configuração / Regras / Logs como no layout do dono. Campos reais
-// de cada nó (PARAM_HELP), com o controle certo: dropdown/slider/toggle/textarea/json.
+// Editor INLINE de nó — abre ancorado no próprio nó clicado.
+// Abas Configuração / Regras / Logs. Campos reais de cada nó (PARAM_HELP):
+// dropdown / slider / toggle / textarea / json / model (ComboBox filtrado por capacidade).
 import { useState } from 'react';
 import {
-  Dropdown, Slider, Toggle, TextArea, TextInput,
-  Tabs, TabList, Tab, TabPanels, TabPanel, IconButton,
+  ComboBox, Dropdown, Slider, Toggle, TextArea, TextInput,
+  Tabs, TabList, Tab, TabPanels, TabPanel, IconButton, Button,
 } from '@carbon/react';
-import { Close } from '@carbon/icons-react';
+import { Close, Renew } from '@carbon/icons-react';
 import { PARAM_HELP, type ParamDoc } from '../data';
+import { isTextModel, isAsrModel, isTtsModel, isStsModel, isDecisionModel } from '../live-utils';
 import type { FaladorNodeData } from '../flow-utils';
 import type { NodeMetrics, RunnerEvent } from '../api';
 
@@ -18,13 +19,27 @@ interface Props {
   onClose: () => void;
   metrics?: NodeMetrics;
   events: RunnerEvent[];
+  models: { omlx: string[]; cache: string[] };
+  apps: string[];
+  onRefreshApps: () => void;
 }
 
-export function NodeEditor({ nodeId, data, onChange, onClose, metrics, events }: Props) {
+/** Lista de modelos filtrada pela capacidade do nó. */
+function modelsForNode(nodeType: string, models: { omlx: string[]; cache: string[] }): string[] {
+  const all = [...models.omlx, ...models.cache.filter((m) => !models.omlx.includes(m))];
+  if (nodeType === 'asr.realtime' || nodeType === 'asr.lfm3') return all.filter(isAsrModel);
+  if (nodeType === 'tts.sts') return all.filter((m) => isTtsModel(m) || isStsModel(m));
+  if (nodeType === 'decision.llm') return all.filter(isDecisionModel);
+  if (nodeType === 'llm.omlx') return all.filter(isTextModel);
+  return all;
+}
+
+export function NodeEditor({ nodeId, data, onChange, onClose, metrics, events, models, apps, onRefreshApps }: Props) {
   const docs = PARAM_HELP[data.type] ?? {};
   const p = data.params;
   const set = (name: string, value: unknown) => onChange({ ...p, [name]: value });
   const nodeEvents = events.filter((e) => (e as { nodeId?: string }).nodeId === nodeId).slice(-12);
+  const nodeModels = modelsForNode(data.type, models);
 
   return (
     <div className="node-editor" role="dialog" aria-label={`Propriedades de ${data.type}`}>
@@ -51,7 +66,16 @@ export function NodeEditor({ nodeId, data, onChange, onClose, metrics, events }:
                 </p>
               )}
               {data.paramNames.map((name) => (
-                <ParamField key={name} name={name} doc={docs[name]} value={p[name]} onChange={(v) => set(name, v)} />
+                <ParamField
+                  key={name}
+                  name={name}
+                  doc={docs[name]}
+                  value={p[name]}
+                  onChange={(v) => set(name, v)}
+                  nodeModels={name === 'model' ? nodeModels : []}
+                  apps={name === 'input' && data.type.startsWith('capture.') ? apps : []}
+                  onRefreshApps={onRefreshApps}
+                />
               ))}
             </div>
           </TabPanel>
@@ -87,10 +111,84 @@ export function NodeEditor({ nodeId, data, onChange, onClose, metrics, events }:
   );
 }
 
-function ParamField({ name, doc, value, onChange }: { name: string; doc?: ParamDoc; value: unknown; onChange: (v: unknown) => void }) {
+function ParamField({
+  name, doc, value, onChange, nodeModels, apps, onRefreshApps,
+}: {
+  name: string;
+  doc?: ParamDoc;
+  value: unknown;
+  onChange: (v: unknown) => void;
+  nodeModels: string[];
+  apps: string[];
+  onRefreshApps: () => void;
+}) {
   const helper = doc ? `${doc.help}${doc.def ? ` · default: ${doc.def}` : ''}` : undefined;
   const control = doc?.control ?? inferControl(name, value);
   const [jsonErr, setJsonErr] = useState<string | undefined>();
+
+  // Campo de modelo: ComboBox com lista filtrada por capacidade do nó
+  if (control === 'model') {
+    const cur = value === undefined || value === null ? '' : String(value);
+    const items = nodeModels.map((m) => ({ id: m, label: shortLabel(m) }));
+    // garante que o valor atual aparece mesmo se não estiver na lista
+    if (cur && !items.some((i) => i.id === cur)) {
+      items.unshift({ id: cur, label: shortLabel(cur) });
+    }
+    return (
+      <div className="pe-field">
+        <ComboBox
+          id={`pe-${name}`} titleText={name} size="sm"
+          helperText={helper}
+          placeholder={doc?.def ?? 'Escolha ou digite o modelo…'}
+          items={items}
+          itemToString={(it) => (it ? it.label : '')}
+          selectedItem={items.find((i) => i.id === cur) ?? null}
+          onChange={({ selectedItem }) => {
+            if (selectedItem) onChange(selectedItem.id);
+          }}
+          onInputChange={(txt) => {
+            // aceita digitação livre (paths longos do HF cache)
+            if (txt && !items.some((i) => i.id === txt)) onChange(txt);
+          }}
+        />
+        {nodeModels.length === 0 && (
+          <p className="pe-warn">Nenhum modelo encontrado para este tipo de nó. Verifique se o omlx está rodando.</p>
+        )}
+      </div>
+    );
+  }
+
+  // Campo de app (capture.*): ComboBox com apps ao vivo + botão reload
+  if (apps.length > 0 || (name === 'input' && control !== 'dropdown')) {
+    if (apps.length > 0 || control === 'text') {
+      const cur = value === undefined || value === null ? '' : String(value);
+      const items = apps.map((a) => ({ id: a, label: a }));
+      if (cur && !items.some((i) => i.id === cur)) items.unshift({ id: cur, label: cur });
+      return (
+        <div className="pe-field pe-field--app">
+          <ComboBox
+            id={`pe-${name}`} titleText={name} size="sm"
+            helperText={helper}
+            placeholder="App da call (ex.: Google Chrome, zoom.us…)"
+            items={items}
+            itemToString={(it) => (it ? it.label : '')}
+            selectedItem={items.find((i) => i.id === cur) ?? null}
+            onChange={({ selectedItem }) => { if (selectedItem) onChange(selectedItem.id); }}
+            onInputChange={(txt) => { if (txt) onChange(txt); }}
+          />
+          <Button
+            kind="ghost" size="sm" hasIconOnly renderIcon={Renew}
+            iconDescription="Recarregar apps com áudio ativo"
+            tooltipPosition="bottom"
+            onClick={onRefreshApps}
+          />
+          {apps.length === 0 && (
+            <p className="pe-warn">Nenhum app emitindo áudio agora. Abra a call e clique ↺.</p>
+          )}
+        </div>
+      );
+    }
+  }
 
   if (control === 'dropdown' && doc?.options) {
     const cur = value === undefined ? doc.options[0].val : String(value);
@@ -164,7 +262,7 @@ function ParamField({ name, doc, value, onChange }: { name: string; doc?: ParamD
       </div>
     );
   }
-  // text / model / scalar
+  // text / scalar
   return (
     <div className="pe-field">
       <TextInput
@@ -178,6 +276,13 @@ function ParamField({ name, doc, value, onChange }: { name: string; doc?: ParamD
       />
     </div>
   );
+}
+
+function shortLabel(id: string): string {
+  if (!id) return '—';
+  const m = id.match(/models--([^/]+)/);
+  if (m) return m[1].replace(/--/g, '/');
+  return id.split('/').pop()?.replace(/--/g, '/') ?? id;
 }
 
 function inferControl(name: string, value: unknown): ParamDoc['control'] {

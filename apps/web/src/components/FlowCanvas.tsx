@@ -1,17 +1,26 @@
 // Canvas React Flow + editor INLINE ancorado no nó selecionado (acompanha pan/zoom/drag).
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import {
   ReactFlow, Background, BackgroundVariant, Controls, MiniMap,
   useViewport, useReactFlow, MarkerType, ConnectionMode,
   type Node, type Edge, type OnNodesChange, type OnEdgesChange, type OnConnect,
+  type IsValidConnection,
 } from '@xyflow/react';
 import { FlowNode } from './FlowNode';
 import { NodeEditor } from './NodeEditor';
-import { accentOf } from '../data';
 import type { FNode, FaladorNodeData } from '../flow-utils';
 import type { NodeMetrics, RunnerEvent, RunSnapshot } from '../api';
 
 const nodeTypes = { falador: FlowNode };
+
+// Cor da aresta = cor do tipo de porta (igual ao PORT_COLOR do FlowNode)
+const EDGE_COLOR: Record<string, string> = {
+  pcm16k:        '#06b6d4',
+  tokens_parcial:'#a855f7',
+  phrase:        '#f59e0b',
+  audio_chunk:   '#22c55e',
+};
+function edgeColor(type: string) { return EDGE_COLOR[type] ?? '#5a5a5a'; }
 
 interface Props {
   nodes: FNode[];
@@ -26,30 +35,54 @@ interface Props {
   metrics: RunSnapshot;
   events: RunnerEvent[];
   running: boolean;
+  models: { omlx: string[]; cache: string[] };
+  apps: string[];
+  onRefreshApps: () => void;
 }
 
 export function FlowCanvas(p: Props) {
   const { screenToFlowPosition } = useReactFlow();
-  // enriquece nós com métricas/running e arestas com cor/rótulo (mock: ramos coloridos)
+
+  // enriquece nós com métricas/running
   const nodes = useMemo(() => p.nodes.map((n) => ({
     ...n,
     data: { ...n.data, metrics: p.metrics[n.id], running: p.running },
   })), [p.nodes, p.metrics, p.running]);
 
+  // arestas coloridas pelo tipo da porta de saída (mesmo esquema do FlowNode)
   const edges = useMemo(() => p.edges.map((e) => {
     const src = p.nodes.find((n) => n.id === e.source);
     const isBranch = src?.data.type === 'decision.llm';
-    const color = isBranch ? accentOf(p.nodes.find((n) => n.id === e.target)?.data.type ?? '') : '#5a5a5a';
+    // descobre o tipo da porta fonte para colorir a aresta igual à bolinha
+    // decision.llm tem outputs dinâmicos (não estão no catálogo estático) — tipo = phrase
+    const srcPort = src?.data.outputs.find((o) => o.name === e.sourceHandle);
+    const portType = srcPort?.type ?? (isBranch ? 'phrase' : undefined);
+    const color = isBranch
+      ? edgeColor('phrase')
+      : edgeColor(portType ?? '');
     return {
       ...e,
       type: 'smoothstep',
       label: isBranch ? String(e.sourceHandle ?? '') : undefined,
       labelStyle: { fill: '#f4f4f4', fontSize: 11 },
       labelBgStyle: { fill: '#161616' },
-      style: { stroke: color, strokeWidth: 2, strokeDasharray: isBranch ? undefined : '5 4' },
+      style: { stroke: color, strokeWidth: 2 },
       markerEnd: { type: MarkerType.ArrowClosed, color, width: 16, height: 16 },
     };
   }), [p.edges, p.nodes]);
+
+  // só permite conexão entre portas do mesmo tipo
+  // decision.llm: outputs dinâmicos (tipo phrase) — trata como phrase
+  const isValidConnection = useCallback<IsValidConnection>((connection) => {
+    const srcNode = p.nodes.find((n) => n.id === connection.source);
+    const tgtNode = p.nodes.find((n) => n.id === connection.target);
+    if (!srcNode || !tgtNode) return false;
+    const srcPort = srcNode.data.outputs.find((o) => o.name === connection.sourceHandle);
+    const tgtPort = tgtNode.data.inputs.find((i) => i.name === connection.targetHandle);
+    // sem info de tipo numa das pontas = permissivo (nó com outputs dinâmicos)
+    if (!srcPort || !tgtPort) return true;
+    return srcPort.type === tgtPort.type;
+  }, [p.nodes]);
 
   return (
     <div
@@ -68,7 +101,8 @@ export function FlowCanvas(p: Props) {
         onNodesChange={p.onNodesChange} onEdgesChange={p.onEdgesChange} onConnect={p.onConnect}
         onNodeClick={(_, n) => p.onSelect(n.id)}
         onPaneClick={() => p.onSelect(null)}
-        connectionMode={ConnectionMode.Loose}
+        connectionMode={ConnectionMode.Strict}
+        isValidConnection={isValidConnection}
         fitView fitViewOptions={{ padding: 0.12, maxZoom: 0.9, minZoom: 0.4 }}
         minZoom={0.3} maxZoom={2}
         proOptions={{ hideAttribution: true }}
@@ -88,6 +122,7 @@ export function FlowCanvas(p: Props) {
           onChange={(params) => p.onParamsChange(p.selectedId!, params)}
           onClose={() => p.onSelect(null)}
           metrics={p.metrics[p.selectedId]} events={p.events}
+          models={p.models} apps={p.apps} onRefreshApps={p.onRefreshApps}
         />
       )}
     </div>
@@ -95,15 +130,18 @@ export function FlowCanvas(p: Props) {
 }
 
 // Posiciona o editor em coordenadas de TELA, ao lado do nó (direita; esquerda se não couber).
-function EditorAnchor({ nodes, selectedId, onChange, onClose, metrics, events }: {
+function EditorAnchor({ nodes, selectedId, onChange, onClose, metrics, events, models, apps, onRefreshApps }: {
   nodes: FNode[]; selectedId: string;
   onChange: (params: Record<string, unknown>) => void; onClose: () => void;
   metrics?: NodeMetrics; events: RunnerEvent[];
+  models: { omlx: string[]; cache: string[] };
+  apps: string[];
+  onRefreshApps: () => void;
 }) {
   const vp = useViewport();
   const node = nodes.find((n) => n.id === selectedId);
   if (!node) return null;
-  const W = 320;
+  const W = 480;
   const nodeW = (node.measured?.width ?? 210) * vp.zoom;
   const sx = node.position.x * vp.zoom + vp.x;
   const sy = node.position.y * vp.zoom + vp.y;
@@ -115,6 +153,7 @@ function EditorAnchor({ nodes, selectedId, onChange, onClose, metrics, events }:
       <NodeEditor
         nodeId={selectedId} data={node.data}
         onChange={onChange} onClose={onClose} metrics={metrics} events={events}
+        models={models} apps={apps} onRefreshApps={onRefreshApps}
       />
     </div>
   );
