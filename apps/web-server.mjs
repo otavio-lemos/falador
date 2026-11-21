@@ -46,6 +46,14 @@ function getSessionsDir() {
 
 let currentRun = null; // { child, clients:Set<res>, stopRequested }
 
+// Carência antes de parar um run cujo ÚLTIMO cliente SSE desconectou (reload/troca de
+// view). Se um cliente reconectar dentro dela, o stop é cancelado. Assim um reload não
+// deixa run zumbi e o próximo run não leva 409.
+function clientStopGraceMs() {
+  const v = Number(process.env.FALADOR_RUN_IDLE_STOP_MS ?? 5000);
+  return Number.isFinite(v) && v >= 0 ? v : 5000;
+}
+
 function createEmptySession(flowName = 'sessao') {
   return {
     startedAt: new Date().toISOString(),
@@ -358,11 +366,27 @@ function startRun(flow, runSeconds, flowName) {
   const transcriptionSinks = classifyFlowTranscriptionSinks(flow);
   sessionBuffer = createEmptySession(flowName || flow?.name || 'sessao');
   currentRun = { child, clients, stopRequested: false };
+  let clientStopTimer = null;
   const sses = (res) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     res.write(`event: attached\ndata: {}\n\n`);
     clients.add(res);
-    res.on('close', () => clients.delete(res));
+    // um cliente (re)conectou: cancela a parada agendada por desconexão
+    if (clientStopTimer) { clearTimeout(clientStopTimer); clientStopTimer = null; }
+    res.on('close', () => {
+      clients.delete(res);
+      if (clients.size !== 0) return;
+      if (!currentRun || currentRun.child !== child) return;
+      if (clientStopTimer) return; // já existe um stop agendado para este run
+      clientStopTimer = setTimeout(() => {
+        clientStopTimer = null;
+        // revalida no disparo: run trocado, cliente reconectado ou child já morto
+        if (!currentRun || currentRun.child !== child || clients.size !== 0 || child.exitCode !== null) return;
+        currentRun.stopRequested = true;
+        try { child.kill('SIGTERM'); } catch { /* já morto */ }
+      }, clientStopGraceMs());
+      clientStopTimer.unref?.();
+    });
   };
   let buf = '';
   child.stdout.on('data', (d) => {

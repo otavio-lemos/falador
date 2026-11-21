@@ -192,4 +192,72 @@ describe('apps/web-server.mjs — RAG genérico, reset-history e exportação p�
       rmSync(tmpRoot, { recursive: true, force: true });
     }
   });
+
+  test('run único: desconectar o último cliente SSE para o run após a carência e libera o próximo (sem 409)', async () => {
+    const prevGrace = process.env.FALADOR_RUN_IDLE_STOP_MS;
+    process.env.FALADOR_RUN_IDLE_STOP_MS = '800'; // carência curta para teste determinístico
+
+    const { createWebServer } = await import('./web-server.mjs');
+    const server = createWebServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+    // Fluxo que fica vivo: fonte input.chat + stopWhenSourcesDone:false (como agente-workflows)
+    const flow = {
+      version: 1,
+      stopWhenSourcesDone: false,
+      nodes: [
+        { id: 'chat', type: 'input.chat', params: {} },
+        { id: 'out', type: 'sink.captions', params: { mode: 'callback' } },
+      ],
+      edges: [{ from: 'chat.parcs', to: 'out.in', capacity: 8, overflow: 'block' }],
+    };
+
+    try {
+      // Abre o SSE e desconecta o cliente (simula reload/troca de view)
+      const ctl = new AbortController();
+      const resp = await fetch(`${baseUrl}/api/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ flow, flowName: 'test-disconnect' }),
+        signal: ctl.signal,
+      });
+      assert.equal(resp.status, 200);
+      const reader = resp.body.getReader();
+      await reader.read(); // frame 'attached' (run iniciado)
+      await reader.cancel();
+      ctl.abort();
+
+      // Logo após desconectar, o run ainda existe: 2o POST leva 409 (a carência corre)
+      const during = await fetch(`${baseUrl}/api/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ flow, flowName: 'test-disconnect-2' }),
+      });
+      assert.equal(during.status, 409);
+      await during.body?.cancel();
+
+      // Após a carência + SIGTERM, o host libera currentRun e o próximo run responde 200
+      let finalStatus = 0;
+      const deadline = Date.now() + 6000;
+      while (Date.now() < deadline) {
+        const r = await fetch(`${baseUrl}/api/run`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ flow, flowName: 'test-disconnect-3' }),
+        });
+        finalStatus = r.status;
+        await r.body?.cancel();
+        if (r.status === 200) break;
+        await new Promise((res) => setTimeout(res, 150));
+      }
+      assert.equal(finalStatus, 200, 'esperado 200 (run liberado) após a carência de desconexão');
+    } finally {
+      await fetch(`${baseUrl}/api/stop`, { method: 'POST' }).catch(() => {});
+      await new Promise((res) => setTimeout(res, 700)); // deixa o child do runner sair
+      await new Promise((resolve) => server.close(() => resolve()));
+      if (prevGrace === undefined) delete process.env.FALADOR_RUN_IDLE_STOP_MS;
+      else process.env.FALADOR_RUN_IDLE_STOP_MS = prevGrace;
+    }
+  });
 });

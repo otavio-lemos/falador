@@ -265,7 +265,26 @@ export function LiveView({
   const chatNode = flow.nodes.find((n) => n.type === 'input.chat');
   const chatPlaceholder =
     (typeof chatNode?.params?.placeholder === 'string' && chatNode.params.placeholder.trim()) ||
-    'Digite sua mensagem ou comando (Enter para enviar)…';
+    'Digite sua mensagem ou comando (Enter para enviar)...';
+
+  // Conversa do CHAT (flow com nó input.chat): prompts do usuário + respostas FINAIS do
+  // agente (captions de sugestão), intercalados por ts. A última legenda de sugestão ainda
+  // não-final vira uma bolha de agente "ao vivo" no fim.
+  const suggestionCaption = lastOf(sinks.suggestion);
+  const liveAgent = suggestionCaption && !suggestionCaption.final && runner.running ? suggestionCaption : null;
+  const conversation = useMemo(() => {
+    const items: { role: 'user' | 'agent'; text: string; ts: number }[] = [];
+    for (const m of runner.chatMessages) items.push({ role: 'user', text: m.text, ts: m.ts });
+    for (const c of runner.captions) {
+      if (c.final && sinks.suggestion.has(c.nodeId)) items.push({ role: 'agent', text: c.text, ts: c.ts });
+    }
+    return items.sort((a, b) => a.ts - b.ts);
+  }, [runner.chatMessages, runner.captions, sinks.suggestion]);
+  const chatLogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = chatLogRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [conversation.length, liveAgent?.text]);
 
   const handleSendChat = async () => {
     const text = chatInput.trim();
@@ -318,6 +337,45 @@ export function LiveView({
   }, [transcription, runner.running]);
 
   const bd = runner.latencyBreakdown;
+
+  // Card de aprovação de comando (exec.command / agent.tools) — compartilhado pelo layout
+  // de chat (flows com input.chat) e pelo layout clássico de sugestão.
+  const commandGateCard = gate && gateInfo.isCommand ? (
+    <div className="cmd-gate-card">
+      <div className="cmd-gate-head">
+        <span className="cmd-gate-title"><Terminal size={16} /> Aprovação de Comando ({gate.nodeId})</span>
+        <div className="cmd-gate-badges">
+          {gateInfo.tool && (
+            <Tag type="teal" size="sm">Tool: {gateInfo.tool}</Tag>
+          )}
+          <Tag type="cyan" size="sm">Host: {gateInfo.host}</Tag>
+          {gateInfo.decision && (
+            <Tag type={riskTagType(gateInfo.decision)} size="sm">Risco d1: {gateInfo.decision}</Tag>
+          )}
+          {hasExec && (
+            <Tag type={execActive ? 'red' : 'blue'} size="sm">{execActive ? 'EXEC ATIVO' : 'DRY-RUN'}</Tag>
+          )}
+        </div>
+      </div>
+      {gateInfo.reason && <p className="cmd-gate-reason">{gateInfo.reason}</p>}
+      <TextArea
+        id="cmd-gate-input"
+        labelText="Comando (editável antes da execução)"
+        rows={3}
+        className="cmd-gate-textarea"
+        value={cmdDraft}
+        onChange={(e) => setCmdDraft(e.target.value)}
+      />
+      <div className="live2-actions">
+        <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
+          Aprovar e Executar
+        </Button>
+        <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>
+          Rejeitar
+        </Button>
+      </div>
+    </div>
+  ) : null;
 
   return (
     <div className="live2">
@@ -387,52 +445,11 @@ export function LiveView({
       <div className="live2-body">
         <main className="live2-main">
           {lastError && <div className="live2-error">⚠ [{lastError.nodeId}] {lastError.message}</div>}
-          {chatNode && (
-            <div className="chatbox-panel">
-              <div className="live2-label">Chat / Prompt ({chatNode.id})</div>
-              {runner.chatMessages.length > 0 && (
-                <div className="chatbox-history">
-                  {runner.chatMessages.map((m, idx) => (
-                    <div key={`${m.ts}-${idx}`} className="chatbox-msg">
-                      <span className="chatbox-msg-role">Você</span>
-                      <span className="chatbox-msg-text">{m.text}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div className="chatbox-input-row">
-                <TextArea
-                  id="live-chat-input"
-                  labelText="Prompt"
-                  hideLabel
-                  rows={2}
-                  placeholder={runner.running ? chatPlaceholder : 'Inicie a sessão para enviar mensagens…'}
-                  value={chatInput}
-                  disabled={!runner.running || sendingChat}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      void handleSendChat();
-                    }
-                  }}
-                />
-                <Button
-                  kind="primary"
-                  size="md"
-                  renderIcon={Play}
-                  disabled={!runner.running || sendingChat || !chatInput.trim()}
-                  onClick={() => void handleSendChat()}
-                >
-                  Enviar
-                </Button>
-              </div>
-            </div>
-          )}
+          {!lastError && runner.lastRunError && <div className="live2-error">⚠ {runner.lastRunError}</div>}
           {isAssisted && (
             <>
               <div className="live2-label">{hasExec ? 'Solicitação por voz (transcrição ao vivo)' : 'Transcrição ao vivo (entrevistador)'}</div>
-              <div className="live2-transcription">{transcription || (runner.running ? 'Ouvindo…' : '—')}</div>
+              <div className="live2-transcription">{transcription || (runner.running ? 'Ouvindo...' : '—')}</div>
             </>
           )}
 
@@ -456,78 +473,119 @@ export function LiveView({
             })}
           </div>
 
-          <div className="live2-label">{heroLabel}</div>
-
-          {gate && gateInfo.isCommand ? (
-            <div className="cmd-gate-card">
-              <div className="cmd-gate-head">
-                <span className="cmd-gate-title"><Terminal size={16} /> Aprovação de Comando ({gate.nodeId})</span>
-                <div className="cmd-gate-badges">
-                  {gateInfo.tool && (
-                    <Tag type="teal" size="sm">Tool: {gateInfo.tool}</Tag>
-                  )}
-                  <Tag type="cyan" size="sm">Host: {gateInfo.host}</Tag>
-                  {gateInfo.decision && (
-                    <Tag type={riskTagType(gateInfo.decision)} size="sm">Risco d1: {gateInfo.decision}</Tag>
-                  )}
-                  {hasExec && (
-                    <Tag type={execActive ? 'red' : 'blue'} size="sm">{execActive ? 'EXEC ATIVO' : 'DRY-RUN'}</Tag>
-                  )}
-                </div>
-              </div>
-              {gateInfo.reason && <p className="cmd-gate-reason">{gateInfo.reason}</p>}
-              <TextArea
-                id="cmd-gate-input"
-                labelText="Comando (editável antes da execução)"
-                rows={3}
-                className="cmd-gate-textarea"
-                value={cmdDraft}
-                onChange={(e) => setCmdDraft(e.target.value)}
-              />
-              <div className="live2-actions">
-                <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
-                  Aprovar e Executar
-                </Button>
-                <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>
-                  Rejeitar
-                </Button>
-              </div>
-            </div>
-          ) : (
+          {chatNode ? (
             <>
-              <div className="live2-suggestion">
-                {editing && hasGate ? (
-                  <TextArea labelText="Editar sugestão" hideLabel rows={4} value={draft} onChange={(e) => setDraft(e.target.value)} />
-                ) : (
-                  <div className="live2-suggestion-text">
-                    {heroText || (runner.running ? (isAssisted ? 'Gerando resposta…' : 'Aguardando áudio…') : 'Inicie a sessão.')}
-                    {runner.running && !editing && <span className="live-cursor" />}
-                  </div>
-                )}
-              </div>
-              {(hasLLM || hasGate) && (
-                <div className="live2-actions">
-                  {hasLLM && <Button kind="ghost" size="sm" renderIcon={Renew} onClick={onRegenerate}>Regerar</Button>}
-                  {hasGate && (editing ? (
+              {commandGateCard}
+              {hasGate && gate && !gateInfo.isCommand && (
+                <div className="live2-actions live-chat-gate-actions">
+                  {editing ? (
                     <>
-                      <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={approve} disabled={!gate}>Enviar editada</Button>
+                      <TextArea labelText="Editar sugestão" hideLabel rows={3} value={draft} onChange={(e) => setDraft(e.target.value)} />
+                      <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={approve}>Enviar editada</Button>
                       <Button kind="ghost" size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
                     </>
                   ) : (
                     <>
-                      <Button kind="ghost" size="sm" renderIcon={Edit} onClick={startEdit} disabled={!gate}>Editar</Button>
-                      <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve} disabled={!gate}>
+                      <Button kind="ghost" size="sm" renderIcon={Edit} onClick={startEdit}>Editar</Button>
+                      <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
                         {hasTTS ? 'Aprovar & Falar' : 'Aprovar'}
                       </Button>
-                      {gate && (
-                        <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>Rejeitar</Button>
-                      )}
+                      <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>Rejeitar</Button>
                     </>
-                  ))}
+                  )}
                 </div>
               )}
-              {hasGate && !gate && runner.running && (
-                <p className="live2-hint">Roteamento automático — sem gate humano pendente.</p>
+
+              <div className="live-chat">
+                <div className="live2-label">Conversa</div>
+                <div className="live-chat-log" ref={chatLogRef}>
+                  {conversation.length === 0 && !liveAgent && (
+                    <p className="live-chat-empty">
+                      {runner.running ? 'Envie uma mensagem para conversar com o agente.' : 'Inicie a sessão para conversar com o agente.'}
+                    </p>
+                  )}
+                  {conversation.map((m, idx) => (
+                    <div key={`${m.ts}-${idx}`} className={`live-chat-bubble live-chat-bubble--${m.role}`}>
+                      <span className="live-chat-ts">{new Date(m.ts).toLocaleTimeString()}</span>
+                      <span className="live-chat-text">{m.text}</span>
+                    </div>
+                  ))}
+                  {liveAgent && (
+                    <div className="live-chat-bubble live-chat-bubble--agent live-chat-bubble--live">
+                      <span className="live-chat-ts">{new Date(liveAgent.ts).toLocaleTimeString()}</span>
+                      <span className="live-chat-text">{liveAgent.text}<span className="live-cursor" /></span>
+                    </div>
+                  )}
+                </div>
+                <div className="live-chat-input">
+                  <TextArea
+                    id="live-chat-input"
+                    labelText="Mensagem"
+                    hideLabel
+                    rows={2}
+                    placeholder={runner.running ? chatPlaceholder : 'Inicie a sessão para enviar mensagens...'}
+                    value={chatInput}
+                    disabled={!runner.running || sendingChat}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        void handleSendChat();
+                      }
+                    }}
+                  />
+                  <Button
+                    kind="primary"
+                    size="md"
+                    renderIcon={Play}
+                    disabled={!runner.running || sendingChat || !chatInput.trim()}
+                    onClick={() => void handleSendChat()}
+                  >
+                    Enviar
+                  </Button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="live2-label">{heroLabel}</div>
+              {commandGateCard ? commandGateCard : (
+                <>
+                  <div className="live2-suggestion">
+                    {editing && hasGate ? (
+                      <TextArea labelText="Editar sugestão" hideLabel rows={4} value={draft} onChange={(e) => setDraft(e.target.value)} />
+                    ) : (
+                      <div className="live2-suggestion-text">
+                        {heroText || (runner.running ? (isAssisted ? 'Gerando resposta...' : 'Aguardando áudio...') : 'Inicie a sessão.')}
+                        {runner.running && !editing && <span className="live-cursor" />}
+                      </div>
+                    )}
+                  </div>
+                  {(hasLLM || hasGate) && (
+                    <div className="live2-actions">
+                      {hasLLM && <Button kind="ghost" size="sm" renderIcon={Renew} onClick={onRegenerate}>Regerar</Button>}
+                      {hasGate && (editing ? (
+                        <>
+                          <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={approve} disabled={!gate}>Enviar editada</Button>
+                          <Button kind="ghost" size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button kind="ghost" size="sm" renderIcon={Edit} onClick={startEdit} disabled={!gate}>Editar</Button>
+                          <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve} disabled={!gate}>
+                            {hasTTS ? 'Aprovar & Falar' : 'Aprovar'}
+                          </Button>
+                          {gate && (
+                            <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>Rejeitar</Button>
+                          )}
+                        </>
+                      ))}
+                    </div>
+                  )}
+                  {hasGate && !gate && runner.running && (
+                    <p className="live2-hint">Roteamento automático — sem gate humano pendente.</p>
+                  )}
+                </>
               )}
             </>
           )}

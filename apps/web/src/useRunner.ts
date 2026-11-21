@@ -50,6 +50,7 @@ export interface Caption {
   nodeId: string;
   text: string;
   final: boolean;
+  ts: number;
   trace?: TraceMeta;
 }
 
@@ -91,6 +92,7 @@ export function useRunner() {
   const [chatMessages, setChatMessages] = useState<{ nodeId: string; text: string; ts: number }[]>([]);
   const [latency, setLatency] = useState<number | null>(null);
   const [latencyBreakdown, setLatencyBreakdown] = useState<LatencyBreakdown | null>(null);
+  const [lastRunError, setLastRunError] = useState<string | null>(null);
   const ctlRef = useRef<AbortController | null>(null);
 
   const applyMetrics = (snap: RunSnapshot) => {
@@ -105,7 +107,14 @@ export function useRunner() {
   };
 
   const start = (flow: Flow, flowName?: string) => {
+    // Run único no host: pare (idempotente) o run anterior ANTES de abrir outro,
+    // senão o host responde 409 e a UI fica "parada" sem mostrar erro.
+    ctlRef.current?.abort();
+    ctlRef.current = null;
+    void stopRun();
+
     setRunning(true);
+    setLastRunError(null);
     setMetrics({});
     setEvents([]);
     setCaptions([]);
@@ -114,7 +123,10 @@ export function useRunner() {
     setChatMessages([]);
     setLatency(null);
     setLatencyBreakdown(null);
-    ctlRef.current = openRun(
+    // Guarda de geração: callbacks de um run antigo (abortado/desconectado) não
+    // podem derrubar o estado `running` nem sobrescrever o erro do run atual.
+    let myCtl: AbortController;
+    myCtl = openRun(
       flow,
       (ev) => {
         setEvents((e) => [...e.slice(-400), ev]);
@@ -124,7 +136,7 @@ export function useRunner() {
           const trace = ev.trace && typeof ev.trace === 'object' ? (ev.trace as TraceMeta) : undefined;
           setCaptions((c) => [
             ...c.slice(-120),
-            { nodeId: String(ev.nodeId), text: String(ev.text ?? ''), final: !!ev.final, ...(trace ? { trace } : {}) },
+            { nodeId: String(ev.nodeId), text: String(ev.text ?? ''), final: !!ev.final, ts: Date.now(), ...(trace ? { trace } : {}) },
           ]);
           if (trace) {
             const bd = computeBreakdown(trace);
@@ -168,12 +180,14 @@ export function useRunner() {
           ]);
         }
       },
-      () => setRunning(false),
+      () => { if (ctlRef.current === myCtl) setRunning(false); },
       undefined,
       flowName,
+      (msg) => { if (ctlRef.current === myCtl) setLastRunError(msg); },
     );
+    ctlRef.current = myCtl;
   };
-  const stop = () => { void stopRun(); ctlRef.current?.abort(); setRunning(false); };
+  const stop = () => { void stopRun(); ctlRef.current?.abort(); ctlRef.current = null; setRunning(false); };
   const gate = (nodeId: string, text: string | null) => {
     void gateAction(nodeId, text);
     setGates((g) => g.filter((x) => x.nodeId !== nodeId));
@@ -181,6 +195,6 @@ export function useRunner() {
   const sendChat = async (text: string, nodeId?: string) => {
     await sendChatInput(text, nodeId);
   };
-  return { running, metrics, events, captions, gates, agentSteps, chatMessages, latency, latencyBreakdown, start, stop, gate, sendChat };
+  return { running, metrics, events, captions, gates, agentSteps, chatMessages, latency, latencyBreakdown, lastRunError, start, stop, gate, sendChat };
 }
 export type Runner = ReturnType<typeof useRunner>;
