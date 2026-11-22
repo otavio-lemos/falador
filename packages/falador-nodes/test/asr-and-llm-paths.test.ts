@@ -240,13 +240,17 @@ describe('asr.lfm3', () => {
     });
     try {
       // 16000Hz s16le mono: 32000 bytes = 1s. flushSec=0.1s => 3200 bytes
-      const ctx = makeCtx({ url: srv.url, flushSec: 0.1, sampleRateHz: 16000 });
+      const captions: Array<{ text: string; final: boolean }> = [];
+      const ctx = makeCtx({ url: srv.url, flushSec: 0.1, sampleRateHz: 16000 }, {
+        __onCaption: (c: { text: string; final: boolean }) => captions.push(c),
+      });
       const node = asrLfm3.create(ctx) as NodeRuntime;
       await node.start();
       await node.onInput('in', { seq: 1, ts: 1, payload: pcm16(3200) } as any);
       await waitFor(() => ctx._emitted.length >= 1, 3000);
       assert.deepEqual(ctx._emitted[0].payload, { text: 'olá mundo', final: true });
       assert.equal(ctx._emitted[0].port, 'out');
+      assert.deepEqual(captions, [{ text: 'olá mundo', final: true }]);
       assert.ok(bodies[0].audioB64);
       assert.ok((ctx._timers['asr.lfm3.ms']?.length ?? 0) >= 1);
       await node.stop('done');
@@ -385,7 +389,10 @@ describe('asr.realtime', () => {
       },
     });
     try {
-      const ctx = makeCtx({ url: ws.url, inputRate: 16000, serverVad: true });
+      const captions: Array<{ text: string; final: boolean }> = [];
+      const ctx = makeCtx({ url: ws.url, inputRate: 16000, serverVad: true }, {
+        __onCaption: (c: { text: string; final: boolean }) => captions.push(c),
+      });
       const node = asrRealtime.create(ctx) as NodeRuntime;
       await node.start();
       await waitFor(() => ws.connections.length >= 1, 3000);
@@ -397,6 +404,9 @@ describe('asr.realtime', () => {
       // final phrase também emitido
       assert.ok(ctx._emitted.some((e) => e.port === 'final' && e.payload === 'olá mundo'));
       assert.equal(ctx._counters['asr.realtime.turns'], 1);
+      assert.equal(captions.at(-1)?.text, 'olá mundo');
+      assert.equal(captions.at(-1)?.final, true);
+      assert.ok(captions.some((c) => !c.final && c.text === 'olá'));
       await node.stop('done');
     } finally { await ws.close(); }
   });
@@ -533,6 +543,36 @@ describe('llm.omlx', () => {
       assert.equal(last.text, 'Hello');
       assert.ok((ctx._timers['llm.omlx.ttftMs']?.length ?? 0) >= 1);
       assert.ok((ctx._timers['llm.omlx.totalMs']?.length ?? 0) >= 1);
+      await node.stop('done');
+    } finally { await srv.close(); }
+  });
+
+  test('reasoning_content: acumula por turno, fecha pensamento e não contamina resposta', async () => {
+    const srv = await httpServer((_req, _body, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write('data: {"choices":[{"delta":{"reasoning_content":"Analisar"}}]}\n\n');
+      res.write('data: {"choices":[{"delta":{"content":"Resposta"}}]}\n\n');
+      res.write('data: {"choices":[{"delta":{"reasoning_content":" contexto"}}]}\n\n');
+      res.write('data: [DONE]\n\n');
+      res.end();
+    });
+    try {
+      const thoughts: Array<{ thoughtId: string; text: string; final: boolean }> = [];
+      const ctx = makeCtx({ baseUrl: srv.url, model: 'm', enableThinking: true }, {
+        __onThought: (ev: { thoughtId: string; text: string; final: boolean }) => thoughts.push(ev),
+      });
+      const node = llmOmlx.create(ctx) as NodeRuntime;
+      await node.onInput('in', { seq: 1, ts: 1, payload: 'hi' } as any);
+      await node.onInput('in', { seq: 2, ts: 2, payload: 'hi again' } as any);
+      const first = thoughts.filter((t) => t.thoughtId === 'test-node:1');
+      const second = thoughts.filter((t) => t.thoughtId === 'test-node:2');
+      assert.equal(first.at(-1)?.text, 'Analisar contexto');
+      assert.equal(first.at(-1)?.final, true);
+      assert.equal(second.at(-1)?.final, true);
+      assert.equal(thoughts.filter((t) => t.final).length, 2);
+      const lastPayload = ctx._emitted.at(-1)?.payload as { text: string; final: boolean };
+      assert.equal(lastPayload.text, 'Resposta');
+      assert.equal(lastPayload.final, true);
       await node.stop('done');
     } finally { await srv.close(); }
   });

@@ -4,6 +4,7 @@
 // grafo sem deixar children órfãos.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import http from 'node:http';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -56,6 +57,25 @@ const parseNdjson = (stdout) =>
       assert.fail(`linha ${i + 1} não é JSON: ${l.slice(0, 200)}`);
     }
   });
+
+function sseServer() {
+  const srv = http.createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write('data: {"choices":[{"delta":{"reasoning_content":"Pensando"}}]}\n\n');
+    res.write('data: {"choices":[{"delta":{"content":"Resposta"}}]}\n\n');
+    res.write('data: [DONE]\n\n');
+    res.end();
+  });
+  return new Promise((resolve) => {
+    srv.listen(0, '127.0.0.1', () => {
+      const addr = srv.address();
+      resolve({
+        url: `http://127.0.0.1:${addr.port}`,
+        close: () => new Promise((r) => srv.close(() => r())),
+      });
+    });
+  });
+}
 
 function toneFlow({ count = 5, stopWhenSourcesDone = true, intervalMs } = {}) {
   return {
@@ -180,6 +200,37 @@ test('stdin reset_history responde history_reset; chat_input responde chat_sent'
     assert.ok(seen.some((e) => e.type === 'caption' && String(e.text).includes('olá runner')), 'caption do chat');
   } finally {
     try { child.kill('SIGKILL'); } catch { /* já morto */ }
+  }
+});
+
+test('reasoning_content vira thought NDJSON cumulativo, sem poluir caption', async () => {
+  const srv = await sseServer();
+  const flow = {
+    version: 1,
+    stopWhenSourcesDone: true,
+    nodes: [
+      { id: 'src', type: 'source.tone', params: { count: 1, prefix: 'pergunta' } },
+      { id: 'llm', type: 'llm.omlx', params: { baseUrl: srv.url, model: 'm', enableThinking: true } },
+      { id: 'cap', type: 'sink.captions' },
+    ],
+    edges: [
+      { from: 'src.out', to: 'llm.in' },
+      { from: 'llm.out', to: 'cap.in' },
+    ],
+  };
+  try {
+    const p = writeFlow(flow);
+    const r = await runCli([p]);
+    assert.equal(r.code, 0, `stderr: ${r.stderr}`);
+    const events = parseNdjson(r.stdout);
+    const thought = events.filter((e) => e.type === 'thought').at(-1);
+    assert.equal(thought.thoughtId, 'llm:1');
+    assert.equal(thought.text, 'Pensando');
+    assert.equal(thought.final, true);
+    assert.ok(events.filter((e) => e.type === 'thought').every((e) => e.text.length > 0));
+    assert.equal(events.find((e) => e.type === 'caption' && e.final)?.text, 'Resposta');
+  } finally {
+    await srv.close();
   }
 });
 

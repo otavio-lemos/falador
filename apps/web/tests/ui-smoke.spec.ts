@@ -53,3 +53,95 @@ test('new workflow action is exposed in the flow menu', async ({ page }) => {
   await expect(modal.getByRole('button', { name: 'Cancelar' })).toBeVisible();
   await modal.getByRole('button', { name: 'Cancelar' }).click();
 });
+
+test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed accordions', async ({ page }) => {
+  await page.route('**/api/flows/chat-agente-suporte', async (route) => {
+    const response = await route.fetch();
+    const payload = await response.json();
+    payload.flow.nodes.push(
+      { id: 'asr', type: 'asr.realtime', params: {} },
+      { id: 'voz', type: 'tts.sts', params: {} },
+      { id: 'alto', type: 'sink.playback', params: {} },
+    );
+    payload.flow.edges.push(
+      { from: 'asr.out', to: 'agente.parcs' },
+      { from: 'agente.out', to: 'voz.in' },
+      { from: 'voz.out', to: 'alto.in' },
+    );
+    await route.fulfill({ response, json: payload });
+  });
+
+  const events = [
+    { type: 'run_started' },
+    { type: 'chat_sent', nodeId: 'chat', text: 'opa blz?' },
+    { type: 'caption', nodeId: 'asr', kind: 'stt', text: 'fala transcrita ao vivo', final: true },
+    { type: 'thought', nodeId: 'agente', thoughtId: 'agente:1:1', text: 'Analisar a intenção antes de responder.', final: true },
+    { type: 'agent_step', nodeId: 'agente', step: 1, phase: 'result', tool: 'search_docs', args: { query: 'pedido' }, ok: true, durationMs: 6 },
+    { type: 'caption', nodeId: 'resposta', text: 'Opa, tudo bem? Como posso ajudar?', final: true },
+    { type: 'node_error', nodeId: 'voz', code: 'log_info', message: 'fala: "Opa, tudo bem?" (42 KB)' },
+    { type: 'node_error', nodeId: 'alto', code: 'log_info', message: 'playback ok (1,2s)' },
+    { type: 'gate', nodeId: 'agente', text: 'Sugestão que precisa de revisão humana.' },
+  ];
+  const body = events.map((ev) => `event: runner\ndata: ${JSON.stringify(ev)}\n\n`).join('')
+    + 'event: ended\ndata: {"code":0}\n\n';
+  await page.route('**/api/run', (route) => route.fulfill({
+    status: 200,
+    contentType: 'text/event-stream',
+    body,
+  }));
+
+  await page.getByRole('button', { name: 'Workflow' }).click();
+  await page.getByRole('combobox', { name: 'Workflow' }).click();
+  await page.getByRole('option', { name: 'chat-agente-suporte' }).click();
+  await page.getByRole('button', { name: 'Iniciar', exact: true }).click();
+
+  await expect(page.locator('.live-chat-entry--user')).toContainText('opa blz?');
+  await expect(page.locator('.live-chat-entry--stt')).toContainText('fala transcrita ao vivo');
+  await expect(page.locator('.live-chat-entry--stt')).toContainText('Transcrição');
+  await expect(page.locator('.live-chat-entry--agent')).toContainText('Opa, tudo bem? Como posso ajudar?');
+  await expect(page.locator('.live-chat-entry--agent')).toContainText('Agente');
+  await expect(page.locator('[data-node-id="voz"]')).toContainText('Síntese de voz');
+  await expect(page.locator('[data-node-id="alto"]')).toContainText('Reprodução de áudio');
+  await expect(page.locator('.live-chat-thought')).toHaveCount(0);
+  await expect(page.getByText('Orquestrador', { exact: true })).toHaveCount(0);
+
+  const userBox = await page.locator('.live-chat-entry--user').boundingBox();
+  const agentBox = await page.locator('.live-chat-entry--agent').boundingBox();
+  expect(userBox?.x).toBe(agentBox?.x);
+
+  await expect(page.getByRole('region', { name: 'Sugestão de resposta pendente' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Aprovar', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Editar', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Regerar', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Rejeitar', exact: true })).toBeVisible();
+
+  const thoughtsToggle = page.getByRole('button', { name: 'Pensamentos', exact: true });
+  await thoughtsToggle.click();
+  await expect(thoughtsToggle).toHaveAttribute('aria-pressed', 'true');
+  const thought = page.locator('.live-chat-thought').first();
+  await expect(thought).toBeVisible();
+  await expect(page.getByText('Analisar a intenção antes de responder.')).not.toBeVisible();
+  await thought.getByRole('button').click();
+  await expect(page.getByText('Analisar a intenção antes de responder.')).toBeVisible();
+  await thought.getByRole('button').click();
+  await expect(page.getByText('Analisar a intenção antes de responder.')).not.toBeVisible();
+  await thoughtsToggle.click();
+  await expect(page.locator('.live-chat-thought')).toHaveCount(0);
+
+  const badges = await page.locator('.logs-service-badges').boundingBox();
+  const title = await page.locator('.logs-panel-title').boundingBox();
+  const clear = await page.getByRole('button', { name: 'Limpar logs' }).boundingBox();
+  const collapseButtons = page.getByRole('button', { name: 'Recolher logs' });
+  expect(await collapseButtons.count()).toBe(2);
+  const collapseLeft = await collapseButtons.first().boundingBox();
+  const collapseRight = await collapseButtons.last().boundingBox();
+  const thoughts = await thoughtsToggle.boundingBox();
+  expect(collapseLeft!.x + collapseLeft!.width).toBeLessThanOrEqual(title!.x);
+  expect(badges!.x).toBeGreaterThan(title!.x);
+  expect(badges!.x).toBeGreaterThan(clear!.x + clear!.width);
+  expect(badges!.x).toBeGreaterThan(thoughts!.x + thoughts!.width);
+  expect(collapseRight!.x).toBeGreaterThanOrEqual(badges!.x + badges!.width);
+  expect(await page.locator('.logs-panel-count').count()).toBe(0);
+  const head = await page.locator('.logs-panel-head').boundingBox();
+  expect(head!.height).toBeLessThanOrEqual(42);
+});

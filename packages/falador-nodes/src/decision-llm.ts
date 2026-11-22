@@ -16,6 +16,7 @@ const DEFAULT_MODEL = 'LiquidAI--LFM3-1.7B-MLX-4bit';
 export const decisionLlm: NodeTypeDef = {
   type: 'decision.llm',
   paramNames: ['baseUrl', 'model', 'mode', 'options', 'criteria', 'instructions', 'temperature', 'maxTokens', 'enableThinking', 'defaultOption'],
+  bindingNames: ['__onThought'],
   inputs: [{ name: 'in', type: 'tokens_parcial' }],
   outputs: [], // dinâmicas: uma por opção (preenchidas em validate/create via options)
   validateParams: (p) => {
@@ -51,6 +52,10 @@ export const decisionLlm: NodeTypeDef = {
     const temperature = (ctx.params.temperature as number | undefined) ?? 0.0;
     const maxTokens = (ctx.params.maxTokens as number | undefined) ?? 8;
     const enableThinking = (ctx.params.enableThinking as boolean | undefined) ?? false;
+    const onThought = ctx.bindings.__onThought as
+      | ((ev: { thoughtId: string; text: string; final: boolean }) => void)
+      | undefined;
+    let thoughtSeq = 0;
 
     function pickOption(answer: string): string {
       const a = answer.toLowerCase();
@@ -117,15 +122,24 @@ export const decisionLlm: NodeTypeDef = {
           if (!enableThinking) body.chat_template_kwargs = { enable_thinking: false };
 
           let acc = '';
+          let reasoningAcc = '';
+          const thoughtId = `${ctx.id}:${++thoughtSeq}`;
           await postSse(`${baseUrl}/v1/chat/completions`, body, {
             onData(json) {
-              const delta = (json as any)?.choices?.[0]?.delta?.content;
-              if (typeof delta === 'string') acc += delta;
+              const delta = (json as any)?.choices?.[0]?.delta ?? {};
+              if (typeof delta.reasoning_content === 'string' && delta.reasoning_content.length > 0) {
+                reasoningAcc += delta.reasoning_content;
+                try { onThought?.({ thoughtId, text: reasoningAcc, final: false }); } catch { /* callback do host */ }
+              }
+              if (typeof delta.content === 'string') acc += delta.content;
             },
             onDone() {},
           }, ctx.signal).catch((e: unknown) => {
             ctx.log('error', `decision.llm falhou: ${(e as Error)?.message ?? String(e)}`);
           });
+          if (reasoningAcc) {
+            try { onThought?.({ thoughtId, text: reasoningAcc, final: true }); } catch { /* callback do host */ }
+          }
           chosen = pickOption(acc);
         }
 

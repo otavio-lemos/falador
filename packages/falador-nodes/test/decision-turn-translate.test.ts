@@ -66,15 +66,19 @@ describe('decision.llm', () => {
   });
 
   test('modo chat: escolhe opção pelo texto e emite na porta correta com meta', async () => {
+    const thoughts: Array<{ thoughtId: string; text: string; final: boolean }> = [];
     const srv = await httpServer((_req, _body, res) => {
       res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write('data: {"choices":[{"delta":{"reasoning_content":"Revisão necessária"}}]}\n\n');
       res.write('data: {"choices":[{"delta":{"content":"hu"}}]}\n\n');
       res.write('data: {"choices":[{"delta":{"content":"man"}}]}\n\n');
       res.write('data: [DONE]\n\n');
       res.end();
     });
     try {
-      const ctx = makeCtx({ baseUrl: srv.url, model: 'm', mode: 'chat', options: ['auto', 'human'], defaultOption: 'auto' });
+      const ctx = makeCtx({ baseUrl: srv.url, model: 'm', mode: 'chat', options: ['auto', 'human'], defaultOption: 'auto' }, {
+        __onThought: (ev: { thoughtId: string; text: string; final: boolean }) => thoughts.push(ev),
+      });
       const node = decisionLlm.create(ctx) as NodeRuntime;
       await node.start();
       await node.onInput('in', { seq: 1, ts: 1, payload: { text: 'preciso revisar', final: true }, meta: { trace: { turnId: 't1' } } } as any);
@@ -84,6 +88,9 @@ describe('decision.llm', () => {
       assert.equal(ctx._emitted[0].opts?.meta?.decision, 'human');
       assert.ok((ctx._timers['decision.llm.ms']?.length ?? 0) >= 1);
       assert.equal(ctx._counters['decision.llm.human'], 1);
+      assert.equal(thoughts.at(-1)?.text, 'Revisão necessária');
+      assert.equal(thoughts.at(-1)?.final, true);
+      assert.equal(thoughts.at(-1)?.thoughtId, 'test-node:1');
       await node.stop('done');
     } finally { await srv.close(); }
   });
@@ -275,16 +282,20 @@ describe('translate.llm', () => {
 
   test('tradução normal via SSE emite parciais e final', async () => {
     const bodies: any[] = [];
+    const thoughts: Array<{ thoughtId: string; text: string; final: boolean }> = [];
     const srv = await httpServer((_req, body, res) => {
       bodies.push(JSON.parse(body));
       res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write('data: {"choices":[{"delta":{"reasoning_content":"Identificar idioma"}}]}\n\n');
       res.write('data: {"choices":[{"delta":{"content":"olá"}}]}\n\n');
       res.write('data: {"choices":[{"delta":{"content":" mundo"}}]}\n\n');
       res.write('data: [DONE]\n\n');
       res.end();
     });
     try {
-      const ctx = makeCtx({ baseUrl: srv.url, model: 'm', targetLanguage: 'Portuguese' });
+      const ctx = makeCtx({ baseUrl: srv.url, model: 'm', targetLanguage: 'Portuguese' }, {
+        __onThought: (ev: { thoughtId: string; text: string; final: boolean }) => thoughts.push(ev),
+      });
       const node = translateLlm.create(ctx) as NodeRuntime;
       await node.start();
       await node.onInput('in', { seq: 1, ts: 1, payload: { text: 'hello world', final: true } } as any);
@@ -294,6 +305,9 @@ describe('translate.llm', () => {
       assert.ok(bodies[0].messages[0].content.includes('Portuguese'));
       assert.ok((ctx._timers['translate.llm.ttftMs']?.length ?? 0) >= 1);
       assert.ok((ctx._timers['translate.llm.totalMs']?.length ?? 0) >= 1);
+      assert.equal(thoughts.at(-1)?.text, 'Identificar idioma');
+      assert.equal(thoughts.at(-1)?.final, true);
+      assert.equal(thoughts.at(-1)?.thoughtId, 'test-node:1');
       await node.stop('done');
     } finally { await srv.close(); }
   });

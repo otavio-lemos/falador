@@ -83,9 +83,12 @@ interface FlowNodeRef {
 interface LogsPanelProps {
   flowNodes?: FlowNodeRef[];
   onServiceStatus?: (status: ServiceStatusMap) => void;
+  thoughtsOn?: boolean;
+  onToggleThoughts?: (next: boolean) => void;
+  resetSignal?: number;
 }
 
-export function LogsPanel({ flowNodes, onServiceStatus }: LogsPanelProps) {
+export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onToggleThoughts, resetSignal = 0 }: LogsPanelProps) {
   const logsRefs = useRef<Record<string, HTMLPreElement | null>>({});
   const clearEpochRef = useRef(0);
   const onServiceStatusRef = useRef(onServiceStatus);
@@ -146,7 +149,6 @@ export function LogsPanel({ flowNodes, onServiceStatus }: LogsPanelProps) {
   const [logsCollapsed, setLogsCollapsed] = useState<boolean>(() => {
     try { return localStorage.getItem(LOG_COLLAPSED_KEY) === 'true'; } catch { return false; }
   });
-
   const onLogServicesChange = (items: LogServiceMeta[]) => {
     const ids = items.map((i) => i.id);
     setLogServices(ids);
@@ -216,6 +218,14 @@ export function LogsPanel({ flowNodes, onServiceStatus }: LogsPanelProps) {
       setClearing(false);
     }
   };
+
+  const resetSeenRef = useRef(resetSignal);
+  useEffect(() => {
+    if (resetSeenRef.current === resetSignal) return;
+    resetSeenRef.current = resetSignal;
+    clearEpochRef.current += 1;
+    setLogsByService({});
+  }, [resetSignal]);
 
   useEffect(() => {
     let alive = true;
@@ -292,8 +302,6 @@ export function LogsPanel({ flowNodes, onServiceStatus }: LogsPanelProps) {
     }
   }, [logsByService, logServices]);
 
-  const totalLogLines = logServices.reduce((acc, svc) => acc + (logsByService[svc]?.length ?? 0), 0);
-
   return (
     <section
       className={`logs-panel${logsCollapsed ? ' logs-panel--collapsed' : ''}`}
@@ -314,6 +322,15 @@ export function LogsPanel({ flowNodes, onServiceStatus }: LogsPanelProps) {
         </div>
       )}
       <div className="logs-panel-head">
+        <Button
+          kind="ghost"
+          size="sm"
+          hasIconOnly
+          renderIcon={logsCollapsed ? ChevronUp : ChevronDown}
+          iconDescription={logsCollapsed ? 'Expandir logs' : 'Recolher logs'}
+          tooltipPosition="right"
+          onClick={toggleLogsCollapsed}
+        />
         <span className="logs-panel-title"><Terminal size={16} /> Logs dos serviços</span>
         <div className="logs-panel-services">
           <MultiSelect
@@ -337,6 +354,16 @@ export function LogsPanel({ flowNodes, onServiceStatus }: LogsPanelProps) {
         >
           Limpar logs
         </Button>
+        {onToggleThoughts && (
+          <Button
+            kind={thoughtsOn ? 'primary' : 'tertiary'}
+            size="sm"
+            onClick={() => onToggleThoughts(!thoughtsOn)}
+            aria-pressed={thoughtsOn}
+          >
+            Pensamentos
+          </Button>
+        )}
         <div className="logs-service-badges" role="status" aria-label="Status dos serviços">
           {servicesMeta.map((meta) => {
             const up = serviceStatus ? serviceStatus[meta.id] : false;
@@ -351,7 +378,6 @@ export function LogsPanel({ flowNodes, onServiceStatus }: LogsPanelProps) {
             );
           })}
         </div>
-        <span className="logs-panel-count">{totalLogLines} linhas</span>
         <Button
           kind="ghost"
           size="sm"
@@ -375,7 +401,6 @@ export function LogsPanel({ flowNodes, onServiceStatus }: LogsPanelProps) {
                 <div className="logs-block-head">
                   <span className="logs-block-title">{meta?.label ?? svc}</span>
                   <code className="logs-block-path">logs/{svc}.log</code>
-                  <span className="logs-block-count">{lines.length} linhas</span>
                   {meta && meta.colors.length > 0 && (
                     <span className="logs-color-swatches" aria-label="Componentes deste log">
                       {meta.colors.map((c, idx) => (
@@ -404,7 +429,7 @@ export function LogsPanel({ flowNodes, onServiceStatus }: LogsPanelProps) {
                 <pre
                   className="logs-terminal"
                   ref={(el) => { logsRefs.current[svc] = el; }}
-                >{lines.length ? lines.join('\n') : `sem linhas — logs/${svc}.log`}</pre>
+                >{lines.length ? lines.join('\n') : `Log vazio — logs/${svc}.log`}</pre>
               </div>
             );
           })}

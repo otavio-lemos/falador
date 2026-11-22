@@ -479,7 +479,7 @@ function startRun(flow, runSeconds, flowName) {
         sessionBuffer.captions.push({
           ts: new Date().toISOString(),
           nodeId: String(ev.nodeId ?? ''),
-          kind: transcriptionSinks.has(String(ev.nodeId ?? '')) ? 'transcription' : 'suggestion',
+          kind: ev.kind === 'stt' || transcriptionSinks.has(String(ev.nodeId ?? '')) ? 'transcription' : 'suggestion',
           text: ev.text.trim(),
           ...(ev.trace ? { trace: ev.trace } : {}),
         });

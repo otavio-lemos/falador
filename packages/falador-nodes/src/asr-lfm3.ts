@@ -15,6 +15,7 @@ const DEFAULT_INSTRUCTION =
 export const asrLfm3: NodeTypeDef = {
   type: 'asr.lfm3',
   paramNames: ['url', 'model', 'targetLanguage', 'instruction', 'sampleRateHz', 'flushSec', 'timeoutMs', 'maxTranslateChars'],
+  bindingNames: ['__onCaption'],
   inputs: [{ name: 'in', type: 'pcm16k' }],
   outputs: [{ name: 'out', type: 'tokens_parcial' }],
   validateParams: (p) => {
@@ -49,6 +50,9 @@ export const asrLfm3: NodeTypeDef = {
     const flushSec = (ctx.params.flushSec as number | undefined) ?? 30;
     const timeoutMs = (ctx.params.timeoutMs as number | undefined) ?? 120_000;
     const maxTranslateChars = (ctx.params.maxTranslateChars as number | undefined) ?? 4000;
+    const onCaption = ctx.bindings.__onCaption as
+      | ((c: { text: string; final: boolean }) => void)
+      | undefined;
 
     let stopped = false;
     let pending: Uint8Array = new Uint8Array(0); // PCM s16le acumulado
@@ -108,6 +112,7 @@ export const asrLfm3: NodeTypeDef = {
         if (text) {
           ctx.log('info', `tradução (${seconds.toFixed(1)}s de áudio): "${text.slice(0, 80)}"`);
           await ctx.emit('out', { text, final: true }, { meta: { seconds } });
+          try { onCaption?.({ text, final: true }); } catch { /* callback do host */ }
         } else {
           ctx.log('info', `tradução vazia (${seconds.toFixed(1)}s de áudio)`);
         }

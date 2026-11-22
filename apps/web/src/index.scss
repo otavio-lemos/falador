@@ -697,79 +697,95 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   .cds--form-item { flex: 1; }
 }
 
-// ---- LiveView: layout de CHAT (flows com nó input.chat) ----
-// Transcrição + seleção de modelos no topo; conversa em bolhas intercaladas; input no rodapé.
+// ---- LiveView: conversa multi-componente (texto, STT, resposta, áudio e pensamento) ----
 .live-chat {
   display: flex;
   flex-direction: column;
   gap: $spacing-03;
   background: $bg-panel;
   border: 1px solid $border-1;
-  border-radius: 0;
   padding: $spacing-04;
 }
 .live-chat-log {
   display: flex;
   flex-direction: column;
-  gap: $spacing-04;
+  gap: $spacing-03;
   overflow-y: auto;
   max-height: 46vh;
   min-height: 120px;
   padding-right: $spacing-02;
 }
-.live-chat-empty {
-  @include type-style('body-01');
-  color: $txt-2;
-  margin: 0;
-}
-.live-chat-bubble {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-width: 78%;
+.live-chat-empty { @include type-style('body-01'); color: $txt-2; margin: 0; }
+.live-chat-entry {
+  width: 100%;
   padding: $spacing-03 $spacing-04;
-  border-radius: 0;
-  font-family: 'IBM Plex Sans', system-ui, sans-serif;
-  font-size: 14px;
-  line-height: 1.5;
+  background: $bg-app;
+  border-left: 2px solid $border-2;
 }
-.live-chat-bubble--user {
-  align-self: flex-end;
-  background: #333333;        // cinza mais claro que o painel
-  color: $txt-1;
-  border-radius: 0;
-}
-.live-chat-bubble--agent {
-  align-self: flex-start;
-  background: rgba(34, 197, 94, 0.14);   // verde (mesmo tom da sugestão)
-  border: 1px solid #22c55e;
-  color: #4ade80;
-  border-radius: 0;
-}
-.live-chat-ts {
-  font-family: 'IBM Plex Sans', system-ui, sans-serif;
-  font-size: 10px;             // data/hora bem pequena e discreta
-  line-height: 1.2;
+.live-chat-entry--user { background: $bg-card; border-left-color: $border-2; }
+.live-chat-entry--stt { border-left-color: var(--cds-support-info); }
+.live-chat-entry--agent { border-left-color: var(--cds-support-success-inverse); }
+.live-chat-entry--audio { border-left-color: var(--cds-interactive); }
+.live-chat-entry-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: $spacing-03;
+  margin-bottom: $spacing-02;
+  @include type-style('helper-text-01');
   color: $txt-2;
-  opacity: 0.85;
 }
-.live-chat-bubble--agent .live-chat-ts { color: #86efac; }
-.live-chat-text {
-  font-family: inherit;
-  font-size: 14px;             // MESMA fonte/tamanho nas duas bolhas
+.live-chat-entry-role { display: flex; align-items: baseline; gap: $spacing-02; flex-wrap: wrap; }
+.live-chat-entry-role strong { @include type-style('label-01'); color: $txt-1; }
+.live-chat-entry-head time,
+.live-chat-thought-heading time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.live-chat-entry-text {
+  @include type-style('body-01');
+  color: $txt-1;
+  line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
 }
+.live-chat-entry--agent .live-chat-entry-text { color: var(--cds-support-success-inverse); }
+.live-chat-thought { width: 100%; background: $bg-app; }
+.live-chat-thought-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-03;
+  width: 100%;
+  @include type-style('helper-text-01');
+  color: $txt-2;
+}
+.live-chat-thought-heading strong { color: $txt-1; }
+.live-chat-thought-text {
+  @include type-style('body-compact-01');
+  color: $txt-2;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.live-chat-suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-03;
+  padding: $spacing-04;
+  background: $bg-app;
+  border: 1px solid $border-1;
+  border-left: 3px solid var(--cds-support-success-inverse);
+}
+.live-chat-suggestion-head { display: flex; align-items: center; justify-content: space-between; gap: $spacing-03; }
+.live-chat-suggestion-head strong { @include type-style('productive-heading-01'); }
+.live-chat-suggestion-text { @include type-style('body-01'); color: $txt-1; white-space: pre-wrap; }
 .live-chat-input {
   display: flex;
   align-items: flex-end;
   gap: $spacing-03;
-  background: #2b2b2b;         // caixa de escrita em cinza mais claro
+  background: $bg-input;
   border: 1px solid $border-2;
-  border-radius: 0;
   padding: $spacing-03;
   .cds--form-item { flex: 1; }
-  .cds--text-area { background-color: #2b2b2b; }
 }
 .live-chat-gate-actions { flex-wrap: wrap; }
 
@@ -811,24 +827,31 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 .logs-panel-head {
   flex-shrink: 0;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: $spacing-03;
-  padding: $spacing-02 $spacing-04;
+  min-height: 40px;
+  padding: $spacing-01 $spacing-04;
   border-bottom: 1px solid $border-1;
+  overflow-x: auto;
 }
 .logs-service-badges {
   display: flex;
   align-items: center;
   gap: $spacing-02;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
   min-width: 0;
+  margin-left: auto;
 }
 .logs-svc-badge {
   display: inline-flex;
   align-items: center;
-  height: 32px;
-  padding: 0 $spacing-03;
+  height: 24px;
+  max-width: 200px;
+  padding: 0 $spacing-02;
+  overflow: hidden;
+  text-overflow: ellipsis;
   border-radius: 0;
   @include type-style('label-01');
   font-weight: 600;
@@ -855,12 +878,6 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   align-items: center;
   gap: $spacing-02;
   white-space: nowrap;
-}
-.logs-panel-count {
-  @include type-style('label-01');
-  color: $txt-2;
-  margin-left: auto;
-  font-variant-numeric: tabular-nums;
 }
 .logs-panel-body {
   flex: 1;
@@ -902,12 +919,6 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 .logs-block-path {
   @include type-style('code-01');
   color: $txt-2;
-}
-.logs-block-count {
-  @include type-style('label-01');
-  color: $txt-2;
-  margin-left: auto;
-  font-variant-numeric: tabular-nums;
 }
 .logs-color-swatches {
   display: inline-flex;

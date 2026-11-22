@@ -16,6 +16,7 @@ function isDisabledValue(v: string): boolean {
 export const translateLlm: NodeTypeDef = {
   type: 'translate.llm',
   paramNames: ['baseUrl', 'model', 'targetLanguage', 'temperature', 'maxTokens', 'enableThinking'],
+  bindingNames: ['__onThought'],
   inputs: [
     { name: 'in', type: 'phrase' },
     { name: 'parcs', type: 'tokens_parcial' },
@@ -49,6 +50,10 @@ export const translateLlm: NodeTypeDef = {
 
     let controller: AbortController | null = null;
     let interruptedCurrent = false;
+    let thoughtSeq = 0;
+    const onThought = ctx.bindings.__onThought as
+      | ((ev: { thoughtId: string; text: string; final: boolean }) => void)
+      | undefined;
 
     return {
       async start() {},
@@ -89,6 +94,8 @@ export const translateLlm: NodeTypeDef = {
         };
 
         let acc = '';
+        let reasoningAcc = '';
+        const thoughtId = `${ctx.id}:${++thoughtSeq}`;
         let t0 = 0;
         let tLlmTtftMs: number | undefined;
         const tStart = Date.now();
@@ -101,7 +108,13 @@ export const translateLlm: NodeTypeDef = {
             {
               onData(json) {
                 if (interruptedCurrent || ctrl.signal.aborted) return;
-                const delta = (json as { choices?: Array<{ delta?: { content?: unknown } }> })?.choices?.[0]?.delta?.content;
+                const deltaObj = (json as { choices?: Array<{ delta?: { content?: unknown; reasoning_content?: unknown } }> })?.choices?.[0]?.delta ?? {};
+                const delta = deltaObj.content;
+                const reasoning = deltaObj.reasoning_content;
+                if (typeof reasoning === 'string' && reasoning.length > 0) {
+                  reasoningAcc += reasoning;
+                  try { onThought?.({ thoughtId, text: reasoningAcc, final: false }); } catch { /* callback do host */ }
+                }
                 if (typeof delta !== 'string' || delta.length === 0) return;
                 if (!ttftLogged) {
                   const now = Date.now();
@@ -140,6 +153,9 @@ export const translateLlm: NodeTypeDef = {
         }
 
         if (interruptedCurrent) return;
+        if (reasoningAcc) {
+          try { onThought?.({ thoughtId, text: reasoningAcc, final: true }); } catch { /* callback do host */ }
+        }
 
         if (acc.length > 0) {
           const tLlmFinalMs = Date.now();

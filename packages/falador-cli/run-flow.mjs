@@ -17,6 +17,25 @@ function buildRegistry() {
     .register(sinkCollect);
 }
 
+function hasCaptionSinkDownstream(flow, startId) {
+  const byId = new Map(flow.nodes.map((n) => [n.id, n]));
+  const queue = [startId];
+  const seen = new Set(queue);
+  while (queue.length > 0) {
+    const current = queue.shift();
+    for (const edge of flow.edges ?? []) {
+      if (edge.from.split('.')[0] !== current) continue;
+      const next = edge.to.split('.')[0];
+      if (byId.get(next)?.type === 'sink.captions') return true;
+      if (!seen.has(next)) {
+        seen.add(next);
+        queue.push(next);
+      }
+    }
+  }
+  return false;
+}
+
 function defToCatalog(def) {
   return {
     type: def.type,
@@ -80,6 +99,23 @@ async function main() {
     }
   }
 
+  // ASR sem sink.captions downstream ainda precisa aparecer na conversa web.
+  // Se já houver sink no caminho, ele continua sendo a única fonte (sem duplicar STT).
+  for (const n of flow.nodes ?? []) {
+    if ((n.type === 'asr.realtime' || n.type === 'asr.lfm3')
+      && !hasCaptionSinkDownstream(flow, n.id)
+      && !(flow.bindings[n.id]?.__onCaption)) {
+      flow.bindings[n.id] = {
+        ...(flow.bindings[n.id] ?? {}),
+        __onCaption: (cap) => line({
+          type: 'caption', nodeId: n.id, kind: 'stt',
+          text: cap.text, final: cap.final,
+          ...(cap.trace ? { trace: cap.trace } : {}),
+        }),
+      };
+    }
+  }
+
   // reset de histórico em runtime para nós llm.omlx e agent.tools (ADR-006 Fase 4 / ADR-008 Fase 5)
   const resetters = new Map(); // nodeId -> () => void
   // chatbox interativo (input.chat): envia prompts digitados para os nós input.chat
@@ -95,6 +131,22 @@ async function main() {
       flow.bindings[n.id] = {
         ...(flow.bindings[n.id] ?? {}),
         __onAgentStep: (ev) => line({ type: 'agent_step', ...ev }),
+      };
+    }
+    if ((n.type === 'llm.omlx' || n.type === 'translate.llm' || n.type === 'agent.tools' || n.type === 'decision.llm') && !(flow.bindings[n.id]?.__onThought)) {
+      flow.bindings[n.id] = {
+        ...(flow.bindings[n.id] ?? {}),
+        __onThought: (ev) => {
+          const text = typeof ev?.text === 'string' ? ev.text : '';
+          if (!text) return;
+          line({
+            type: 'thought',
+            nodeId: n.id,
+            thoughtId: ev?.thoughtId ?? n.id,
+            text,
+            final: !!ev?.final,
+          });
+        },
       };
     }
     if (n.type === 'input.chat' && !(flow.bindings[n.id]?.__registerChatInput)) {

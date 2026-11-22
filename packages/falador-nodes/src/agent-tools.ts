@@ -80,6 +80,7 @@ interface OpenAiChatResponse {
     message?: {
       role?: string;
       content?: string | null;
+      reasoning_content?: string | null;
       tool_calls?: OpenAiToolCall[];
     };
   }>;
@@ -225,7 +226,7 @@ export const agentTools: NodeTypeDef = {
     'historyMax',
     'historyCharBudget',
   ],
-  bindingNames: ['__gate', '__onAgentStep', '__registerReset', '__onResetHistory'],
+  bindingNames: ['__gate', '__onAgentStep', '__registerReset', '__onResetHistory', '__onThought'],
   inputs: [
     { name: 'in', type: 'phrase' },
     { name: 'parcs', type: 'tokens_parcial' },
@@ -293,11 +294,15 @@ export const agentTools: NodeTypeDef = {
 
     const gate = ctx.bindings.__gate as AgentGateHolder | undefined;
     const onAgentStep = ctx.bindings.__onAgentStep as ((ev: AgentStepEvent) => void) | undefined;
+    const onThought = ctx.bindings.__onThought as
+      | ((ev: { thoughtId: string; text: string; final: boolean }) => void)
+      | undefined;
     const registerReset = (ctx.bindings.__registerReset ?? ctx.bindings.__onResetHistory) as
       | ((fn: () => void) => void)
       | undefined;
 
     const history: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+    let thoughtSeq = 0;
     let currentController: AbortController | null = null;
     let interruptedCurrent = false;
     let cancelPendingGate: ((reason: string) => void) | null = null;
@@ -440,6 +445,7 @@ export const agentTools: NodeTypeDef = {
           (typeof ctx.bindings.__runId === 'string' ? ctx.bindings.__runId : 'run');
 
         const tTurnStart = Date.now();
+        const thoughtTurn = ++thoughtSeq;
         let prevStepSignatures = new Set<string>();
         let completed = false;
 
@@ -479,6 +485,15 @@ export const agentTools: NodeTypeDef = {
             if (!assistantMsg) {
               ctx.log('error', `agent.tools recebeu resposta vazia no passo ${step}`);
               return;
+            }
+
+            const reasoning = typeof assistantMsg.reasoning_content === 'string'
+              ? assistantMsg.reasoning_content
+              : '';
+            if (reasoning) {
+              try {
+                onThought?.({ thoughtId: `${ctx.id}:${thoughtTurn}:${step}`, text: reasoning, final: true });
+              } catch { /* callback do host */ }
             }
 
             const toolCalls = Array.isArray(assistantMsg.tool_calls) ? assistantMsg.tool_calls : [];
@@ -703,9 +718,18 @@ export const agentTools: NodeTypeDef = {
               return;
             }
             if (isAborted()) return;
+            const synthMessage = synthData.choices?.[0]?.message;
+            const synthReasoning = typeof synthMessage?.reasoning_content === 'string'
+              ? synthMessage.reasoning_content
+              : '';
+            if (synthReasoning) {
+              try {
+                onThought?.({ thoughtId: `${ctx.id}:${thoughtTurn}:synthesis`, text: synthReasoning, final: true });
+              } catch { /* callback do host */ }
+            }
             const finalText =
-              typeof synthData.choices?.[0]?.message?.content === 'string'
-                ? synthData.choices[0].message.content
+              typeof synthMessage?.content === 'string'
+                ? synthMessage.content
                 : '';
             ctx.metrics.timer('agent.tools.totalMs', Date.now() - tTurnStart);
             await ctx.emit(

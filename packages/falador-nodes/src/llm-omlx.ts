@@ -70,7 +70,7 @@ export const llmOmlx: NodeTypeDef = {
     'contextTags',
     'contextMaxChars',
   ],
-  bindingNames: ['__registerReset', '__onResetHistory', '__getContext'],
+  bindingNames: ['__registerReset', '__onResetHistory', '__getContext', '__onThought'],
   inputs: [
     { name: 'in', type: 'phrase' },
     { name: 'parcs', type: 'tokens_parcial' },
@@ -137,8 +137,12 @@ export const llmOmlx: NodeTypeDef = {
     const registerReset = (ctx.bindings.__registerReset ?? ctx.bindings.__onResetHistory) as
       | ((fn: () => void) => void)
       | undefined;
+    const onThought = ctx.bindings.__onThought as
+      | ((ev: { thoughtId: string; text: string; final: boolean }) => void)
+      | undefined;
 
     const history: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+    let thoughtSeq = 0;
     let reportedHistoryTurns = 0;
     let controller: AbortController | null = null;
     let interruptedCurrent = false;
@@ -219,6 +223,8 @@ export const llmOmlx: NodeTypeDef = {
         };
 
         let acc = '';
+        let reasoningAcc = '';
+        const thoughtId = `${ctx.id}:${++thoughtSeq}`;
         let t0 = 0;
         let tLlmTtftMs: number | undefined;
         const tStart = Date.now();
@@ -227,8 +233,14 @@ export const llmOmlx: NodeTypeDef = {
           await postSse(`${baseUrl}/v1/chat/completions`, body, {
             onData(json) {
               if (interruptedCurrent || ctrl.signal.aborted) return;
-              const delta = (json as any)?.choices?.[0]?.delta?.content;
-              if (typeof delta !== 'string' || delta.length === 0) return;
+              const delta = (json as any)?.choices?.[0]?.delta ?? {};
+              const content = delta.content;
+              const reasoning = delta.reasoning_content;
+              if (typeof reasoning === 'string' && reasoning.length > 0) {
+                reasoningAcc += reasoning;
+                try { onThought?.({ thoughtId, text: reasoningAcc, final: false }); } catch { /* callback do host */ }
+              }
+              if (typeof content !== 'string' || content.length === 0) return;
               if (!ttftLogged) {
                 const now = Date.now();
                 tLlmTtftMs = now;
@@ -236,7 +248,7 @@ export const llmOmlx: NodeTypeDef = {
                 ctx.metrics.timer('llm.omlx.ttftMs', t0);
                 ttftLogged = true;
               }
-              acc += delta;
+              acc += content;
               void ctx
                 .emit(
                   'out',
@@ -266,6 +278,9 @@ export const llmOmlx: NodeTypeDef = {
 
         // Em interrupt: NÃO emite final:true e NÃO grava no history
         if (interruptedCurrent) return;
+        if (reasoningAcc) {
+          try { onThought?.({ thoughtId, text: reasoningAcc, final: true }); } catch { /* callback do host */ }
+        }
 
         // Fecha o stream com final:true (nunca com texto vazio)
         if (acc.length > 0) {

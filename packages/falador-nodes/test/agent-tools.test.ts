@@ -206,6 +206,7 @@ describe('agent.tools — ADR-008 Fase 4', () => {
             message: {
               role: 'assistant',
               content: 'Causa raiz: nginx falhou por upstream timeout na porta 8080.',
+              reasoning_content: 'Os logs indicam falha de upstream.',
             },
           },
         ],
@@ -240,6 +241,7 @@ describe('agent.tools — ADR-008 Fase 4', () => {
     };
 
     const steps: AgentStepEvent[] = [];
+    const thoughts: Array<{ thoughtId: string; text: string; final: boolean }> = [];
     const collected: Envelope[] = [];
     const src = makeManualSource();
     const reg = makeReg([
@@ -273,6 +275,7 @@ describe('agent.tools — ADR-008 Fase 4', () => {
       bindings: {
         agente: {
           __onAgentStep: (ev: AgentStepEvent) => steps.push(ev),
+          __onThought: (ev: { thoughtId: string; text: string; final: boolean }) => thoughts.push(ev),
         },
       },
     };
@@ -321,6 +324,9 @@ describe('agent.tools — ADR-008 Fase 4', () => {
       assert.equal(trace.turnId, 'turn-a1');
       assert.equal(trace.tCaptureMs, 1000);
       assert.equal(typeof trace.tLlmFinalMs, 'number');
+      assert.deepEqual(thoughts, [{
+        thoughtId: 'agente:1:3', text: 'Os logs indicam falha de upstream.', final: true,
+      }]);
     } finally {
       await run.stop('test_done');
       await srv.close();

@@ -8,7 +8,7 @@ import { TopBar } from './components/TopBar';
 import { BuilderView } from './views/BuilderView';
 import { LiveView } from './views/LiveView';
 import { useRunner } from './useRunner';
-import { fetchCatalog, fetchFlows, fetchFlow, fetchModels, fetchApps, fetchContext, saveFlow, deleteFlow, uploadDoc, removeDoc, type Catalog, type Flow, type ContextDoc, type ServiceStatusMap } from './api';
+import { fetchCatalog, fetchFlows, fetchFlow, fetchModels, fetchApps, fetchContext, saveFlow, deleteFlow, uploadDoc, removeDoc, clearLogs, resetHistory, type Catalog, type Flow, type ContextDoc, type ServiceStatusMap } from './api';
 import { applyContext, isDecisionModel, sanitizeFlow } from './live-utils';
 
 function scenarioLabel(name: string): string {
@@ -46,6 +46,7 @@ export function App() {
   const [apps, setApps] = useState<string[]>([]);
   const [contextDocs, setContextDocs] = useState<ContextDoc[]>([]);
   const [toast, setToast] = useState<string | null>(null);
+  const [resetSignal, setResetSignal] = useState(0);
   const runner = useRunner();
   const actionsRef = useRef<{ getFlow: () => Flow; save: () => void } | null>(null);
   const seenAgentStepsRef = useRef(0);
@@ -218,6 +219,12 @@ export function App() {
   };
   const onRegenerate = () => { if (liveFlow && runner.running) startWithContext(liveFlow); };
   const onExit = () => { runner.stop(); };
+  const onReset = async () => {
+    runner.reset();
+    await Promise.allSettled([clearLogs(), resetHistory('*')]);
+    setResetSignal((n) => n + 1);
+    setToast('Reset concluído — tela e logs limpos');
+  };
   const onSwitchLiveFlow = async (name: string) => {
     try {
       const f = await fetchFlow(name);
@@ -318,6 +325,8 @@ export function App() {
               onNotify={(msg) => setToast(msg)}
               onGoBuilder={() => setView('builder')}
               onExit={onExit}
+              onReset={() => void onReset()}
+              resetSignal={resetSignal}
             />
           )}
         </div>

@@ -33,6 +33,7 @@ export const asrRealtime: NodeTypeDef = {
     'emitInterruptOnSpeech',
     'bargeInDebounceMs',
   ],
+  bindingNames: ['__onCaption'],
   inputs: [{ name: 'in', type: 'pcm16k' }],
   outputs: [
     { name: 'out', type: 'tokens_parcial', required: false },
@@ -72,6 +73,9 @@ export const asrRealtime: NodeTypeDef = {
     const maxPendingMs = (ctx.params.maxPendingMs as number | undefined) ?? 2000;
     const emitInterruptOnSpeech = (ctx.params.emitInterruptOnSpeech as boolean | undefined) ?? false;
     const bargeInDebounceMs = (ctx.params.bargeInDebounceMs as number | undefined) ?? 300;
+    const onCaption = ctx.bindings.__onCaption as
+      | ((c: { text: string; final: boolean; trace?: TraceMeta }) => void)
+      | undefined;
 
     let ws: WebSocket | null = null;
     let opened = false;
@@ -225,7 +229,11 @@ export const asrRealtime: NodeTypeDef = {
           tCaptureMs: lastCaptureMs || undefined,
           tAsrFirstMs,
         };
-        await ctx.emit('out', { text: acc, final: false }, { meta: { itemId: item, ...inheritTrace(undefined, tracePatch) } });
+        const meta = { itemId: item, ...inheritTrace(undefined, tracePatch) };
+        await ctx.emit('out', { text: acc, final: false }, { meta });
+        if (acc) {
+          try { onCaption?.({ text: acc, final: false, trace: meta.trace }); } catch { /* callback do host */ }
+        }
         return;
       }
       if (type === 'conversation.item.input_audio_transcription.completed') {
@@ -244,6 +252,9 @@ export const asrRealtime: NodeTypeDef = {
         };
         const meta = { itemId: item, ...inheritTrace(undefined, tracePatch) };
         await ctx.emit('out', { text: transcript, final: true }, { meta });
+        if (transcript) {
+          try { onCaption?.({ text: transcript, final: true, trace: meta.trace }); } catch { /* callback do host */ }
+        }
         if (transcript.trim()) {
           await ctx.emit('final', transcript, { meta });
         }

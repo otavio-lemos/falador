@@ -3,6 +3,8 @@
 // sidebar de Documentos/Runbooks (RAG BM25 com tags e chunks).
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Accordion,
+  AccordionItem,
   Button,
   Dropdown,
   Modal,
@@ -34,8 +36,8 @@ import {
   VolumeUp,
   VolumeMute,
 } from '@carbon/icons-react';
-import type { Runner, Gate, AgentStep } from '../useRunner';
-import { exportSession, resetHistory, type Flow, type ContextDoc, type ServiceStatusMap } from '../api';
+import type { Runner, Gate, AgentStep, Caption } from '../useRunner';
+import { exportSession, type Flow, type ContextDoc, type ServiceStatusMap } from '../api';
 import {
   deriveStages,
   classifySinks,
@@ -50,8 +52,10 @@ import {
 } from '../live-utils';
 import { WorkflowMiniMap } from '../components/WorkflowMiniMap';
 import { LogsPanel } from '../components/LogsPanel';
+import { shortNodeName } from '../data';
 
 const WEBHOOK_STORAGE_KEY = 'falador.webhookUrl';
+const THOUGHTS_STORAGE_KEY = 'falador.showThoughts';
 
 interface Props {
   runner: Runner;
@@ -79,9 +83,22 @@ interface Props {
   onNotify?: (msg: string) => void;
   onGoBuilder: () => void;
   onExit: () => void;
+  onReset: () => void;
+  resetSignal: number;
 }
 
 interface Item { id: string; label: string }
+
+interface ConversationEntry {
+  id: string;
+  kind: 'user' | 'stt' | 'agent' | 'audio' | 'thought';
+  nodeId: string;
+  title: string;
+  subtitle: string;
+  text: string;
+  ts: number;
+  live?: boolean;
+}
 
 function stageItems(stage: Stage, models: { omlx: string[]; cache: string[] }, apps: string[]): Item[] {
   if (stage.kind === 'approve-mode') {
@@ -215,7 +232,7 @@ export function LiveView({
   micMuted, speakerMuted, onToggleMicMute, onToggleSpeakerMute,
   models, apps, contextDocs,
   onUploadDoc, onRemoveDoc, onStart, flows, currentFlow,
-  onSwitchFlow, onUpdateStage, onRegenerate, onRefreshApps, onServiceStatus, onNotify, onGoBuilder, onExit,
+  onSwitchFlow, onUpdateStage, onRegenerate, onRefreshApps, onServiceStatus, onNotify,  onGoBuilder, onExit, onReset, resetSignal,
 }: Props) {
   const stages = useMemo(() => deriveStages(flow), [flow]);
   const sinks = useMemo(() => classifySinks(flow), [flow]);
@@ -224,6 +241,9 @@ export function LiveView({
   const [cmdDraft, setCmdDraft] = useState('');
   const [chatInput, setChatInput] = useState('');
   const [sendingChat, setSendingChat] = useState(false);
+  const [showThoughts, setShowThoughts] = useState(() => {
+    try { return localStorage.getItem(THOUGHTS_STORAGE_KEY) === 'true'; } catch { return false; }
+  });
   const [docsOpen, setDocsOpen] = useState(false);
   const [uploadTags, setUploadTags] = useState('');
   const [exportOpen, setExportOpen] = useState(false);
@@ -299,42 +319,138 @@ export function LiveView({
   };
   const startEdit = () => { setDraft(suggestion); setEditing(true); };
 
-  const handleResetHistory = async () => {
-    try {
-      const r = await resetHistory('*');
-      onNotify?.(r.sent ? 'Contexto conversacional limpo' : 'Nenhum run ativo para limpar contexto');
-    } catch {
-      onNotify?.('Falha ao limpar contexto');
-    }
-  };
+  const sawResetRef = useRef(resetSignal);
+  useEffect(() => {
+    if (sawResetRef.current === resetSignal) return;
+    sawResetRef.current = resetSignal;
+    setEditing(false);
+    setDraft('');
+    setCmdDraft('');
+    setChatInput('');
+    setExportResult(null);
+    setDocsOpen(false);
+  }, [resetSignal]);
 
   const chatNode = flow.nodes.find((n) => n.type === 'input.chat');
-  const chatPlaceholder =
-    (typeof chatNode?.params?.placeholder === 'string' && chatNode.params.placeholder.trim()) ||
-    'Digite sua mensagem ou comando (Enter para enviar)...';
+  const chatPlaceholder = chatNode
+    ? ((typeof chatNode.params?.placeholder === 'string' && chatNode.params.placeholder.trim()) ||
+      'Digite sua mensagem ou comando (Enter para enviar)...')
+    : 'Este workflow não possui entrada de texto (input.chat).';
 
-  // Conversa do CHAT (flow com nó input.chat): prompts do usuário + respostas FINAIS do
-  // agente (captions de sugestão), intercalados por ts. A última legenda de sugestão ainda
-  // não-final vira uma bolha de agente "ao vivo" no fim.
+  // Conversa única: texto, STT, respostas, áudio e pensamento derivados dos eventos
+  // e dos nós realmente presentes no workflow — sem papéis ou mensagens fixas.
   const suggestionCaption = lastOf(sinks.suggestion);
+  const transcriptionCaption = [...runner.captions].reverse().find(
+    (c) => c.kind === 'stt' || sinks.transcription.has(c.nodeId),
+  );
   const liveAgent = suggestionCaption && !suggestionCaption.final && runner.running ? suggestionCaption : null;
-  const conversation = useMemo(() => {
-    const items: { role: 'user' | 'agent'; text: string; ts: number }[] = [];
-    for (const m of runner.chatMessages) items.push({ role: 'user', text: m.text, ts: m.ts });
-    for (const c of runner.captions) {
-      if (c.final && sinks.suggestion.has(c.nodeId)) items.push({ role: 'agent', text: c.text, ts: c.ts });
+  const liveStt = transcriptionCaption && !transcriptionCaption.final && runner.running ? transcriptionCaption : null;
+  const conversation = useMemo<ConversationEntry[]>(() => {
+    const items: ConversationEntry[] = [];
+    const nodes = new Map(flow.nodes.map((n) => [n.id, n]));
+    const directParent = new Map<string, string>();
+    for (const e of flow.edges) {
+      const to = e.to.split('.')[0];
+      if (!directParent.has(to)) directParent.set(to, e.from.split('.')[0]);
     }
+    const label = (nodeId: string) => {
+      const n = nodes.get(nodeId);
+      return n ? shortNodeName(n.type, n.id, n.params) : nodeId;
+    };
+    const sourceLabel = (sinkId: string) => label(directParent.get(sinkId) ?? sinkId);
+    const pushLive = (caption: Caption, kind: 'stt' | 'agent') => {
+      const sourceId = directParent.get(caption.nodeId) ?? caption.nodeId;
+      const source = nodes.get(sourceId);
+      items.push({
+        id: `${kind}-live-${caption.nodeId}`,
+        kind,
+        nodeId: sourceId,
+        title: label(sourceId),
+        subtitle: kind === 'stt'
+          ? (source?.type === 'asr.lfm3' ? 'STT + tradução · ao vivo' : 'STT · ao vivo')
+          : 'Resposta · ao vivo',
+        text: caption.text,
+        ts: caption.ts,
+        live: true,
+      });
+    };
+
+    for (const [i, m] of runner.chatMessages.entries()) {
+      items.push({
+        id: `chat-${m.ts}-${i}`, kind: 'user', nodeId: m.nodeId,
+        title: 'Você', subtitle: 'Entrada escrita', text: m.text, ts: m.ts,
+      });
+    }
+    for (const [i, c] of runner.captions.entries()) {
+      if (!c.final) continue;
+      const isStt = c.kind === 'stt' || sinks.transcription.has(c.nodeId);
+      if (!isStt && !sinks.suggestion.has(c.nodeId)) continue;
+      const sourceId = directParent.get(c.nodeId) ?? c.nodeId;
+      const source = nodes.get(sourceId);
+      items.push({
+        id: `caption-${c.ts}-${i}`,
+        kind: isStt ? 'stt' : 'agent',
+        nodeId: sourceId,
+        title: sourceLabel(c.nodeId),
+        subtitle: isStt
+          ? (source?.type === 'asr.lfm3' ? 'STT + tradução' : 'STT')
+          : source?.type === 'translate.llm' || (source?.type === 'llm.omlx' && source.params.targetLanguage !== undefined)
+            ? 'Tradução'
+            : 'Resposta',
+        text: c.text,
+        ts: c.ts,
+      });
+    }
+    for (const [i, ev] of runner.events.entries()) {
+      const nodeId = String(ev.nodeId ?? '');
+      const type = nodes.get(nodeId)?.type;
+      if (ev.type !== 'node_error' || ev.code !== 'log_info' || (type !== 'tts.sts' && type !== 'sink.playback')) continue;
+      const text = String(ev.message ?? '').trim();
+      if (!text) continue;
+      items.push({
+        id: `audio-${i}`, kind: 'audio', nodeId,
+        title: label(nodeId),
+        subtitle: type === 'tts.sts' ? 'Síntese de voz' : 'Reprodução de áudio',
+        text, ts: Number(ev._uiTs ?? 0),
+      });
+    }
+    if (showThoughts) {
+      for (const t of runner.thoughts) {
+        items.push({
+          id: `thought-${t.thoughtId}`, kind: 'thought', nodeId: t.nodeId,
+          title: label(t.nodeId), subtitle: t.final ? 'Pensamento' : 'Pensamento · em andamento',
+          text: t.text, ts: t.ts,
+        });
+      }
+      const latestSteps = new Map<string, AgentStep>();
+      for (const s of runner.agentSteps) {
+        const key = `${s.nodeId}:${s.step}`;
+        latestSteps.set(key, { ...s, ts: latestSteps.get(key)?.ts ?? s.ts });
+      }
+      for (const [key, s] of latestSteps) {
+        const phase = s.phase === 'calling' ? 'chamando' : s.phase === 'rejected' ? 'rejeitada' : s.phase === 'repeated' ? 'repetida' : s.ok === false ? 'erro' : 'concluída';
+        const args = s.args && Object.keys(s.args).length > 0 ? `\n${JSON.stringify(s.args)}` : '';
+        const duration = typeof s.durationMs === 'number' ? ` · ${Math.round(s.durationMs)} ms` : '';
+        items.push({
+          id: `agent-step-${key}`, kind: 'thought', nodeId: s.nodeId,
+          title: label(s.nodeId), subtitle: `Passo ${s.step} · ${phase}`,
+          text: `${s.tool}${duration}${s.dryRun ? ' · dry-run' : ''}${args}`, ts: s.ts,
+        });
+      }
+    }
+    if (liveStt) pushLive(liveStt, 'stt');
+    if (liveAgent) pushLive(liveAgent, 'agent');
     return items.sort((a, b) => a.ts - b.ts);
-  }, [runner.chatMessages, runner.captions, sinks.suggestion]);
+  }, [flow.nodes, flow.edges, runner.chatMessages, runner.captions, runner.events, runner.thoughts, runner.agentSteps, sinks, showThoughts, liveAgent, liveStt]);
   const chatLogRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = chatLogRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [conversation.length, liveAgent?.text]);
+  }, [conversation]);
 
   const handleSendChat = async () => {
     const text = chatInput.trim();
-    if (!text || !runner.running || sendingChat) return;
+    if (!text || !runner.running || sendingChat || !chatNode) return;
     setSendingChat(true);
     try {
       await runner.sendChat(text, chatNode?.id);
@@ -615,8 +731,8 @@ export function LiveView({
           >
             {runner.running ? 'Pausar' : 'Iniciar'}
           </Button>
-          <Button kind="tertiary" size="sm" renderIcon={Reset} onClick={handleResetHistory} disabled={!hasLLM} title="Limpa memória conversacional do LLM">
-            Limpar
+          <Button kind="tertiary" size="sm" renderIcon={Reset} onClick={onReset} title="Encerra o run e limpa tela, contexto e logs">
+            Reset
           </Button>
           <Button kind="danger" size="sm" renderIcon={Stop} onClick={onExit}>
             Encerrar
@@ -695,36 +811,9 @@ export function LiveView({
         <main className="live2-main">
           {lastError && <div className="live2-error">⚠ {lastError.nodeId ? `[${lastError.nodeId}] ` : ''}{lastError.message ?? lastError.error}</div>}
           {!lastError && runner.lastRunError && <div className="live2-error">⚠ {runner.lastRunError}</div>}
-          {isAssisted && sinks.transcription.size > 0 && (
-            <>
-              <div className="live2-label">{hasExec ? 'Solicitação por voz (transcrição ao vivo)' : 'Transcrição ao vivo (entrevistador)'}</div>
-              <div className="live2-transcription">{transcription || (runner.running ? 'Ouvindo...' : '—')}</div>
-            </>
-          )}
 
-          {chatNode ? (
-            <>
+          <>
               {commandGateCard}
-              {hasGate && gate && !gateInfo.isCommand && (
-                <div className="live2-actions live-chat-gate-actions">
-                  {editing ? (
-                    <>
-                      <TextArea labelText="Editar sugestão" hideLabel rows={3} value={draft} onChange={(e) => setDraft(e.target.value)} />
-                      <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={approve}>Enviar editada</Button>
-                      <Button kind="ghost" size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
-                    </>
-                  ) : (
-                    <>
-                      <Button kind="tertiary" size="sm" renderIcon={Edit} onClick={startEdit}>Editar</Button>
-                      <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
-                        {hasTTS ? 'Aprovar & Falar' : 'Aprovar'}
-                      </Button>
-                      <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>Rejeitar</Button>
-                    </>
-                  )}
-                </div>
-              )}
-
               <div className="live-chat">
                 <div className="live2-label">Conversa</div>
                 <div className="live-chat-log" ref={chatLogRef}>
@@ -733,28 +822,83 @@ export function LiveView({
                       {runner.running ? 'Envie uma mensagem para conversar com o agente.' : 'Inicie a sessão para conversar com o agente.'}
                     </p>
                   )}
-                  {conversation.map((m, idx) => (
-                    <div key={`${m.ts}-${idx}`} className={`live-chat-bubble live-chat-bubble--${m.role}`}>
-                      <span className="live-chat-ts">{new Date(m.ts).toLocaleTimeString()}</span>
-                      <span className="live-chat-text">{m.text}</span>
-                    </div>
+                  {conversation.map((m) => (
+                    m.kind === 'thought' ? (
+                      <Accordion key={m.id} className="live-chat-thought" data-node-id={m.nodeId}>
+                        <AccordionItem
+                          title={(
+                            <span className="live-chat-thought-heading">
+                              <span><strong>{m.title}</strong> · {m.subtitle}</span>
+                              <time>{new Date(m.ts).toLocaleTimeString()}</time>
+                            </span>
+                          )}
+                        >
+                          <div className="live-chat-thought-text">{m.text}</div>
+                        </AccordionItem>
+                      </Accordion>
+                    ) : (
+                      <article key={m.id} className={`live-chat-entry live-chat-entry--${m.kind}`} data-node-id={m.nodeId}>
+                        <header className="live-chat-entry-head">
+                          <span className="live-chat-entry-role">
+                            <strong>{m.title}</strong>
+                            <span>{m.subtitle}</span>
+                          </span>
+                          <time>{new Date(m.ts).toLocaleTimeString()}</time>
+                        </header>
+                        <div className="live-chat-entry-text">
+                          {m.text}
+                          {m.live && <span className="live-cursor" />}
+                        </div>
+                      </article>
+                    )
                   ))}
-                  {liveAgent && (
-                    <div className="live-chat-bubble live-chat-bubble--agent live-chat-bubble--live">
-                      <span className="live-chat-ts">{new Date(liveAgent.ts).toLocaleTimeString()}</span>
-                      <span className="live-chat-text">{liveAgent.text}<span className="live-cursor" /></span>
-                    </div>
-                  )}
                 </div>
+                {hasGate && gate && !gateInfo.isCommand && (
+                  <section className="live-chat-suggestion" aria-label="Sugestão de resposta pendente">
+                    <div className="live-chat-suggestion-head">
+                      <strong>Sugestão de resposta</strong>
+                      <Tag type="warm-gray" size="sm">Revisão pendente</Tag>
+                    </div>
+                    {editing ? (
+                      <TextArea
+                        id="edit-chat-suggestion"
+                        labelText="Editar sugestão"
+                        hideLabel
+                        rows={3}
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                      />
+                    ) : (
+                      <div className="live-chat-suggestion-text">{suggestion}</div>
+                    )}
+                    <div className="live2-actions live-chat-gate-actions">
+                      {editing ? (
+                        <>
+                          <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={approve}>Enviar editada</Button>
+                          <Button kind="ghost" size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
+                            {hasTTS ? 'Aprovar & Falar' : 'Aprovar'}
+                          </Button>
+                          <Button kind="tertiary" size="sm" renderIcon={Edit} onClick={startEdit}>Editar</Button>
+                          {hasLLM && <Button kind="tertiary" size="sm" renderIcon={Renew} onClick={onRegenerate}>Regerar</Button>}
+                          <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>Rejeitar</Button>
+                        </>
+                      )}
+                    </div>
+                  </section>
+                )}
                 <div className="live-chat-input">
                   <TextArea
                     id="live-chat-input"
                     labelText="Mensagem"
                     hideLabel
                     rows={2}
-                    placeholder={runner.running ? chatPlaceholder : 'Inicie a sessão para enviar mensagens...'}
+                    placeholder={runner.running ? chatPlaceholder : 'Inicie a sessão para conversar...'}
                     value={chatInput}
-                    disabled={!runner.running || sendingChat}
+                    disabled={!runner.running || sendingChat || !chatNode}
                     onChange={(e) => setChatInput(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
@@ -767,7 +911,7 @@ export function LiveView({
                     kind="primary"
                     size="md"
                     renderIcon={Play}
-                    disabled={!runner.running || sendingChat || !chatInput.trim()}
+                    disabled={!runner.running || sendingChat || !chatInput.trim() || !chatNode}
                     onClick={() => void handleSendChat()}
                   >
                     Enviar
@@ -775,70 +919,6 @@ export function LiveView({
                 </div>
               </div>
             </>
-          ) : (
-            <>
-              <div className="live2-label">{heroLabel}</div>
-              {commandGateCard ? commandGateCard : (
-                <>
-                  <div className="live2-suggestion">
-                    {editing && hasGate ? (
-                      <TextArea labelText="Editar sugestão" hideLabel rows={4} value={draft} onChange={(e) => setDraft(e.target.value)} />
-                    ) : (
-                      <div className="live2-suggestion-text">
-                        {heroText || (runner.running ? (isAssisted ? 'Gerando resposta...' : 'Aguardando áudio...') : 'Inicie a sessão.')}
-                        {runner.running && !editing && <span className="live-cursor" />}
-                      </div>
-                    )}
-                  </div>
-                  {(hasLLM || hasGate) && (
-                    <div className="live2-actions">
-                      {hasLLM && <Button kind="tertiary" size="sm" renderIcon={Renew} onClick={onRegenerate}>Regerar</Button>}
-                      {hasGate && (editing ? (
-                        <>
-                          <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={approve} disabled={!gate}>Enviar editada</Button>
-                          <Button kind="ghost" size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
-                        </>
-                      ) : (
-                        <>
-                          <Button kind="tertiary" size="sm" renderIcon={Edit} onClick={startEdit} disabled={!gate}>Editar</Button>
-                          <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve} disabled={!gate}>
-                            {hasTTS ? 'Aprovar & Falar' : 'Aprovar'}
-                          </Button>
-                          {gate && (
-                            <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>Rejeitar</Button>
-                          )}
-                        </>
-                      ))}
-                    </div>
-                  )}
-                  {hasGate && !gate && runner.running && (
-                    <p className="live2-hint">Roteamento automático — sem gate humano pendente.</p>
-                  )}
-                </>
-              )}
-            </>
-          )}
-
-          {runner.agentSteps.length > 0 && (
-            <section className="agent-timeline" aria-label="Passos do agente">
-              <div className="live2-label">Passos do agente ({runner.agentSteps.length})</div>
-              <div className="agent-timeline-list">
-                {runner.agentSteps.map((s, idx) => {
-                  const st = agentStepStatus(s);
-                  return (
-                    <div key={`${s.nodeId}-${s.step}-${s.phase}-${idx}`} className="agent-step-row">
-                      <span className="agent-step-num">Passo {s.step}</span>
-                      <code className="agent-step-tool">{s.tool}</code>
-                      <Tag type={st.tagType} size="sm">{st.label}</Tag>
-                      {typeof s.durationMs === 'number' && (
-                        <span className="agent-step-dur">{Math.round(s.durationMs)} ms</span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-          )}
         </main>
       </div>
 
@@ -908,7 +988,16 @@ export function LiveView({
         </div>
       </Modal>
 
-      <LogsPanel flowNodes={flow.nodes} onServiceStatus={onServiceStatus} />
+      <LogsPanel
+        flowNodes={flow.nodes}
+        onServiceStatus={onServiceStatus}
+        resetSignal={resetSignal}
+        thoughtsOn={showThoughts}
+        onToggleThoughts={(next) => {
+          setShowThoughts(next);
+          try { localStorage.setItem(THOUGHTS_STORAGE_KEY, String(next)); } catch { /* ignore */ }
+        }}
+      />
 
       <Modal
         open={exportOpen}
