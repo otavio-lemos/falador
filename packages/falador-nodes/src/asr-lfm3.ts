@@ -14,12 +14,12 @@ const DEFAULT_INSTRUCTION =
 
 export const asrLfm3: NodeTypeDef = {
   type: 'asr.lfm3',
-  paramNames: ['url', 'instruction', 'sampleRateHz', 'flushSec', 'timeoutMs', 'maxTranslateChars'],
+  paramNames: ['url', 'model', 'targetLanguage', 'instruction', 'sampleRateHz', 'flushSec', 'timeoutMs', 'maxTranslateChars'],
   inputs: [{ name: 'in', type: 'pcm16k' }],
   outputs: [{ name: 'out', type: 'tokens_parcial' }],
   validateParams: (p) => {
     const errs: { path: string; code: string; message: string }[] = [];
-    for (const k of ['url', 'instruction']) {
+    for (const k of ['url', 'model', 'targetLanguage', 'instruction']) {
       if (p[k] !== undefined && typeof p[k] !== 'string') {
         errs.push({ path: `params.${k}`, code: 'INVALID_PARAM', message: `${k} deve ser string` });
       }
@@ -33,7 +33,18 @@ export const asrLfm3: NodeTypeDef = {
   },
   create: (ctx: NodeCtx): NodeRuntime => {
     const url = (ctx.params.url as string | undefined) ?? DEFAULT_URL;
-    const instruction = (ctx.params.instruction as string | undefined) ?? DEFAULT_INSTRUCTION;
+    const explicitInstruction = typeof ctx.params.instruction === 'string' ? ctx.params.instruction.trim() : '';
+    let instruction = DEFAULT_INSTRUCTION;
+    if (explicitInstruction) {
+      instruction = explicitInstruction;
+    } else if (ctx.params.targetLanguage !== undefined) {
+      const lang = String(ctx.params.targetLanguage ?? '').trim();
+      if (!lang || lang === '-' || lang === '—') {
+        instruction = 'Transcribe the audio verbatim in its original language. Output only the transcription, nothing else.';
+      } else {
+        instruction = `Transcribe the audio and translate it to ${lang}. Output only the translation, nothing else.`;
+      }
+    }
     const sampleRateHz = (ctx.params.sampleRateHz as number | undefined) ?? 16000;
     const flushSec = (ctx.params.flushSec as number | undefined) ?? 30;
     const timeoutMs = (ctx.params.timeoutMs as number | undefined) ?? 120_000;

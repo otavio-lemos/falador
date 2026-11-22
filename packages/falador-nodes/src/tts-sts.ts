@@ -14,7 +14,7 @@ export interface AudioChunkPayload {
 
 export const ttsSts: NodeTypeDef = {
   type: 'tts.sts',
-  paramNames: ['url', 'language', 'voice', 'sampleRateHz', 'timeoutMs', 'speakOn', 'maxTextChars'],
+  paramNames: ['url', 'language', 'voice', 'sampleRateHz', 'timeoutMs', 'speakOn', 'maxTextChars', 'muted'],
   inputs: [
     { name: 'in', type: 'tokens_parcial' },
     { name: 'phrase', type: 'phrase' },
@@ -26,6 +26,9 @@ export const ttsSts: NodeTypeDef = {
       if (p[k] !== undefined && typeof p[k] !== 'string') {
         errs.push({ path: `params.${k}`, code: 'INVALID_PARAM', message: `${k} deve ser string` });
       }
+    }
+    if (p.muted !== undefined && typeof p.muted !== 'boolean') {
+      errs.push({ path: 'params.muted', code: 'INVALID_PARAM', message: 'muted deve ser boolean' });
     }
     for (const k of ['sampleRateHz', 'timeoutMs', 'maxTextChars'] as const) {
       if (p[k] !== undefined && (typeof p[k] !== 'number' || p[k] <= 0)) {
@@ -45,6 +48,7 @@ export const ttsSts: NodeTypeDef = {
     const timeoutMs = (ctx.params.timeoutMs as number | undefined) ?? 60_000;
     const speakOn = (ctx.params.speakOn as 'final' | 'always' | undefined) ?? 'final';
     const maxTextChars = (ctx.params.maxTextChars as number | undefined) ?? 1400;
+    const muted = ctx.params.muted === true;
 
     let stopped = false; // engine serializa onInput por pump; sidecar tem lock próprio
     let controller: AbortController | null = null;
@@ -98,6 +102,7 @@ export const ttsSts: NodeTypeDef = {
     return {
       async start() {},
       async onInput(_port, msg) {
+        if (muted) return;
         await onEnvelope(msg);
       },
       async stop() {

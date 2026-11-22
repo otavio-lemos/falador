@@ -9,7 +9,8 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { captureFfmpeg } from '../src/index.ts';
+import { captureFfmpeg, registerFaladorNodes, sinkPlayback, ttsSts } from '../src/index.ts';
+import { createRegistry, validateFlow, type FlowSpec } from '../../falador-graph/src/index.ts';
 
 // binário FALSO de captura: registra o próprio pid e fica vivo (como capture-sck).
 function fakeCapture(): { path: string; pidFile: string } {
@@ -105,4 +106,58 @@ test('C3: capture-sck real é encerrado no stop() do nó', async (t) => {
   await new Promise((r) => setTimeout(r, 1200));
   await node.stop();
   assert.equal(process.listenerCount('exit'), known.size, 'stop() limpa o handler de exit');
+});
+
+test('C4: muted=true em capture.ffmpeg, tts.sts e sink.playback não spawna/emite e mantém flows válidos', async () => {
+  // 1. capture.ffmpeg com muted=true não spawna nada mesmo apontando para binário inexistente
+  const capNode = captureFfmpeg.create(makeCtx({ backend: 'sck', sckPath: '/nao/existe/capture', muted: true }));
+  await capNode.start();
+  await capNode.stop();
+
+  // 2. tts.sts e sink.playback com muted=true retornam cedo no onInput sem erro nem chamada HTTP/afplay
+  let ttsEmitted = 0;
+  const ttsCtx = {
+    ...makeCtx({ url: 'http://127.0.0.1:1', muted: true }),
+    emit: async () => { ttsEmitted += 1; return true; },
+  } as unknown as Parameters<typeof ttsSts.create>[0];
+  const ttsNode = ttsSts.create(ttsCtx);
+  await ttsNode.start();
+  await ttsNode.onInput('phrase', {
+    id: 'm1', seq: 1, ts: Date.now(), from: { nodeId: 'x', port: 'out' },
+    payload: 'olá', meta: {},
+  });
+  await ttsNode.stop();
+  assert.equal(ttsEmitted, 0, 'tts.sts com muted=true não deve emitir áudio');
+
+  const pbNode = sinkPlayback.create(makeCtx({ player: '/nao/existe/afplay', muted: true }));
+  await pbNode.start();
+  await pbNode.onInput('in', {
+    id: 'm2', seq: 1, ts: Date.now(), from: { nodeId: 'x', port: 'out' },
+    payload: { format: 'wav', sampleRateHz: 24000, data: new Uint8Array(10) }, meta: {},
+  });
+  await pbNode.stop();
+
+  // 3. validateFlow sobre assistente-entrevista.json e agente-workflows.json com muted=true passa sem erros
+  const reg = createRegistry();
+  registerFaladorNodes(reg);
+
+  const loadWithRuntimeBindings = (rel: string): FlowSpec => {
+    const raw = JSON.parse(readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf-8')) as FlowSpec;
+    const bindings: Record<string, Record<string, unknown>> = { ...(raw.bindings ?? {}) };
+    const nodes = raw.nodes.map((n) => {
+      const params = { ...n.params };
+      if (n.type === 'capture.ffmpeg' || n.type === 'tts.sts' || n.type === 'sink.playback') {
+        params.muted = true;
+      }
+      if (n.type === 'sink.captions') bindings[n.id] = { ...(bindings[n.id] ?? {}), __onCaption: () => {} };
+      if (n.type === 'human.approve') bindings[n.id] = { ...(bindings[n.id] ?? {}), __gate: async () => null };
+      return { ...n, params };
+    });
+    return { ...raw, nodes, bindings };
+  };
+
+  for (const rel of ['../../../apps/tui/flows/assistente-entrevista.json', '../../../apps/tui/flows/agente-workflows.json']) {
+    const validated = validateFlow(loadWithRuntimeBindings(rel), reg);
+    assert.ok(validated.nodes.size > 0, `${rel} deve validar com muted=true`);
+  }
 });

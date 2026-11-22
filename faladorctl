@@ -6,38 +6,40 @@ set -u
 cd "$(dirname "$0")"
 mkdir -p logs
 
+REPO_DIR="$(pwd)"
 SNAP_LFM3_AUDIO="$HOME/.cache/huggingface/hub/models--LiquidAI--LFM3-Audio-2B-MLX-8bit/snapshots/000ea4f93adbfdabd4b24295b5e838f6a1f0ffa8"
 SNAP_VOXTRAL="$HOME/.cache/huggingface/hub/models--mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit/snapshots/fdebf7b2af834a1db4b8a3c99ab7480b333adf9e"
-VENV_PYTHON="/Users/otaviolemos/ml/falador/.venv/bin/python"
+VENV_PYTHON="$REPO_DIR/.venv/bin/python"
 
 # Lista completa: todos os serviços residentes do projeto (run.md §1).
+# Formato: nome|porta|health_path|comando|timeout_s
 SERVICES=(
-  "omlx|8080|omlx serve --model-dir \"$HOME/.omlx/models\" --host 127.0.0.1 --port 8080|30"
-  "asr|8090|$VENV_PYTHON /Users/otaviolemos/ml/falador/.venv/lib/python3.12/site-packages/mlx_audio/server.py --host 127.0.0.1 --port 8090 --realtime-model $SNAP_VOXTRAL|60"
-  "tts|8091|$VENV_PYTHON services/sts-sidecar.py --model $SNAP_LFM3_AUDIO --port 8091|30"
-  "web|8787|node apps/web-server.mjs|15"
+  "omlx|8080|/v1/models|omlx serve --model-dir \"$HOME/.omlx/models\" --host 127.0.0.1 --port 8080|30"
+  "asr|8090|/v1/models|\"$VENV_PYTHON\" \"$REPO_DIR/.venv/lib/python3.12/site-packages/mlx_audio/server.py\" --host 127.0.0.1 --port 8090 --realtime-model \"$SNAP_VOXTRAL\"|60"
+  "tts|8091|/health|\"$VENV_PYTHON\" services/sts-sidecar.py --model \"$SNAP_LFM3_AUDIO\" --port 8091|30"
+  "web|8787|/api/catalog|node apps/web-server.mjs|15"
 )
 
-pid_at_port() { lsof -ti ":$1" 2>/dev/null | head -1; }
+# Apenas processos em estado LISTEN na porta TCP (nunca sockets cliente/CLOSED como browser ou Orca Helper).
+pids_at_port() { lsof -nP -ti "TCP:$1" -sTCP:LISTEN 2>/dev/null; }
+pid_at_port() { pids_at_port "$1" | head -1; }
 
-wait_up() { # nome porta tries
-  local port="$2" tries="$3"
+wait_up() { # nome porta health_path tries
+  local port="$2" health="$3" tries="$4"
   for _ in $(seq 1 "$tries"); do
-    for path in /v1/models /health /api/catalog /; do
-      curl -s -m 1 "http://127.0.0.1:$port$path" -o /dev/null 2>/dev/null && return 0
-    done
+    curl -fsS -m 1 "http://127.0.0.1:$port$health" -o /dev/null 2>/dev/null && return 0
     sleep 1
   done
   return 1
 }
 
-names() { for s in "${SERVICES[@]}"; do IFS='|' read -r name _ _ _ <<< "$s"; printf "%s " "$name"; done; echo; }
+names() { for s in "${SERVICES[@]}"; do IFS='|' read -r name _ _ _ _ <<< "$s"; printf "%s " "$name"; done; echo; }
 
 cmd_status() {
   echo "Serviços do Falador ($(names | wc -w | tr -d ' ')): $(names)"
   local all_ok=1
   for s in "${SERVICES[@]}"; do
-    IFS='|' read -r name port _ _ <<< "$s"
+    IFS='|' read -r name port _ _ _ <<< "$s"
     local p what
     p=$(pid_at_port "$port")
     if [ -n "$p" ]; then
@@ -62,20 +64,20 @@ cmd_start() {
   fi
   echo "Subindo TODOS os serviços: $(names)"
   for s in "${SERVICES[@]}"; do
-    IFS='|' read -r name port cmd tries <<< "$s"
+    IFS='|' read -r name port _ cmd tries <<< "$s"
     if [ -n "$(pid_at_port "$port")" ]; then
       echo "  $name :$port já no ar (pid $(pid_at_port "$port"))"
       continue
     fi
     echo "  subindo $name :$port ..."
-    nohup bash -c "$cmd" > "logs/$name.log" 2>&1 &
+    nohup bash -c "$cmd" >> "logs/$name.log" 2>&1 &
     disown
   done
   local ok=1
   echo "esperando responderem (carga de modelo: ASR é o mais lento)..."
   for s in "${SERVICES[@]}"; do
-    IFS='|' read -r name port cmd tries <<< "$s"
-    if wait_up "$name" "$port" "$tries"; then
+    IFS='|' read -r name port health cmd tries <<< "$s"
+    if wait_up "$name" "$port" "$health" "$tries"; then
       echo "  ✔ $name :$port respondeu"
     else
       echo "  ✖ $name :$port NÃO respondeu após ${tries}s — logs/$name.log:"
@@ -90,11 +92,13 @@ cmd_start() {
 cmd_stop() {
   echo "Derrubando TODOS os serviços: $(names)"
   for s in "${SERVICES[@]}"; do
-    IFS='|' read -r name port _ _ <<< "$s"
-    local p; p=$(pid_at_port "$port")
-    if [ -n "$p" ]; then
-      kill $p 2>/dev/null
-      echo "  ✔ $name :$port (pid $p) → SIGTERM"
+    IFS='|' read -r name port _ _ _ <<< "$s"
+    local pids; pids=$(pids_at_port "$port")
+    if [ -n "$pids" ]; then
+      for p in $pids; do
+        kill "$p" 2>/dev/null
+        echo "  ✔ $name :$port (pid $p) → SIGTERM"
+      done
     else
       echo "  – $name :$port já estava parado"
     fi
@@ -103,18 +107,20 @@ cmd_stop() {
   for _ in $(seq 1 20); do
     local vivos=0
     for s in "${SERVICES[@]}"; do
-      IFS='|' read -r name port _ _ <<< "$s"
+      IFS='|' read -r name port _ _ _ <<< "$s"
       [ -n "$(pid_at_port "$port")" ] && vivos=1
     done
     [ "$vivos" -eq 0 ] && break
     sleep 0.5
   done
   for s in "${SERVICES[@]}"; do
-    IFS='|' read -r name port _ _ <<< "$s"
-    local p; p=$(pid_at_port "$port")
-    if [ -n "$p" ]; then
-      kill -9 $p 2>/dev/null
-      echo "  ✔ $name :$port teimou → SIGKILL"
+    IFS='|' read -r name port _ _ _ <<< "$s"
+    local pids; pids=$(pids_at_port "$port")
+    if [ -n "$pids" ]; then
+      for p in $pids; do
+        kill -9 "$p" 2>/dev/null
+        echo "  ✔ $name :$port (pid $p) teimou → SIGKILL"
+      done
     fi
   done
   echo "=> todos parados."
@@ -124,7 +130,7 @@ cmd_restart() {
   cmd_stop
   # porta em TIME_WAIT pós-SIGKILL: espera liberar antes de subir
   for s in "${SERVICES[@]}"; do
-    IFS='|' read -r name port _ _ <<< "$s"
+    IFS='|' read -r name port _ _ _ <<< "$s"
     for _ in $(seq 1 10); do [ -z "$(pid_at_port "$port")" ] && break || sleep 0.5; done
   done
   cmd_start

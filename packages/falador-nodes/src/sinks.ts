@@ -99,13 +99,16 @@ export const sinkCaptions: NodeTypeDef = {
 export const sinkPlayback: NodeTypeDef = {
   type: 'sink.playback',
   sink: true,
-  paramNames: ['player', 'tempDir', 'maxQueue'],
+  paramNames: ['player', 'tempDir', 'maxQueue', 'muted'],
   inputs: [{ name: 'in', type: 'audio_chunk' }],
   outputs: [],
   validateParams: (p) => {
     const errs: { path: string; code: string; message: string }[] = [];
     if (p.player !== undefined && typeof p.player !== 'string') {
       errs.push({ path: 'params.player', code: 'INVALID_PARAM', message: 'player deve ser string (caminho)"' });
+    }
+    if (p.muted !== undefined && typeof p.muted !== 'boolean') {
+      errs.push({ path: 'params.muted', code: 'INVALID_PARAM', message: 'muted deve ser boolean' });
     }
     if (p.maxQueue !== undefined && (typeof p.maxQueue !== 'number' || p.maxQueue < 1)) {
       errs.push({ path: 'params.maxQueue', code: 'INVALID_PARAM', message: 'maxQueue deve ser número >= 1' });
@@ -115,6 +118,7 @@ export const sinkPlayback: NodeTypeDef = {
   create: (ctx: NodeCtx): NodeRuntime => {
     const player = (ctx.params.player as string | undefined) ?? '/usr/bin/afplay';
     const maxQueue = (ctx.params.maxQueue as number | undefined) ?? 4;
+    const muted = ctx.params.muted === true;
     let dir: string | null = null;
     let chain: Promise<void> = Promise.resolve();
     let pending = 0;
@@ -171,7 +175,7 @@ export const sinkPlayback: NodeTypeDef = {
     return {
       async start() {},
       async onInput(_port, msg) {
-        if (stopped || ctx.signal.aborted || msg.control) return;
+        if (muted || stopped || ctx.signal.aborted || msg.control) return;
         const payload = msg.payload as AudioChunkPayload | null;
         if (!payload || payload.format !== 'wav' || !(payload.data instanceof Uint8Array)) {
           ctx.log('warn', 'sink.playback: payload não é AudioChunkPayload — descartado');

@@ -14,7 +14,7 @@
 //     Filtro por app = TTS de outro processo NÃO entra → sem eco digital.
 //     Requer permissão de Gravação de Tela (TCC). macOS 13+ (audio-only na prática).
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -27,13 +27,16 @@ const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 export const captureFfmpeg: NodeTypeDef = {
   type: 'capture.ffmpeg',
   sourceOnly: true,
-  paramNames: ['input', 'sampleRate', 'chunkMs', 'ffmpegPath', 'backend', 'pythonPath', 'sidecarPath', 'sckPath'],
+  paramNames: ['input', 'sampleRate', 'chunkMs', 'ffmpegPath', 'backend', 'pythonPath', 'sidecarPath', 'sckPath', 'muted'],
   inputs: [],
   outputs: [{ name: 'out', type: 'pcm16k' }],
   validateParams: (p) => {
     const errs: { path: string; code: string; message: string }[] = [];
     if (p.input !== undefined && typeof p.input !== 'string') {
       errs.push({ path: 'params.input', code: 'INVALID_PARAM', message: 'input deve ser string (ex. ":0" ffmpeg, "BlackHole" sounddevice)' });
+    }
+    if (p.muted !== undefined && typeof p.muted !== 'boolean') {
+      errs.push({ path: 'params.muted', code: 'INVALID_PARAM', message: 'muted deve ser boolean' });
     }
     for (const k of ['sampleRate', 'chunkMs'] as const) {
       if (p[k] !== undefined && (typeof p[k] !== 'number' || p[k] <= 0)) {
@@ -51,11 +54,12 @@ export const captureFfmpeg: NodeTypeDef = {
     return errs;
   },
   create: (ctx: NodeCtx): NodeRuntime => {
-    const input = (ctx.params.input as string | undefined) ?? ':0';
+    const backend = (ctx.params.backend as string | undefined) ?? 'sck';
+    const input = (ctx.params.input as string | undefined) ?? (backend === 'sck' ? '' : ':0');
+    const muted = ctx.params.muted === true;
     const sampleRate = (ctx.params.sampleRate as number | undefined) ?? 16000;
     const chunkMs = (ctx.params.chunkMs as number | undefined) ?? 80;
     const ffmpegPath = (ctx.params.ffmpegPath as string | undefined) ?? '/opt/homebrew/bin/ffmpeg';
-    const backend = (ctx.params.backend as string | undefined) ?? 'sck';
     const pythonPath = (ctx.params.pythonPath as string | undefined) ?? join(REPO_ROOT, '.venv/bin/python');
     const sidecarPath = (ctx.params.sidecarPath as string | undefined) ?? join(REPO_ROOT, 'services/capture-sidecar.py');
     const sckPath = (ctx.params.sckPath as string | undefined) ?? join(REPO_ROOT, 'services/capture-sck');
@@ -81,16 +85,28 @@ export const captureFfmpeg: NodeTypeDef = {
 
     return {
       async start() {
-        // sck: ScreenCaptureKit por app (sem routing). Binário compilado sob demanda
-        // do .swift ao lado (swiftc dos Command Line Tools; ~10 s na primeira vez).
-        if (backend === 'sck' && !existsSync(sckPath)) {
-          ctx.log('info', 'compilando capture-sck.swift (primeira vez)…');
-          await promisify(execFile)('swiftc', ['-O', `${sckPath}.swift`, '-o', sckPath]);
+        if (muted) {
+          ctx.log('info', 'capture: silenciado (muted=true)');
+          return;
         }
+        // sck: ScreenCaptureKit por app (sem routing). Binário recompilado se ausente ou stale.
+        const swiftPath = `${sckPath}.swift`;
+        const needsBuild =
+          backend === 'sck' &&
+          (!existsSync(sckPath) || (existsSync(swiftPath) && statSync(swiftPath).mtimeMs > statSync(sckPath).mtimeMs));
+        if (needsBuild) {
+          ctx.log('info', 'compilando capture-sck.swift…');
+          await promisify(execFile)('swiftc', ['-O', swiftPath, '-o', sckPath]);
+        }
+        const rawInput = input.trim();
+        const sckApp = rawInput.replace(/^:/, '').trim();
+        const isLegacyIndex = /^:\d+$/.test(rawInput);
         const args = backend === 'sounddevice'
-          ? [sidecarPath, '--device', input.replace(/^:/, ''), '--rate', String(sampleRate), '--chunk-ms', String(chunkMs)]
+          ? [sidecarPath, '--device', sckApp, '--rate', String(sampleRate), '--chunk-ms', String(chunkMs)]
           : backend === 'sck'
-            ? ['--app', input.replace(/^:/, ''), '--rate', String(sampleRate)]
+            ? (sckApp && sckApp !== 'auto' && !isLegacyIndex
+              ? ['--app', sckApp, '--rate', String(sampleRate)]
+              : ['--rate', String(sampleRate)])
             : [
               '-f', 'avfoundation',
               '-i', input,
@@ -112,7 +128,9 @@ export const captureFfmpeg: NodeTypeDef = {
           child.on('error', reject);
           child.on('spawn', () => resolve());
           child.on('exit', (code) => {
-            if (!stopped) ctx.log('warn', `ffmpeg exit code=${code}`);
+            if (!stopped) {
+              ctx.log(code && code !== 0 ? 'error' : 'warn', `capture (${backend}) encerrou (code=${code})`);
+            }
           });
           child.stdout.on('data', (buf: Buffer) => {
             if (stopped || ctx.signal.aborted) return;

@@ -34,7 +34,10 @@ export const asrRealtime: NodeTypeDef = {
     'bargeInDebounceMs',
   ],
   inputs: [{ name: 'in', type: 'pcm16k' }],
-  outputs: [{ name: 'out', type: 'tokens_parcial' }],
+  outputs: [
+    { name: 'out', type: 'tokens_parcial', required: false },
+    { name: 'final', type: 'phrase', required: false },
+  ],
   validateParams: (p) => {
     const errs: { path: string; code: string; message: string }[] = [];
     for (const k of ['url', 'model']) {
@@ -195,6 +198,7 @@ export const asrRealtime: NodeTypeDef = {
             if (stopped || ctx.signal.aborted) return;
             ctx.metrics.counter('asr.realtime.interrupts', 1);
             ctx.emitControl('out', { kind: 'interrupt', scope: 'port', reason: 'speech_started' });
+            ctx.emitControl('final', { kind: 'interrupt', scope: 'port', reason: 'speech_started' });
           }, bargeInDebounceMs);
         }
         return;
@@ -238,7 +242,11 @@ export const asrRealtime: NodeTypeDef = {
           tAsrFirstMs,
           tAsrFinalMs: now,
         };
-        await ctx.emit('out', { text: transcript, final: true }, { meta: { itemId: item, ...inheritTrace(undefined, tracePatch) } });
+        const meta = { itemId: item, ...inheritTrace(undefined, tracePatch) };
+        await ctx.emit('out', { text: transcript, final: true }, { meta });
+        if (transcript.trim()) {
+          await ctx.emit('final', transcript, { meta });
+        }
         return;
       }
       // committed / session.* : nada a emitir

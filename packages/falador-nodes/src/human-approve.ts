@@ -56,14 +56,20 @@ function extractGateMeta(text: string, msgMeta?: Record<string, unknown>): GateM
 
 export const humanApprove: NodeTypeDef = {
   type: 'human.approve',
-  paramNames: [],
+  paramNames: ['mode'],
   bindingNames: ['__gate'],
   requiredBindings: ['__gate'],
   inputs: [{ name: 'in', type: 'tokens_parcial' }],
   outputs: [{ name: 'out', type: 'phrase' }],
-  validateParams: () => [],
+  validateParams: (p) => {
+    if (p.mode !== undefined && p.mode !== 'manual' && p.mode !== 'auto') {
+      return [{ path: 'params.mode', code: 'INVALID_PARAM', message: "mode deve ser 'manual' | 'auto'" }];
+    }
+    return [];
+  },
   create: (ctx: NodeCtx): NodeRuntime => {
     const gate = ctx.bindings.__gate as GateHolder;
+    const mode = (ctx.params.mode as 'manual' | 'auto' | undefined) ?? 'manual';
     let inFlight = false;
     let cancelPending: ((reason: string) => void) | null = null;
 
@@ -76,6 +82,13 @@ export const humanApprove: NodeTypeDef = {
         if (!pl.final) return; // age só no fechamento (parciais do LLM passam direto)
         const text = (pl.text ?? '').trim();
         if (!text) return;
+        if (mode === 'auto') {
+          ctx.metrics.counter('human.approve.bypassed', 1);
+          await ctx.emit('out', text, {
+            meta: { ...msg.meta, ...inheritTrace(msg, {}) },
+          });
+          return;
+        }
         if (inFlight) return; // uma sugestão por vez; ignora novas até decidir
         inFlight = true;
         let interrupted = false;

@@ -91,6 +91,7 @@ export const decisionLlm: NodeTypeDef = {
 
         let chosen: string;
         let decisionMeta: Record<string, unknown> | undefined;
+        const t0 = Date.now();
         if (mode === 'systemone') {
           try {
             const r = await decideSystemOne(text);
@@ -128,6 +129,7 @@ export const decisionLlm: NodeTypeDef = {
           chosen = pickOption(acc);
         }
 
+        ctx.metrics.timer('decision.llm.ms', Date.now() - t0);
         ctx.metrics.counter(`decision.llm.${chosen}`, 1);
         await ctx.emit(
           chosen,
