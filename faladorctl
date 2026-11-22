@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # faladorctl — controle ÚNICO dos serviços do Falador.
 #   ./faladorctl {start|stop|restart|status}
 # Sempre lista TODOS os serviços. Health/uso detalhado: ver run.md.
