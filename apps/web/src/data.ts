@@ -17,8 +17,7 @@ export const CATEGORIES: Category[] = [
   { id: 'pensar', label: 'Pensar', emoji: '🧠', accent: '#8b5cf6', nodes: ['llm.omlx', 'translate.llm', 'agent.tools'] },
   { id: 'decidir', label: 'Decidir', emoji: '🔀', accent: '#f59e0b', nodes: ['turn.detector', 'decision.llm', 'human.approve'] },
   { id: 'acoes', label: 'Ações / Conectores', emoji: '⚡', accent: '#f97316', nodes: ['exec.command', 'rag.search', 'tool.mcp', 'tool.workflow', 'tool.web_search', 'tool.crawler'] },
-  { id: 'falar', label: 'Falar', emoji: '🗣️', accent: '#d946ef', nodes: ['tts.sts'] },
-  { id: 'saida', label: 'Saída', emoji: '📺', accent: '#22c55e', nodes: ['sink.captions', 'sink.playback'] },
+  { id: 'output', label: 'Output', emoji: '🗣️', accent: '#22c55e', nodes: ['sink.captions'] },
   { id: 'teste', label: 'Teste', emoji: '🔧', accent: '#9ca3af', nodes: ['source.tone', 'pipe.delay', 'pipe.parcs', 'sink.collect'], collapsible: true },
 ];
 
@@ -46,7 +45,7 @@ export const NODE_META: Record<string, NodeMeta> = {
   'tool.web_search': { title: 'Pesquisa Web (Tool)', subtitle: 'DuckDuckGo · anti-SSRF', desc: 'Pesquisa externa e leitura de documentação pública com proteção anti-SSRF' },
   'tool.crawler':  { title: 'Crawler / Scraping', subtitle: 'HTML · BFS · anti-SSRF', desc: 'Raspa páginas ou faz crawl em sites com limite e proteção anti-SSRF' },
   'tts.sts':       { title: 'Voz (falar em voz alta)', subtitle: 'EN / PT', desc: 'Converte texto em fala sintetizada' },
-  'sink.captions': { title: 'Exibir', subtitle: 'Saída simples na tela', desc: 'Apenas exibe o texto na interface (sem LLM ou tradução)' },
+  'sink.captions': { title: 'Output', subtitle: 'Escrever · Falar', desc: 'Única saída: texto na tela (Escrever) ou texto + voz (Falar)' },
   'sink.playback': { title: 'Tocar no alto-falante', subtitle: 'Áudio sintetizado', desc: 'Toca o áudio no seu dispositivo' },
   'source.tone':   { title: 'Frases de teste', subtitle: 'Gera texto sintético', desc: 'Fonte de dados para testar o fluxo' },
   'pipe.delay':    { title: 'Atraso', subtitle: 'Atrasa mensagens', desc: 'Introduz um delay configurável' },
@@ -56,6 +55,7 @@ export const NODE_META: Record<string, NodeMeta> = {
 
 export function categoryOf(type: string): Category {
   if (type === 'input.chat') return CATEGORIES[0];
+  if (type === 'tts.sts' || type === 'sink.playback') return CATEGORIES.find((c) => c.id === 'output') ?? CATEGORIES[CATEGORIES.length - 1];
   return CATEGORIES.find((c) => c.nodes.includes(type)) ?? CATEGORIES[CATEGORIES.length - 1];
 }
 export function accentOf(type: string): string {
@@ -80,7 +80,7 @@ export const SHORT_NAMES: Record<string, string> = {
   'tool.web_search': 'Web',
   'tool.crawler': 'Crawler',
   'tts.sts': 'Voz TTS',
-  'sink.captions': 'Exibir',
+  'sink.captions': 'Output',
   'sink.playback': 'Áudio',
 };
 
@@ -142,6 +142,7 @@ export const PARAM_HELP: Record<string, Record<string, ParamDoc>> = {
     pythonPath: { help: 'python do .venv (backend sounddevice)', def: '.venv/bin/python' },
     sidecarPath: { help: 'capture-sidecar.py (backend sounddevice)', def: 'services/capture-sidecar.py' },
     sckPath: { help: 'binário capture-sck (backend sck)', def: 'services/capture-sck' },
+    isDefault: { help: 'marca este Input como padrão (controlado pelo botão de microfone na topbar)', def: 'false', control: 'toggle' },
   },
   'input.chat': {
     placeholder: { help: 'texto exibido no campo de prompt da interface', def: 'Digite sua mensagem ou comando…', control: 'text' },
@@ -316,6 +317,24 @@ export const PARAM_HELP: Record<string, Record<string, ParamDoc>> = {
     maxTextChars: { help: 'corta o texto em N caracteres', def: '2000' },
   },
   'sink.captions': {
+    outputMode: {
+      help: 'modo de saída: write = apenas texto na tela; speak = texto na tela + voz sintetizada',
+      def: 'write',
+      control: 'dropdown',
+      options: [
+        { val: 'write', label: 'Escrever — apenas texto' },
+        { val: 'speak', label: 'Falar — texto + voz' },
+      ],
+    },
+    isDefault: { help: 'marca este Output como padrão (controlado pelo botão de voz na topbar)', def: 'false', control: 'toggle' },
+    language: { help: 'idioma da fala quando em modo Falar', def: 'Portuguese', control: 'dropdown', options: LANGS },
+    voice: { help: 'voz do modelo TTS no modo Falar', def: 'female', control: 'dropdown', options: [{ val: 'female', label: 'female' }, { val: 'male', label: 'male' }] },
+    ttsUrl: { help: 'sidecar de voz (POST /tts). NÃO inclua /tts', def: 'http://127.0.0.1:8091' },
+    sampleRateHz: { help: 'sample rate do WAV TTS (Hz)', def: '24000', control: 'slider', min: 16000, max: 48000, step: 8000, unit: 'Hz' },
+    timeoutMs: { help: 'timeout da síntese TTS (ms)', def: '60000' },
+    maxTextChars: { help: 'corta o texto falado em N caracteres', def: '1400' },
+    player: { help: 'binário que toca o WAV no modo Falar', def: '/usr/bin/afplay' },
+    maxQueue: { help: 'falas empilhadas além disso são descartadas', def: '4', control: 'slider', min: 1, max: 16, step: 1 },
     mode: { help: 'stdout = terminal; callback = eventos pra UI (use callback na web)', def: 'stdout', control: 'dropdown', options: [{ val: 'stdout', label: 'stdout — terminal' }, { val: 'callback', label: 'callback — UI' }] },
     showParcials: { help: 'mostra parciais ao vivo', def: 'true', control: 'toggle' },
     outputFile: { help: 'arquivo opcional para salvar somente as frases finais', def: '', control: 'text' },

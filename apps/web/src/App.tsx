@@ -9,9 +9,10 @@ import { BuilderView } from './views/BuilderView';
 import { LiveView } from './views/LiveView';
 import { useRunner } from './useRunner';
 import { fetchCatalog, fetchFlows, fetchFlow, fetchModels, fetchApps, fetchContext, saveFlow, deleteFlow, uploadDoc, removeDoc, clearLogs, resetHistory, type Catalog, type Flow, type ContextDoc, type ServiceStatusMap } from './api';
-import { applyContext, isDecisionModel, sanitizeFlow } from './live-utils';
+import { applyContext, inferOutputLanguage, isDecisionModel, resolveDefaultNodeId, sanitizeFlow } from './live-utils';
 
 type InputMode = 'apps' | 'mic' | 'chat';
+type OutputMode = 'write' | 'speak';
 
 function readSavedInputMode(): InputMode | null {
   try {
@@ -21,8 +22,17 @@ function readSavedInputMode(): InputMode | null {
   return null;
 }
 
+function readSavedOutputMode(): OutputMode | null {
+  try {
+    const v = localStorage.getItem('falador.outputMode');
+    if (v === 'write' || v === 'speak') return v;
+  } catch { /* ignore */ }
+  return null;
+}
+
 function modeFromFlow(f: Flow): InputMode {
-  const cap = f.nodes.find((n) => n.type === 'capture.ffmpeg');
+  const defId = resolveDefaultNodeId(f, 'capture.ffmpeg');
+  const cap = (defId ? f.nodes.find((n) => n.id === defId) : undefined) ?? f.nodes.find((n) => n.type === 'capture.ffmpeg');
   if (cap) {
     const backend = String(cap.params?.backend ?? 'sck');
     if (backend === 'chat' || cap.params?.muted === true || cap.enabled === false) return 'chat';
@@ -31,6 +41,13 @@ function modeFromFlow(f: Flow): InputMode {
   }
   if (f.nodes.some((n) => n.type === 'input.chat')) return 'chat';
   return 'apps';
+}
+
+function outputModeFromFlow(f: Flow): OutputMode {
+  const defId = resolveDefaultNodeId(f, 'sink.captions');
+  const out = (defId ? f.nodes.find((n) => n.id === defId) : undefined) ?? f.nodes.find((n) => n.type === 'sink.captions');
+  if (out) return out.params?.outputMode === 'speak' ? 'speak' : 'write';
+  return 'write';
 }
 
 function scenarioLabel(name: string): string {
@@ -59,7 +76,9 @@ export function App() {
   });
   const [inputMode, setInputMode] = useState<InputMode>(() => readSavedInputMode() ?? 'apps');
   const lastVoiceModeRef = useRef<'apps' | 'mic'>(inputMode === 'mic' ? 'mic' : 'apps');
-  const [speakerMuted, setSpeakerMuted] = useState(false);
+  const [outputMode, setOutputMode] = useState<OutputMode>(() => readSavedOutputMode() ?? 'write');
+  const [inputResetTick, setInputResetTick] = useState(0);
+  const [outputResetTick, setOutputResetTick] = useState(0);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [flows, setFlows] = useState<{ name: string; description: string }[]>([]);
   const [currentFlow, setCurrentFlow] = useState('');
@@ -129,8 +148,8 @@ export function App() {
     }
   }, [runner.agentSteps, refreshFlows]);
 
-  const applyInputMode = (f: Flow, mode: InputMode, spk = speakerMuted): Flow => {
-    const voiceOn = mode !== 'chat';
+  const applyInputMode = (f: Flow, mode: InputMode, targetNodeId?: string): Flow => {
+    const targetId = targetNodeId ?? resolveDefaultNodeId(f, 'capture.ffmpeg');
     const asrTurnTypes = new Set(['asr.realtime', 'asr.lfm3', 'turn.detector']);
     const asrTurnIds = new Set(f.nodes.filter((n) => asrTurnTypes.has(n.type)).map((n) => n.id));
     const voiceOnlySinkIds = new Set<string>();
@@ -141,31 +160,54 @@ export function App() {
         voiceOnlySinkIds.add(n.id);
       }
     }
+    const updatedInputs = f.nodes.map((n) => {
+      if (n.type === 'capture.ffmpeg' && (!targetId || n.id === targetId)) {
+        const params: Record<string, unknown> = { ...n.params };
+        delete params.muted;
+        if (mode === 'chat') {
+          params.backend = 'chat';
+        } else if (mode === 'mic') {
+          params.backend = 'sounddevice';
+          params.input = '';
+        } else {
+          params.backend = 'sck';
+          params.input = '';
+        }
+        return { ...n, enabled: true, params };
+      }
+      return n;
+    });
+    const voiceOn = updatedInputs.some(
+      (n) => n.type === 'capture.ffmpeg' && n.enabled !== false && n.params?.backend !== 'chat' && n.params?.muted !== true,
+    );
     return {
       ...f,
-      nodes: f.nodes.map((n) => {
-        if (n.type === 'capture.ffmpeg') {
-          const params: Record<string, unknown> = { ...n.params };
-          delete params.muted;
-          if (mode === 'chat') {
-            params.backend = 'chat';
-          } else if (mode === 'mic') {
-            params.backend = 'sounddevice';
-            params.input = '';
-          } else {
-            params.backend = 'sck';
-            params.input = '';
-          }
-          return { ...n, enabled: true, params };
-        }
+      nodes: updatedInputs.map((n) => {
         if (n.type === 'input.chat') {
           return { ...n, enabled: !voiceOn };
         }
         if (asrTurnIds.has(n.id) || voiceOnlySinkIds.has(n.id)) {
           return { ...n, enabled: voiceOn };
         }
-        if (spk && (n.type === 'sink.playback' || n.type === 'tts.sts')) {
-          return { ...n, params: { ...n.params, muted: true } };
+        return n;
+      }),
+    };
+  };
+
+  const applyOutputMode = (f: Flow, mode: OutputMode, targetNodeId?: string): Flow => {
+    const targetId = targetNodeId ?? resolveDefaultNodeId(f, 'sink.captions');
+    return {
+      ...f,
+      nodes: f.nodes.map((n) => {
+        if (n.type === 'sink.captions' && (!targetId || n.id === targetId)) {
+          const nextParams: Record<string, unknown> = { ...n.params, outputMode: mode };
+          if (mode === 'speak' && (!nextParams.language || typeof nextParams.language !== 'string')) {
+            nextParams.language = inferOutputLanguage(f, n.id);
+          }
+          return { ...n, params: nextParams };
+        }
+        if (n.type === 'sink.playback' || n.type === 'tts.sts') {
+          return { ...n, params: { ...n.params, muted: mode === 'write' } };
         }
         return n;
       }),
@@ -181,44 +223,64 @@ export function App() {
     }
     runner.start(applyContext(sanitizeFlow(f), contextDocs), currentFlow);
   };
-  const startWithContext = (f: Flow, name?: string, mode: InputMode = inputMode, spk = speakerMuted) =>
-    runner.start(
-      applyInputMode(applyContext(sanitizeFlow(f), contextDocs), mode, spk),
-      name ?? currentFlow,
-    );
+  const startWithContext = (f: Flow, name?: string) =>
+    runner.start(applyContext(sanitizeFlow(f), contextDocs), name ?? currentFlow);
 
-  const setModeAndSync = (next: InputMode, baseFlow = liveFlow) => {
-    if (next !== 'chat') lastVoiceModeRef.current = next;
-    setInputMode(next);
-    try { localStorage.setItem('falador.inputMode', next); } catch { /* ignore */ }
+  const setModeAndSync = (next: InputMode, baseFlow = liveFlow, targetNodeId?: string) => {
+    const defId = baseFlow ? resolveDefaultNodeId(baseFlow, 'capture.ffmpeg') : null;
+    const isDefault = !targetNodeId || !defId || targetNodeId === defId;
+    if (isDefault) {
+      if (next !== 'chat') lastVoiceModeRef.current = next;
+      setInputMode(next);
+      try { localStorage.setItem('falador.inputMode', next); } catch { /* ignore */ }
+    }
     if (baseFlow) {
-      const updated = applyInputMode(baseFlow, next);
+      const updated = applyInputMode(baseFlow, next, targetNodeId);
       setLiveFlow(updated);
-      if (runner.running) startWithContext(updated, currentFlow, next);
+      if (runner.running) startWithContext(updated, currentFlow);
+    }
+  };
+
+  const setOutputModeAndSync = (next: OutputMode, baseFlow = liveFlow, targetNodeId?: string) => {
+    const defId = baseFlow ? resolveDefaultNodeId(baseFlow, 'sink.captions') : null;
+    const isDefault = !targetNodeId || !defId || targetNodeId === defId;
+    if (isDefault) {
+      setOutputMode(next);
+      try { localStorage.setItem('falador.outputMode', next); } catch { /* ignore */ }
+    }
+    if (baseFlow) {
+      const updated = applyOutputMode(baseFlow, next, targetNodeId);
+      setLiveFlow(updated);
+      if (runner.running) startWithContext(updated, currentFlow);
     }
   };
 
   const onToggleInputMode = () => {
+    const defId = liveFlow ? resolveDefaultNodeId(liveFlow, 'capture.ffmpeg') ?? undefined : undefined;
+    setInputResetTick((n) => n + 1);
     if (inputMode === 'chat') {
-      setModeAndSync(lastVoiceModeRef.current);
+      setModeAndSync(lastVoiceModeRef.current, liveFlow, defId);
     } else {
       lastVoiceModeRef.current = inputMode;
-      setModeAndSync('chat');
+      setModeAndSync('chat', liveFlow, defId);
     }
   };
-  const onToggleSpeakerMute = () => {
-    const next = !speakerMuted;
-    setSpeakerMuted(next);
-    if (liveFlow && runner.running) startWithContext(liveFlow, currentFlow, inputMode, next);
+  const onToggleOutputMode = () => {
+    const defId = liveFlow ? resolveDefaultNodeId(liveFlow, 'sink.captions') ?? undefined : undefined;
+    setOutputResetTick((n) => n + 1);
+    const next: OutputMode = outputMode === 'speak' ? 'write' : 'speak';
+    setOutputModeAndSync(next, liveFlow, defId);
   };
   const onGoLive = () => {
     const f = actionsRef.current?.getFlow();
     if (!f) return;
     runner.stop();
     const initialMode = readSavedInputMode() ?? modeFromFlow(f);
+    const initialOut = readSavedOutputMode() ?? outputModeFromFlow(f);
     if (initialMode !== 'chat') lastVoiceModeRef.current = initialMode;
     setInputMode(initialMode);
-    setLiveFlow(applyInputMode(f, initialMode));
+    setOutputMode(initialOut);
+    setLiveFlow(applyOutputMode(applyInputMode(f, initialMode), initialOut));
     setView('live');
     fetchApps().then(setApps).catch(() => {});
     fetchModels().then(setModels).catch(() => {});
@@ -276,7 +338,12 @@ export function App() {
     const target = liveFlow.nodes.find((n) => n.id === nodeId);
     if (target?.type === 'capture.ffmpeg' && param === 'backend') {
       const mode: InputMode = value === 'mic' ? 'mic' : value === 'chat' ? 'chat' : 'apps';
-      setModeAndSync(mode, liveFlow);
+      setModeAndSync(mode, liveFlow, nodeId);
+      return;
+    }
+    if (target?.type === 'sink.captions' && param === 'outputMode') {
+      const mode: OutputMode = value === 'speak' ? 'speak' : 'write';
+      setOutputModeAndSync(mode, liveFlow, nodeId);
       return;
     }
     const next: Flow = {
@@ -311,13 +378,14 @@ export function App() {
     try {
       const f = await fetchFlow(name);
       const m = modeFromFlow(f);
+      const outM = outputModeFromFlow(f);
       if (m !== 'chat') lastVoiceModeRef.current = m;
       setInputMode(m);
-      setSpeakerMuted(false);
-      const updated = applyInputMode(f, m, false);
+      setOutputMode(outM);
+      const updated = applyOutputMode(applyInputMode(f, m), outM);
       setCurrentFlow(name);
       setLiveFlow(updated);
-      if (runner.running) startWithContext(updated, name, m, false);
+      if (runner.running) startWithContext(updated, name);
     } catch { setToast('Falha ao carregar o flow'); }
   };
 
@@ -326,10 +394,12 @@ export function App() {
       const f = await fetchFlow('agente-workflows');
       runner.stop();
       const m = modeFromFlow(f);
+      const outM = outputModeFromFlow(f);
       if (m !== 'chat') lastVoiceModeRef.current = m;
       setInputMode(m);
+      setOutputMode(outM);
       setCurrentFlow('agente-workflows');
-      setLiveFlow(applyInputMode(f, m));
+      setLiveFlow(applyOutputMode(applyInputMode(f, m), outM));
       setView('live');
       fetchApps().then(setApps).catch(() => {});
       fetchModels().then(setModels).catch(() => {});
@@ -404,8 +474,9 @@ export function App() {
             <LiveView
               runner={runner} flow={liveFlow} scenarioName={scenarioLabel(currentFlow)}
               theme={theme} onToggleTheme={toggleTheme}
-              inputMode={inputMode} speakerMuted={speakerMuted}
-              onToggleMicMute={onToggleInputMode} onToggleSpeakerMute={onToggleSpeakerMute}
+              inputMode={inputMode} outputMode={outputMode}
+              inputResetTick={inputResetTick} outputResetTick={outputResetTick}
+              onToggleMicMute={onToggleInputMode} onToggleOutputMode={onToggleOutputMode}
               models={models} apps={apps}
               contextDocs={contextDocs} onUploadDoc={onUploadDoc} onRemoveDoc={onRemoveDoc}
               onStart={startWithContext}

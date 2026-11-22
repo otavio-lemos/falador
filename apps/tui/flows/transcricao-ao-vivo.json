@@ -10,7 +10,8 @@
         "input": "",
         "chunkMs": 80,
         "backend": "sck",
-        "placeholder": "Digite uma mensagem para exibir na transcrição (Enter para enviar)..."
+        "placeholder": "Digite uma mensagem para exibir na transcrição (Enter para enviar)...",
+        "isDefault": true
       }
     },
     {
@@ -27,7 +28,10 @@
       "type": "sink.captions",
       "params": {
         "mode": "callback",
-        "showParcials": true
+        "showParcials": true,
+        "outputMode": "write",
+        "language": "Portuguese",
+        "isDefault": true
       }
     }
   ],

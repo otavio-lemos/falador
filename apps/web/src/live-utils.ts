@@ -18,8 +18,10 @@ export interface Stage {
     | 'model-translate'
     | 'model-decision'
     | 'approve-mode'
-    | 'voice';
+    | 'voice'
+    | 'output-mode';
   value: string;
+  isDefault?: boolean;
   options?: string[];
   secondaryParam?: string;
   secondaryKind?: 'language-optional' | 'language-required';
@@ -134,6 +136,19 @@ export function deriveStages(flow: Flow): Stage[] {
         param: 'backend',
         kind: 'app',
         value: mode,
+        isDefault: p.isDefault === true,
+      });
+    } else if (n.type === 'sink.captions') {
+      out.push({
+        key: `output-${n.id}`,
+        label: 'Output',
+        accent: accentOf(n.type),
+        nodeId: n.id,
+        nodeType: n.type,
+        param: 'outputMode',
+        kind: 'output-mode',
+        value: p.outputMode === 'speak' ? 'speak' : 'write',
+        isDefault: p.isDefault === true,
       });
     } else if (n.type === 'asr.realtime') {
       out.push({
@@ -273,6 +288,82 @@ export function deriveStages(flow: Flow): Stage[] {
     if (ra !== rb) return ra - rb;
     return a.key.localeCompare(b.key);
   });
+}
+
+export interface StageInstance extends Stage {
+  instanceLabel: string;
+  isDefault: boolean;
+}
+
+export interface StageGroup {
+  key: string;
+  label: string;
+  accent: string;
+  instances: StageInstance[];
+  defaultNodeId: string;
+}
+
+export function deriveStageGroups(flow: Flow): StageGroup[] {
+  const stages = deriveStages(flow);
+  const groupsMap = new Map<string, Stage[]>();
+  for (const s of stages) {
+    const arr = groupsMap.get(s.label) ?? [];
+    arr.push(s);
+    groupsMap.set(s.label, arr);
+  }
+  const out: StageGroup[] = [];
+  for (const [label, list] of groupsMap) {
+    const instances: StageInstance[] = list.map((s, idx) => ({
+      ...s,
+      instanceLabel: `${label} ${idx + 1}`,
+      isDefault: Boolean(s.isDefault),
+    }));
+    const def = instances.find((i) => i.isDefault) ?? instances[0];
+    out.push({
+      key: `grp-${list[0].key}`,
+      label,
+      accent: list[0].accent,
+      instances,
+      defaultNodeId: def.nodeId,
+    });
+  }
+  return out;
+}
+
+export function resolveDefaultNodeId(flow: Flow, nodeType: string): string | null {
+  const matching = flow.nodes.filter((n) => n.enabled !== false && n.type === nodeType);
+  if (matching.length === 0) return null;
+  const def = matching.find((n) => n.params?.isDefault === true);
+  return (def ?? matching[0]).id;
+}
+
+export function inferOutputLanguage(flow: Flow, outputNodeId: string): string {
+  const byId = new Map(flow.nodes.map((n) => [n.id, n]));
+  const incoming = new Map<string, string[]>();
+  for (const e of flow.edges) {
+    const to = e.to.split('.')[0];
+    const from = e.from.split('.')[0];
+    const list = incoming.get(to) ?? [];
+    list.push(from);
+    incoming.set(to, list);
+  }
+  const seen = new Set<string>([outputNodeId]);
+  const queue = [...(incoming.get(outputNodeId) ?? [])];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const n = byId.get(id);
+    if (!n) continue;
+    if ((n.type === 'translate.llm' || n.type === 'llm.omlx' || n.type === 'asr.lfm3') && typeof n.params?.targetLanguage === 'string') {
+      const lang = n.params.targetLanguage.trim();
+      if (lang && lang !== '-' && lang !== '—') return lang;
+    }
+    for (const prev of incoming.get(id) ?? []) {
+      if (!seen.has(prev)) queue.push(prev);
+    }
+  }
+  return 'Portuguese';
 }
 
 // sinks de legenda alimentados DIRETO pelo ASR (ou ASR → Traduzir → Exibir) = transcrição do entrevistador;

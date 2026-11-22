@@ -35,6 +35,9 @@ export const FlowNode = memo(({ data, selected }: NodeProps<FNode>) => {
     >
       <div className="fnode-header">
         <span className="fnode-title-main">{data.title}</span>
+        {data.params?.isDefault === true && (
+          <Tag type="teal" size="sm">Padrão</Tag>
+        )}
         {data.enabled === false && <span className="fnode-off-tag">OFF</span>}
       </div>
 

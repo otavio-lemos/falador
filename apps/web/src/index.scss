@@ -516,8 +516,13 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 }
 
 .stage-dd--dual {
-  flex: 1.5 1 280px;
-  min-width: 260px;
+  flex: 1.5 1 260px;
+  min-width: 240px;
+}
+
+.stage-dd--triple {
+  flex: 2.1 1 350px;
+  min-width: 320px;
 }
 
 .stage-dd-label {
@@ -538,7 +543,13 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 
 .stage-dd-ctrl--dual {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.2fr);
+  gap: $spacing-02;
+}
+
+.stage-dd-ctrl--triple {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.25fr) minmax(0, 0.95fr);
   gap: $spacing-02;
 }
 

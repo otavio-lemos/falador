@@ -30,12 +30,12 @@ const BASE_SERVICES: BaseServiceConfig[] = [
   {
     id: 'web',
     port: 8787,
-    fallbackLabel: 'Input · Aprovação · Exibir · Áudio',
+    fallbackLabel: 'Input · Aprovação · Output',
     fallbackColors: [
       { color: '#22d3ee', label: 'Input' },
       { color: '#f59e0b', label: 'Aprovação' },
       { color: '#f97316', label: 'Exec / RAG / MCP' },
-      { color: '#22c55e', label: 'Exibir / Áudio' },
+      { color: '#22c55e', label: 'Output' },
     ],
   },
   {

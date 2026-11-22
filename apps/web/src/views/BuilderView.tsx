@@ -59,14 +59,26 @@ export function BuilderView({
   }, [setEdges]);
 
   const onParamsChange = useCallback((id: string, params: Record<string, unknown>) => {
-    setNodes((ns) => ns.map((n) => {
-      if (n.id !== id) return n;
-      let outputs = n.data.outputs;
-      if (n.data.type === 'decision.llm' && Array.isArray(params.options)) {
-        outputs = (params.options as string[]).map((o) => ({ name: o, type: 'tokens_parcial' }));
-      }
-      return { ...n, data: { ...n.data, params, outputs } };
-    }));
+    setNodes((ns) => {
+      const target = ns.find((n) => n.id === id);
+      const enforceUniqueDefault =
+        target &&
+        (target.data.type === 'capture.ffmpeg' || target.data.type === 'sink.captions') &&
+        params.isDefault === true;
+      return ns.map((n) => {
+        if (n.id !== id) {
+          if (enforceUniqueDefault && n.data.type === target.data.type && n.data.params?.isDefault === true) {
+            return { ...n, data: { ...n.data, params: { ...n.data.params, isDefault: false } } };
+          }
+          return n;
+        }
+        let outputs = n.data.outputs;
+        if (n.data.type === 'decision.llm' && Array.isArray(params.options)) {
+          outputs = (params.options as string[]).map((o) => ({ name: o, type: 'tokens_parcial' }));
+        }
+        return { ...n, data: { ...n.data, params, outputs } };
+      });
+    });
   }, [setNodes]);
 
   const onAddNode = useCallback((type: string, pos: { x: number; y: number }) => {
@@ -76,7 +88,22 @@ export function BuilderView({
     const outputs = type === 'decision.llm' ? [{ name: 'auto', type: 'tokens_parcial' }] : (cn?.outputs ?? []);
     const defaultParams: Record<string, unknown> =
       type === 'capture.ffmpeg'
-        ? { backend: 'sck', input: '', chunkMs: 80, placeholder: 'Digite sua mensagem ou comando (Enter para enviar)...' }
+        ? {
+            backend: 'sck',
+            input: '',
+            chunkMs: 80,
+            isDefault: !nodes.some((n) => n.data.type === 'capture.ffmpeg'),
+            placeholder: 'Digite sua mensagem ou comando (Enter para enviar)...',
+          }
+        : type === 'sink.captions'
+          ? {
+              mode: 'callback',
+              showParcials: true,
+              outputMode: 'write',
+              language: 'Portuguese',
+              voice: 'female',
+              isDefault: !nodes.some((n) => n.data.type === 'sink.captions'),
+            }
         : type === 'decision.llm'
           ? { options: ['auto'] }
           : type === 'exec.command'
@@ -106,7 +133,7 @@ export function BuilderView({
     };
     setNodes((ns) => [...ns, node]);
     setSelectedId(id);
-  }, [catalog, setNodes]);
+  }, [catalog, nodes, setNodes]);
 
   const doSave = useCallback(async () => {
     try { await saveFlow(currentFlow, buildFlow()); onSaved(); }

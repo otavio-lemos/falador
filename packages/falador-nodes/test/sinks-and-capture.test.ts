@@ -7,6 +7,7 @@ import test, { describe } from 'node:test';
 import { existsSync, mkdtempSync, writeFileSync, chmodSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
 import { captureFfmpeg, sinkCaptions, sinkPlayback } from '../src/index.ts';
 import type { NodeCtx, NodeRuntime } from '../../falador-graph/src/index.ts';
@@ -206,6 +207,127 @@ describe('sink.captions', () => {
     }
     await node.stop('done');
     assert.equal(readFileSync(outFile, 'utf-8'), 'fim\n');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('valida novos params de Output unificado (outputMode, isDefault, language, voice, maxQueue) e capture.ffmpeg isDefault', () => {
+    assert.ok(sinkCaptions.validateParams!({ outputMode: 'invalid' }).some((e) => e.path === 'params.outputMode'));
+    assert.ok(sinkCaptions.validateParams!({ isDefault: 'yes' }).some((e) => e.path === 'params.isDefault'));
+    assert.ok(sinkCaptions.validateParams!({ language: 42 }).some((e) => e.path === 'params.language'));
+    assert.ok(sinkCaptions.validateParams!({ maxQueue: 0 }).some((e) => e.path === 'params.maxQueue'));
+    assert.equal(
+      sinkCaptions.validateParams!({
+        mode: 'callback',
+        outputMode: 'speak',
+        isDefault: true,
+        language: 'Portuguese',
+        voice: 'female',
+        maxQueue: 4,
+      }).length,
+      0,
+    );
+    assert.ok(captureFfmpeg.validateParams!({ isDefault: 'no' }).some((e) => e.path === 'params.isDefault'));
+    assert.equal(captureFfmpeg.validateParams!({ backend: 'sck', isDefault: true }).length, 0);
+  });
+
+  test('outputMode=write: chama __onCaption sem fazer HTTP nem tocar áudio', async () => {
+    let httpCalls = 0;
+    const srv = createServer((_req, res) => {
+      httpCalls += 1;
+      res.writeHead(200).end();
+    });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    const port = (srv.address() as { port: number }).port;
+    const calls: Array<{ text: string; final: boolean }> = [];
+    const ctx = makeCtx(
+      { mode: 'callback', outputMode: 'write', ttsUrl: `http://127.0.0.1:${port}` },
+      { __onCaption: (c: { text: string; final: boolean }) => calls.push(c) },
+    );
+    const node = sinkCaptions.create(ctx) as NodeRuntime;
+    await node.start();
+    await node.onInput('in', { seq: 1, ts: 1, payload: { text: 'apenas texto', final: true } } as any);
+    await node.stop('done');
+    srv.close();
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].text, 'apenas texto');
+    assert.equal(httpCalls, 0);
+  });
+
+  test('outputMode=speak: escreve via __onCaption (parcial+final) E sintetiza/toca só no final', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'falador-out-speak-'));
+    const fakePlayer = join(dir, 'play.sh');
+    const playedArgs = join(dir, 'played.txt');
+    writeFileSync(fakePlayer, `#!/bin/sh\necho "$1" >> "${playedArgs}"\nexit 0\n`);
+    chmodSync(fakePlayer, 0o755);
+
+    const ttsBodies: Array<{ text: string; language: string; voice: string }> = [];
+    const srv = createServer((req, res) => {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        ttsBodies.push(JSON.parse(body));
+        res.writeHead(200, { 'Content-Type': 'audio/wav' });
+        res.end(Buffer.from('RIFFfakewavbytes'));
+      });
+    });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    const port = (srv.address() as { port: number }).port;
+
+    const calls: Array<{ text: string; final: boolean }> = [];
+    const ctx = makeCtx(
+      {
+        mode: 'callback',
+        outputMode: 'speak',
+        ttsUrl: `http://127.0.0.1:${port}`,
+        language: 'English',
+        voice: 'male',
+        player: fakePlayer,
+      },
+      { __onCaption: (c: { text: string; final: boolean }) => calls.push(c) },
+    );
+    const node = sinkCaptions.create(ctx) as NodeRuntime;
+    await node.start();
+    await node.onInput('in', { seq: 1, ts: 1, payload: { text: 'Hello', final: false } } as any);
+    await node.onInput('in', { seq: 2, ts: 2, payload: { text: 'Hello world', final: true } } as any);
+    await node.stop('done');
+    srv.close();
+
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].final, false);
+    assert.equal(calls[1].text, 'Hello world');
+    assert.equal(ttsBodies.length, 1);
+    assert.deepEqual(ttsBodies[0], { text: 'Hello world', language: 'English', voice: 'male', sample_rate: 24000 });
+    assert.ok(existsSync(playedArgs));
+    assert.ok(ctx._logs.some((l) => l.level === 'info' && l.msg.startsWith('fala:')));
+    assert.ok(ctx._logs.some((l) => l.level === 'info' && l.msg.startsWith('playback ok')));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('outputMode=speak: interrupt cancela playback em curso e encerra limpo no stop()', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'falador-out-int-'));
+    const fakePlayer = join(dir, 'slow-play.sh');
+    writeFileSync(fakePlayer, '#!/bin/sh\nsleep 10\n');
+    chmodSync(fakePlayer, 0o755);
+
+    const srv = createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'audio/wav' });
+      res.end(Buffer.from('RIFFfake'));
+    });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    const port = (srv.address() as { port: number }).port;
+
+    const ctx = makeCtx(
+      { mode: 'callback', outputMode: 'speak', ttsUrl: `http://127.0.0.1:${port}`, player: fakePlayer },
+      { __onCaption: () => {} },
+    );
+    const node = sinkCaptions.create(ctx) as NodeRuntime;
+    await node.start();
+    await node.onInput('in', { seq: 1, ts: 1, payload: { text: 'falando longo', final: true } } as any);
+    await delay(120);
+    node.onControl!({ kind: 'interrupt', sourceNode: 'asr' });
+    await node.stop('done');
+    srv.close();
+    assert.equal(ctx._counters['sink.captions.interrupted'], 1);
     rmSync(dir, { recursive: true, force: true });
   });
 });

@@ -39,13 +39,13 @@ import {
   Moon,
   Microphone,
   MicrophoneOff,
-  VolumeUp,
-  VolumeMute,
+  UserSpeaker,
 } from '@carbon/icons-react';
 import type { Runner, Gate, AgentStep, Caption } from '../useRunner';
 import { exportSession, type Flow, type ContextDoc, type ServiceStatusMap } from '../api';
 import {
   deriveStages,
+  deriveStageGroups,
   classifySinks,
   shortModel,
   supportedLanguagesForModel,
@@ -70,9 +70,11 @@ interface Props {
   theme: 'g100' | 'white';
   onToggleTheme: () => void;
   inputMode: 'apps' | 'mic' | 'chat';
-  speakerMuted: boolean;
+  outputMode: 'write' | 'speak';
+  inputResetTick?: number;
+  outputResetTick?: number;
   onToggleMicMute: () => void;
-  onToggleSpeakerMute: () => void;
+  onToggleOutputMode: () => void;
   models: { omlx: string[]; cache: string[] };
   apps: string[];
   mics?: { id: number; name: string; sampleRate: number }[];
@@ -112,6 +114,9 @@ interface ConversationEntry {
 function stageItems(stage: Stage, models: { omlx: string[]; cache: string[] }, apps: string[]): Item[] {
   if (stage.kind === 'approve-mode') {
     return [{ id: 'manual', label: 'Manual' }, { id: 'auto', label: 'Auto (bypass)' }];
+  }
+  if (stage.kind === 'output-mode') {
+    return [{ id: 'write', label: 'Escrever' }, { id: 'speak', label: 'Falar' }];
   }
   if (stage.kind === 'voice') return [{ id: 'female', label: 'Feminino' }, { id: 'male', label: 'Masculino' }];
   if (stage.kind === 'app') {
@@ -246,13 +251,39 @@ function riskTagType(decision?: string): 'green' | 'warm-gray' | 'red' | 'magent
 
 export function LiveView({
   runner, flow, scenarioName, theme, onToggleTheme,
-  inputMode, speakerMuted, onToggleMicMute, onToggleSpeakerMute,
+  inputMode, outputMode, inputResetTick = 0, outputResetTick = 0, onToggleMicMute, onToggleOutputMode,
   models, apps, contextDocs,
   onUploadDoc, onRemoveDoc, onStart, flows, currentFlow,
   onSwitchFlow, onUpdateStage, onRegenerate, onServiceStatus, onNotify, onGoBuilder, onExit, onReset, resetSignal,
 }: Props) {
   const stages = useMemo(() => deriveStages(flow), [flow]);
+  const stageGroups = useMemo(() => deriveStageGroups(flow), [flow]);
+  const [selectedByGroup, setSelectedByGroup] = useState<Record<string, string>>({});
   const sinks = useMemo(() => classifySinks(flow), [flow]);
+
+  useEffect(() => {
+    setSelectedByGroup({});
+  }, [currentFlow]);
+
+  useEffect(() => {
+    if (inputResetTick === 0) return;
+    setSelectedByGroup((prev) => {
+      if (!('Input' in prev)) return prev;
+      const next = { ...prev };
+      delete next.Input;
+      return next;
+    });
+  }, [inputResetTick]);
+
+  useEffect(() => {
+    if (outputResetTick === 0) return;
+    setSelectedByGroup((prev) => {
+      if (!('Output' in prev)) return prev;
+      const next = { ...prev };
+      delete next.Output;
+      return next;
+    });
+  }, [outputResetTick]);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [cmdDraft, setCmdDraft] = useState('');
@@ -305,8 +336,8 @@ export function LiveView({
     (n) => n.type === 'human.approve' || (n.type === 'agent.tools' && n.params.approvalPolicy !== 'never'),
   );
   const hasInput = flow.nodes.some((n) => n.type === 'capture.ffmpeg' || n.type === 'input.chat');
-  const hasAudioOut = flow.nodes.some((n) => n.type === 'sink.playback' || n.type === 'tts.sts');
-  const hasTTS = flow.nodes.some((n) => n.type === 'tts.sts');
+  const hasOutput = flow.nodes.some((n) => n.enabled !== false && (n.type === 'sink.captions' || n.type === 'sink.playback' || n.type === 'tts.sts'));
+  const hasTTS = flow.nodes.some((n) => n.type === 'tts.sts' || (n.type === 'sink.captions' && n.params?.outputMode === 'speak'));
   const hasLLM = flow.nodes.some((n) => n.type === 'llm.omlx' || n.type === 'agent.tools');
   const execNodes = flow.nodes.filter((n) => n.type === 'exec.command' || n.type === 'tool.mcp');
   const hasExec = execNodes.length > 0;
@@ -447,15 +478,18 @@ export function LiveView({
     for (const [i, ev] of runner.events.entries()) {
       const nodeId = String(ev.nodeId ?? '');
       const type = nodes.get(nodeId)?.type;
-      if (ev.type !== 'node_error' || ev.code !== 'log_info' || (type !== 'tts.sts' && type !== 'sink.playback')) continue;
+      if (ev.type !== 'node_error' || ev.code !== 'log_info') continue;
       const text = String(ev.message ?? '').trim();
       if (!text) continue;
+      const isCaptionSpeak = type === 'sink.captions' && (text.startsWith('fala:') || text.startsWith('playback ok'));
+      if (type !== 'tts.sts' && type !== 'sink.playback' && !isCaptionSpeak) continue;
+      const isTts = type === 'tts.sts' || text.startsWith('fala:');
       items.push({
         id: `audio-${i}`, kind: 'audio', nodeId,
         title: label(nodeId),
-        subtitle: type === 'tts.sts' ? 'Síntese de voz' : 'Reprodução de áudio',
+        subtitle: isTts ? 'Síntese de voz' : 'Reprodução de áudio',
         text, ts: Number(ev._uiTs ?? 0),
-        tag: type === 'tts.sts' ? 'TTS' : 'Playback', nodeType: type,
+        tag: isTts ? 'TTS' : 'Playback', nodeType: type,
       });
     }
     if (showThoughts) {
@@ -702,7 +736,7 @@ export function LiveView({
     } else if (m.kind === 'agent') {
       tagType = 'green'; accent = 'var(--cds-support-success-inverse)'; icon = <Bot size={18} />;
     } else if (m.kind === 'audio') {
-      tagType = 'blue'; accent = 'var(--cds-interactive)'; icon = <VolumeUp size={18} />;
+      tagType = 'blue'; accent = 'var(--cds-interactive)'; icon = <UserSpeaker size={18} />;
     } else if (m.kind === 'thought') {
       tagType = 'purple'; accent = 'var(--cds-support-purple, var(--cds-interactive))'; icon = <Router size={18} />;
     }
@@ -820,14 +854,15 @@ export function LiveView({
                 onClick={onToggleMicMute}
               />
               <Button
-                kind={speakerMuted ? 'danger--tertiary' : 'tertiary'}
+                kind={outputMode === 'write' ? 'danger--tertiary' : 'tertiary'}
                 size="sm"
                 hasIconOnly
-                renderIcon={speakerMuted ? VolumeMute : VolumeUp}
-                iconDescription={!hasAudioOut ? 'Workflow sem saída de áudio' : (speakerMuted ? 'Ativar alto-falante' : 'Mutar alto-falante')}
+                renderIcon={UserSpeaker}
+                aria-pressed={outputMode === 'speak'}
+                iconDescription={!hasOutput ? 'Workflow sem saída (Output)' : (outputMode === 'speak' ? 'Só escrever' : 'Falar')}
                 tooltipPosition="bottom"
-                disabled={!hasAudioOut}
-                onClick={onToggleSpeakerMute}
+                disabled={!hasOutput}
+                onClick={onToggleOutputMode}
               />
             </div>
           </div>
@@ -861,13 +896,25 @@ export function LiveView({
         </div>
       </header>
 
-      {stages.length > 0 && (
+      {stageGroups.length > 0 && (
         <section className="live2-stages-bar" aria-label="Parâmetros e métricas por etapa">
           <div className="live2-stages">
-            {stages.map((s) => {
+            {stageGroups.map((grp) => {
+              const selId = selectedByGroup[grp.label];
+              const s = grp.instances.find((i) => i.nodeId === selId)
+                ?? grp.instances.find((i) => i.nodeId === grp.defaultNodeId)
+                ?? grp.instances[0];
+              const instanceItems: Item[] = grp.instances.map((i) => ({
+                id: i.nodeId,
+                label: grp.instances.length > 1 && i.isDefault ? `${i.instanceLabel} ★` : i.instanceLabel,
+              }));
               const items = stageItems(s, models, apps);
               const primaryValue = s.kind === 'model-translate' && (!s.value || s.value === '—') ? '-' : s.value;
-              const selectedId = s.kind === 'app' && s.param === 'backend' ? inputMode : primaryValue;
+              const selectedId = s.kind === 'app' && s.param === 'backend'
+                ? (s.isDefault ? inputMode : s.value)
+                : s.kind === 'output-mode'
+                  ? (s.isDefault ? outputMode : s.value)
+                  : primaryValue;
               const isDual = Boolean(s.secondaryParam);
               const langItems = isDual
                 ? supportedLanguagesForModel(
@@ -881,11 +928,22 @@ export function LiveView({
                 ? [{ id: curLang, label: curLang }, ...langItems]
                 : langItems;
               return (
-                <div key={s.key} className={`stage-dd${isDual ? ' stage-dd--dual' : ''}`} style={{ ['--accent' as string]: s.accent }}>
-                  <span className="stage-dd-label">{s.label}</span>
-                  <div className={`stage-dd-ctrl${isDual ? ' stage-dd-ctrl--dual' : ''}`}>
+                <div key={grp.key} className={`stage-dd ${isDual ? 'stage-dd--triple' : 'stage-dd--dual'}`} style={{ ['--accent' as string]: grp.accent }}>
+                  <span className="stage-dd-label">{grp.label}</span>
+                  <div className={`stage-dd-ctrl ${isDual ? 'stage-dd-ctrl--triple' : 'stage-dd-ctrl--dual'}`}>
                     <Dropdown
-                      id={`stage-${s.key}`} size="sm" titleText={s.label} hideLabel label={s.label}
+                      id={`stage-inst-${grp.key}`}
+                      size="sm"
+                      titleText={`${grp.label} instância`}
+                      hideLabel
+                      label={`${grp.label} instância`}
+                      items={instanceItems}
+                      itemToString={(it) => (it ? it.label : '')}
+                      selectedItem={instanceItems.find((i) => i.id === s.nodeId) ?? instanceItems[0]}
+                      onChange={({ selectedItem }) => selectedItem && setSelectedByGroup((prev) => ({ ...prev, [grp.label]: selectedItem.id }))}
+                    />
+                    <Dropdown
+                      id={`stage-${s.key}`} size="sm" titleText={grp.label} hideLabel label={grp.label}
                       items={items} itemToString={(it) => (it ? it.label : '')}
                       selectedItem={items.find((i) => i.id === selectedId) ?? items[0]}
                       onChange={({ selectedItem }) => selectedItem && selectedItem.id !== '—' && onUpdateStage(s.nodeId, s.param, selectedItem.id)}

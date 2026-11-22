@@ -10,7 +10,8 @@
         "input": "",
         "chunkMs": 80,
         "backend": "chat",
-        "placeholder": "Descreva o problema do servidor ou pedido de diagnóstico (Enter para enviar)..."
+        "placeholder": "Descreva o problema do servidor ou pedido de diagnóstico (Enter para enviar)...",
+        "isDefault": true
       }
     },
     {
@@ -89,7 +90,10 @@
       "type": "sink.captions",
       "params": {
         "mode": "callback",
-        "showParcials": true
+        "showParcials": true,
+        "outputMode": "write",
+        "language": "Portuguese",
+        "isDefault": true
       }
     },
     {
@@ -122,7 +126,9 @@
       "type": "sink.captions",
       "params": {
         "mode": "callback",
-        "showParcials": true
+        "showParcials": true,
+        "outputMode": "write",
+        "language": "Portuguese"
       }
     },
     {
@@ -130,7 +136,9 @@
       "type": "sink.captions",
       "params": {
         "mode": "callback",
-        "showParcials": true
+        "showParcials": true,
+        "outputMode": "write",
+        "language": "Portuguese"
       }
     }
   ],

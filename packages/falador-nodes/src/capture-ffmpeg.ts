@@ -44,6 +44,7 @@ export const captureFfmpeg: NodeTypeDef = {
     'sidecarPath',
     'sckPath',
     'muted',
+    'isDefault',
     'placeholder',
     'initialMessage',
   ],
@@ -61,6 +62,9 @@ export const captureFfmpeg: NodeTypeDef = {
     }
     if (p.muted !== undefined && typeof p.muted !== 'boolean') {
       errs.push({ path: 'params.muted', code: 'INVALID_PARAM', message: 'muted deve ser boolean' });
+    }
+    if (p.isDefault !== undefined && typeof p.isDefault !== 'boolean') {
+      errs.push({ path: 'params.isDefault', code: 'INVALID_PARAM', message: 'isDefault deve ser boolean' });
     }
     for (const k of ['sampleRate', 'chunkMs'] as const) {
       if (p[k] !== undefined && (typeof p[k] !== 'number' || p[k] <= 0)) {

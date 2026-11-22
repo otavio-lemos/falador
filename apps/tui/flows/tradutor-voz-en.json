@@ -1,7 +1,7 @@
 {
   "version": 1,
   "stopWhenSourcesDone": false,
-  "description": "Pipeline completo de interpretação por voz (nó único Input Aplicações/Microfone/Chat → STT → Tradução → TTS → Áudio): transcreve fala ou recebe texto, traduz para inglês natural, exibe a legenda na tela e sintetiza em voz alta no alto-falante.",
+  "description": "Pipeline completo de interpretação por voz (Input Aplicações/Microfone/Chat → STT → Tradução → Output Escrever/Falar): transcreve fala ou recebe texto, traduz para inglês natural, exibe a legenda na tela e sintetiza em voz alta no alto-falante.",
   "nodes": [
     {
       "id": "input",
@@ -10,7 +10,8 @@
         "input": "",
         "chunkMs": 80,
         "backend": "sck",
-        "placeholder": "Digite texto para traduzir e falar em inglês (Enter para enviar)..."
+        "placeholder": "Digite texto para traduzir e falar em inglês (Enter para enviar)...",
+        "isDefault": true
       }
     },
     {
@@ -35,24 +36,11 @@
       "type": "sink.captions",
       "params": {
         "mode": "callback",
-        "showParcials": true
-      }
-    },
-    {
-      "id": "voz",
-      "type": "tts.sts",
-      "params": {
-        "url": "http://127.0.0.1:8091",
+        "showParcials": true,
+        "outputMode": "speak",
         "language": "English",
         "voice": "female",
-        "speakOn": "final"
-      }
-    },
-    {
-      "id": "audio",
-      "type": "sink.playback",
-      "params": {
-        "maxQueue": 4
+        "isDefault": true
       }
     }
   ],
@@ -81,18 +69,6 @@
       "to": "legenda.in",
       "capacity": 16,
       "overflow": "drop_oldest"
-    },
-    {
-      "from": "tradutor.out",
-      "to": "voz.in",
-      "capacity": 8,
-      "overflow": "block"
-    },
-    {
-      "from": "voz.out",
-      "to": "audio.in",
-      "capacity": 8,
-      "overflow": "block"
     }
   ]
 }

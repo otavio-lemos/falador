@@ -6,17 +6,31 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ControlMsg, NodeCtx, NodeRuntime, NodeTypeDef } from '../../falador-graph/src/index.ts';
-import { payloadText } from './sse.ts';
+import { payloadText, postJsonBytes } from './sse.ts';
 import { ttsSts as _ttsSts } from './tts-sts.ts';
 import type { AudioChunkPayload } from './tts-sts.ts';
 import type { TraceMeta } from './trace.ts';
 
-// ---- sink.captions --------------------------------------------------------
+// ---- sink.captions (Output unificado: Escrever + Falar) ---------------------
 
 export const sinkCaptions: NodeTypeDef = {
   type: 'sink.captions',
   sink: true,
-  paramNames: ['mode', 'showParcials', 'outputFile'],
+  paramNames: [
+    'mode',
+    'showParcials',
+    'outputFile',
+    'outputMode',
+    'isDefault',
+    'ttsUrl',
+    'language',
+    'voice',
+    'sampleRateHz',
+    'timeoutMs',
+    'maxTextChars',
+    'player',
+    'maxQueue',
+  ],
   bindingNames: ['__onCaption'],
   inputs: [
     { name: 'in', type: 'tokens_parcial' },
@@ -28,11 +42,26 @@ export const sinkCaptions: NodeTypeDef = {
     if (p.mode !== undefined && p.mode !== 'stdout' && p.mode !== 'callback') {
       errs.push({ path: 'params.mode', code: 'INVALID_PARAM', message: "mode deve ser 'stdout' | 'callback'" });
     }
-    if (p.showParcials !== undefined && typeof p.showParcials !== 'boolean') {
-      errs.push({ path: 'params.showParcials', code: 'INVALID_PARAM', message: 'showParcials deve ser boolean' });
+    if (p.outputMode !== undefined && p.outputMode !== 'write' && p.outputMode !== 'speak') {
+      errs.push({ path: 'params.outputMode', code: 'INVALID_PARAM', message: "outputMode deve ser 'write' | 'speak'" });
     }
-    if (p.outputFile !== undefined && typeof p.outputFile !== 'string') {
-      errs.push({ path: 'params.outputFile', code: 'INVALID_PARAM', message: 'outputFile deve ser string (caminho)' });
+    for (const k of ['showParcials', 'isDefault'] as const) {
+      if (p[k] !== undefined && typeof p[k] !== 'boolean') {
+        errs.push({ path: `params.${k}`, code: 'INVALID_PARAM', message: `${k} deve ser boolean` });
+      }
+    }
+    for (const k of ['outputFile', 'ttsUrl', 'language', 'voice', 'player'] as const) {
+      if (p[k] !== undefined && typeof p[k] !== 'string') {
+        errs.push({ path: `params.${k}`, code: 'INVALID_PARAM', message: `${k} deve ser string` });
+      }
+    }
+    for (const k of ['sampleRateHz', 'timeoutMs', 'maxTextChars'] as const) {
+      if (p[k] !== undefined && (typeof p[k] !== 'number' || p[k] <= 0)) {
+        errs.push({ path: `params.${k}`, code: 'INVALID_PARAM', message: `${k} deve ser número > 0` });
+      }
+    }
+    if (p.maxQueue !== undefined && (typeof p.maxQueue !== 'number' || p.maxQueue < 1)) {
+      errs.push({ path: 'params.maxQueue', code: 'INVALID_PARAM', message: 'maxQueue deve ser número >= 1' });
     }
     return errs;
   },
@@ -40,6 +69,15 @@ export const sinkCaptions: NodeTypeDef = {
     const mode = (ctx.params.mode as 'stdout' | 'callback' | undefined) ?? 'stdout';
     const showParcials = (ctx.params.showParcials as boolean | undefined) ?? true;
     const outputFile = (ctx.params.outputFile as string | undefined);
+    const outputMode = (ctx.params.outputMode as 'write' | 'speak' | undefined) ?? 'write';
+    const ttsUrl = ((ctx.params.ttsUrl as string | undefined) ?? 'http://127.0.0.1:8091').replace(/\/+$/, '');
+    const language = (ctx.params.language as string | undefined) ?? 'Portuguese';
+    const voice = (ctx.params.voice as string | undefined) ?? 'female';
+    const sampleRateHz = (ctx.params.sampleRateHz as number | undefined) ?? 24000;
+    const timeoutMs = (ctx.params.timeoutMs as number | undefined) ?? 60_000;
+    const maxTextChars = (ctx.params.maxTextChars as number | undefined) ?? 1400;
+    const player = (ctx.params.player as string | undefined) ?? '/usr/bin/afplay';
+    const maxQueue = (ctx.params.maxQueue as number | undefined) ?? 4;
     const cb = ctx.bindings.__onCaption as
       | ((c: { text: string; final: boolean; trace?: TraceMeta }) => void)
       | undefined;
@@ -49,6 +87,16 @@ export const sinkCaptions: NodeTypeDef = {
     if (outputFile) {
       fileStream = createWriteStream(outputFile, { flags: 'a', encoding: 'utf-8' });
     }
+
+    let speakDir: string | null = null;
+    let chain: Promise<void> = Promise.resolve();
+    let pending = 0;
+    let dropped = 0;
+    let fileNo = 0;
+    let stopped = false;
+    let generation = 0;
+    let activeCtrl: AbortController | null = null;
+    let activeChild: ChildProcess | null = null;
 
     function write(text: string, final: boolean): void {
       if (!text) return;
@@ -62,6 +110,110 @@ export const sinkCaptions: NodeTypeDef = {
         if (fileStream) fileStream.write(text + '\n');
       }
       ctx.metrics.counter('sink.captions.messages', 1);
+    }
+
+    async function synthesizeAndPlay(text: string, myGen: number): Promise<void> {
+      if (ctx.signal.aborted || myGen !== generation) return;
+      const clean = text.replace(/\s+/g, ' ').trim();
+      if (!clean) return;
+      const truncated = clean.length > maxTextChars ? clean.slice(0, maxTextChars) + '…' : clean;
+
+      const ctrl = new AbortController();
+      activeCtrl = ctrl;
+      const onAbort = () => ctrl.abort();
+      ctx.signal.addEventListener('abort', onAbort, { once: true });
+      const tTts = Date.now();
+      let wav: Uint8Array;
+      try {
+        wav = await postJsonBytes(
+          `${ttsUrl}/tts`,
+          { text: truncated, language, voice, sample_rate: sampleRateHz },
+          timeoutMs,
+          ctrl.signal,
+        );
+      } catch (e: unknown) {
+        const err = e as Error;
+        if (err?.name === 'AbortError' || ctrl.signal.aborted || ctx.signal.aborted || myGen !== generation) return;
+        ctx.log('error', `output.tts falhou: ${err?.message ?? String(e)}`);
+        ctx.metrics.counter('sink.captions.tts_errors', 1);
+        return;
+      } finally {
+        ctx.signal.removeEventListener('abort', onAbort);
+        if (activeCtrl === ctrl) activeCtrl = null;
+      }
+
+      if (ctx.signal.aborted || myGen !== generation) return;
+      ctx.metrics.timer('sink.captions.tts.ms', Date.now() - tTts);
+      ctx.log('info', `fala: "${clean.slice(0, 80)}" (${(wav.byteLength / 1024).toFixed(0)} KB)`);
+
+      if (!speakDir) speakDir = await mkdtemp(join(tmpdir(), 'falador-out-'));
+      if (ctx.signal.aborted || myGen !== generation) return;
+      const file = join(speakDir, `chunk-${fileNo++}.wav`);
+      await new Promise<void>((resolve, reject) => {
+        const ws = createWriteStream(file);
+        ws.on('error', reject);
+        ws.on('finish', () => resolve());
+        ws.end(Buffer.from(wav));
+      });
+      if (ctx.signal.aborted || myGen !== generation) {
+        await rm(file, { force: true }).catch(() => {});
+        return;
+      }
+
+      const tPlay = Date.now();
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const p = spawn(player, [file, '-q', '1']);
+          activeChild = p;
+          const onPlayAbort = () => {
+            try { p.kill('SIGKILL'); } catch { /* ignore */ }
+          };
+          ctx.signal.addEventListener('abort', onPlayAbort, { once: true });
+          const cleanup = () => {
+            ctx.signal.removeEventListener('abort', onPlayAbort);
+            if (activeChild === p) activeChild = null;
+          };
+          p.on('error', (err) => {
+            cleanup();
+            reject(err);
+          });
+          p.on('exit', (code) => {
+            cleanup();
+            if (code === 0 || code === null || myGen !== generation) resolve();
+            else reject(new Error(`afplay exit ${code}`));
+          });
+        });
+        if (myGen === generation) {
+          ctx.metrics.timer('sink.captions.playback.ms', Date.now() - tPlay);
+          ctx.log('info', `playback ok (${((Date.now() - tPlay) / 1000).toFixed(1)}s)`);
+        }
+      } finally {
+        await rm(file, { force: true }).catch(() => {});
+      }
+    }
+
+    function enqueueSpeak(text: string): void {
+      if (outputMode !== 'speak' || stopped || ctx.signal.aborted) return;
+      const clean = text.replace(/\s+/g, ' ').trim();
+      if (!clean) return;
+      pending += 1;
+      if (pending > maxQueue) {
+        pending -= 1;
+        dropped += 1;
+        ctx.metrics.counter('sink.captions.dropped', 1);
+        ctx.log('warn', `output: fila de fala cheia, ${dropped} descartada(s)`);
+        return;
+      }
+      const myGen = generation;
+      chain = chain
+        .then(() => synthesizeAndPlay(clean, myGen))
+        .then(() => {
+          pending -= 1;
+        })
+        .catch((e: unknown) => {
+          pending -= 1;
+          ctx.log('error', `output.playback: ${String(e)}`);
+        });
     }
 
     return {
@@ -78,17 +230,39 @@ export const sinkCaptions: NodeTypeDef = {
           cb?.(trace ? { text: pl.text, final: pl.final, trace } : { text: pl.text, final: pl.final });
           // também salva no arquivo quando em modo callback
           if (fileStream && pl.final && pl.text) fileStream.write(pl.text + '\n');
+          if (pl.final) enqueueSpeak(pl.text);
           return;
         }
         const isParcs = typeof msg.payload === 'object' && msg.payload !== null;
-        if (isParcs && !pl.final && !showParcials) return;
+        if (isParcs && !pl.final && !showParcials) {
+          if (pl.final) enqueueSpeak(pl.text);
+          return;
+        }
         write(pl.text, pl.final);
+        if (pl.final) enqueueSpeak(pl.text);
       },
       async stop() {
+        stopped = true;
+        const dirToClean = speakDir;
+        await chain.catch(() => {}).then(() => {
+          if (dirToClean) return rm(dirToClean, { recursive: true, force: true }).catch(() => {});
+        });
         await new Promise<void>((res) => {
           if (fileStream) fileStream!.end(res);
           else res();
         });
+      },
+      onControl(c: ControlMsg) {
+        if (c.kind === 'interrupt') {
+          generation += 1;
+          activeCtrl?.abort();
+          activeCtrl = null;
+          if (activeChild) {
+            try { activeChild.kill('SIGKILL'); } catch { /* ignore */ }
+            activeChild = null;
+          }
+          ctx.metrics.counter('sink.captions.interrupted', 1);
+        }
       },
     };
   },

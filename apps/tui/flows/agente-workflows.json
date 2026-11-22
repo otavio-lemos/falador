@@ -10,7 +10,8 @@
         "input": "",
         "chunkMs": 80,
         "backend": "chat",
-        "placeholder": "Descreva o workflow que deseja criar, editar ou pesquisar…"
+        "placeholder": "Descreva o workflow que deseja criar, editar ou pesquisar…",
+        "isDefault": true
       }
     },
     {
@@ -59,7 +60,10 @@
       "type": "sink.captions",
       "params": {
         "mode": "callback",
-        "showParcials": true
+        "showParcials": true,
+        "outputMode": "write",
+        "language": "Portuguese",
+        "isDefault": true
       }
     }
   ],

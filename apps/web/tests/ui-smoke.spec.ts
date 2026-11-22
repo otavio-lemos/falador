@@ -19,6 +19,12 @@ test('builder loads a real workflow and canvas', async ({ page }) => {
   await expect(inputCat).toBeVisible();
   await expect(inputCat.locator('.pal-item-id', { hasText: 'capture.ffmpeg' })).toBeVisible();
   await expect(page.locator('.palette .pal-item-id', { hasText: 'input.chat' })).toHaveCount(0);
+  // paleta unificada Output com sink.captions único (sem sink.playback / tts.sts)
+  const outputCat = page.locator('.pal-cat').filter({ has: page.locator('.pal-cat-head', { hasText: 'Output' }) }).first();
+  await expect(outputCat).toBeVisible();
+  await expect(outputCat.locator('.pal-item-id', { hasText: 'sink.captions' })).toBeVisible();
+  await expect(page.locator('.palette .pal-item-id', { hasText: 'sink.playback' })).toHaveCount(0);
+  await expect(page.locator('.palette .pal-item-id', { hasText: 'tts.sts' })).toHaveCount(0);
   // nós reais do canvas (rótulo visível é o id curto do nó)
   await expect(page.getByText('capture.ffmpeg').first()).toBeVisible();
   await expect(page.getByText('asr.realtime').first()).toBeVisible();
@@ -156,23 +162,28 @@ test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed 
   expect(head!.height).toBeLessThanOrEqual(42);
 });
 
-test('unified Input stage syncs bidirectionally with mic button and preserves Execuções', async ({ page }) => {
-  await page.evaluate(() => localStorage.setItem('falador.inputMode', 'apps'));
+test('unified Input and Output stages use instance selectors, sync with topbar, and preserve Execuções', async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem('falador.inputMode', 'apps');
+    localStorage.setItem('falador.outputMode', 'write');
+  });
   await page.reload();
 
   await page.getByRole('button', { name: 'Workflow' }).click();
   await expect(page.getByRole('button', { name: /Execuções/ })).toBeVisible();
 
-  const inputStage = page.locator('.stage-dd').filter({ hasText: 'Input' }).first();
+  const inputStage = page.locator('.stage-dd').filter({ has: page.locator('.stage-dd-label', { hasText: 'Input' }) }).first();
   await expect(inputStage).toBeVisible();
   await expect(page.locator('.stage-dd').filter({ hasText: 'Captura' })).toHaveCount(0);
 
-  const inputCombo = inputStage.getByRole('combobox');
-  await expect(inputCombo).toHaveCount(1);
-  await expect(inputCombo).toContainText('Aplicações');
+  const inputInstCombo = inputStage.getByRole('combobox').nth(0);
+  const inputModeCombo = inputStage.getByRole('combobox').nth(1);
+  await expect(inputStage.getByRole('combobox')).toHaveCount(2);
+  await expect(inputInstCombo).toContainText('Input 1');
+  await expect(inputModeCombo).toContainText('Aplicações');
   await expect(page.getByRole('button', { name: 'Recarregar apps de áudio' })).toHaveCount(0);
 
-  await inputCombo.click();
+  await inputModeCombo.click();
   await expect(inputStage.getByRole('option')).toHaveText(['Aplicações', 'Microfone', 'Chat']);
 
   await page.getByRole('option', { name: 'Chat', exact: true }).click();
@@ -181,7 +192,7 @@ test('unified Input stage syncs bidirectionally with mic button and preserves Ex
   await expect(useVoiceBtn).toHaveAttribute('aria-pressed', 'false');
   await expect.poll(() => page.evaluate(() => localStorage.getItem('falador.inputMode'))).toBe('chat');
 
-  await inputCombo.click();
+  await inputModeCombo.click();
   await page.getByRole('option', { name: 'Microfone', exact: true }).click();
   const useChatBtn = page.getByRole('button', { name: 'Usar chat' });
   await expect(useChatBtn).toBeVisible();
@@ -189,12 +200,44 @@ test('unified Input stage syncs bidirectionally with mic button and preserves Ex
   await expect.poll(() => page.evaluate(() => localStorage.getItem('falador.inputMode'))).toBe('mic');
 
   await useChatBtn.click();
-  await expect(inputCombo).toContainText('Chat');
+  await expect(inputModeCombo).toContainText('Chat');
   await expect(page.getByRole('button', { name: 'Usar voz' })).toHaveAttribute('aria-pressed', 'false');
   await expect.poll(() => page.evaluate(() => localStorage.getItem('falador.inputMode'))).toBe('chat');
 
   await page.getByRole('button', { name: 'Usar voz' }).click();
-  await expect(inputCombo).toContainText('Microfone');
+  await expect(inputModeCombo).toContainText('Microfone');
   await expect(page.getByRole('button', { name: 'Usar chat' })).toHaveAttribute('aria-pressed', 'true');
   await expect.poll(() => page.evaluate(() => localStorage.getItem('falador.inputMode'))).toBe('mic');
+
+  // Output unificado com instâncias (assistente-entrevista tem 3 Outputs; padrão é Output 2)
+  const outputStage = page.locator('.stage-dd').filter({ has: page.locator('.stage-dd-label', { hasText: 'Output' }) }).first();
+  await expect(outputStage).toBeVisible();
+  await expect(outputStage.getByRole('combobox')).toHaveCount(2);
+  const outInstCombo = outputStage.getByRole('combobox').nth(0);
+  const outModeCombo = outputStage.getByRole('combobox').nth(1);
+  await expect(outInstCombo).toContainText('Output 2 ★');
+  await expect(outModeCombo).toContainText('Escrever');
+
+  // Alterar Output 1 não altera Output 2 (padrão)
+  await outInstCombo.click();
+  await expect(outputStage.getByRole('option')).toHaveText(['Output 1', 'Output 2 ★', 'Output 3']);
+  await outputStage.getByRole('option', { name: 'Output 1', exact: true }).click();
+  await outModeCombo.click();
+  await outputStage.getByRole('option', { name: 'Falar', exact: true }).click();
+  await expect(outModeCombo).toContainText('Falar');
+
+  // Botão UserSpeaker na topbar volta o seletor de instância para o padrão (Output 2) e alterna para Falar
+  const speakBtn = page.getByRole('button', { name: 'Falar' });
+  await expect(speakBtn).toHaveAttribute('aria-pressed', 'false');
+  await speakBtn.click();
+  await expect(outInstCombo).toContainText('Output 2 ★');
+  await expect(outModeCombo).toContainText('Falar');
+  const writeBtn = page.getByRole('button', { name: 'Só escrever' });
+  await expect(writeBtn).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('falador.outputMode'))).toBe('speak');
+
+  await writeBtn.click();
+  await expect(outModeCombo).toContainText('Escrever');
+  await expect(page.getByRole('button', { name: 'Falar' })).toHaveAttribute('aria-pressed', 'false');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('falador.outputMode'))).toBe('write');
 });

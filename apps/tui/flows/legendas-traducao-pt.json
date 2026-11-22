@@ -10,7 +10,8 @@
         "input": "",
         "chunkMs": 80,
         "backend": "sck",
-        "placeholder": "Digite texto para traduzir para português (Enter para enviar)..."
+        "placeholder": "Digite texto para traduzir para português (Enter para enviar)...",
+        "isDefault": true
       }
     },
     {
@@ -36,7 +37,10 @@
       "type": "sink.captions",
       "params": {
         "mode": "callback",
-        "showParcials": true
+        "showParcials": true,
+        "outputMode": "write",
+        "language": "Portuguese",
+        "isDefault": true
       }
     }
   ],

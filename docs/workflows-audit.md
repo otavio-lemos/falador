@@ -48,6 +48,14 @@ Todos os **7/7 workflows** em `apps/tui/flows/*.json` foram migrados para usar *
 - **Fluxos originalmente de voz (`backend: "sck"`)**: `assistente-entrevista.json` (9 nós / 9 edges, removido `chat` e ligado `input.out_text → assistente.in`), `legendas-traducao-pt.json` (4/4), `tradutor-voz-en.json` (6/6) e `transcricao-ao-vivo.json` (3/3).
 - **Fluxos originalmente chat-only (`backend: "chat"`)**: `agente-suporte-ops.json` (6/6), `agente-workflows.json` (6/6) e `revisao-servidor-ops.json` (12/12) ganharam nó `asr` (`asr.realtime`, Voxtral) para permitir alternar para Aplicações ou Microfone diretamente pelo nó `input`, mantendo `backend: "chat"` como padrão.
 
+## Unificação para Output único + seletores de Padrão (ADR-011, 2026-11-22)
+
+Todos os **7/7 workflows** foram atualizados para o nó unificado `Output` (`sink.captions` com `outputMode: "write" | "speak"`, `language`, e `isDefault: true` no `Input` e no `Output` principal):
+
+- `tradutor-voz-en.json`: removidos `voz` (`tts.sts`) e `audio` (`sink.playback`); `legenda` (`sink.captions`) assume `outputMode: "speak"`, `language: "English"`, `voice: "female"`, `isDefault: true` (**4 nós / 4 edges**).
+- Demais 6 workflows: `Output` padrão em `outputMode: "write"` (`isDefault: true`), podendo alternar para `"speak"` diretamente no Executor ou pelo botão `UserSpeaker` da topbar.
+- `validateFlow` validou os **7/7 workflows** em todas as combinações de `Input` (`sck`/`sounddevice`/`chat`) × `Output` (`write`/`speak`).
+
 ## Validação pós-correção
 
 ### Contagens após unificação do nó único Input (2026-11-22)
