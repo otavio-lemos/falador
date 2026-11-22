@@ -1070,7 +1070,9 @@ export function LiveView({
                     <CodeSnippet type="multi" feedback="Copiado">
                       {e.command}
                     </CodeSnippet>
-                    <pre className="logs-terminal">{e.output}</pre>
+                    <pre className="logs-terminal exec-terminal">
+                      {e.output || <span className="exec-terminal-empty">(sem saída)</span>}
+                    </pre>
                   </div>
                 </TabPanel>
               ))}

@@ -58,6 +58,8 @@ Guia completo (pirâmide, o que cada suíte prova, cobertura medida e lacunas) e
 
 - **[`AGENTS.md`](AGENTS.md)** — memória viva: inventário do que já existe, ADRs, fatos medidos, armadilhas, estado atual.
 - **[`docs/README.md`](docs/README.md)** — índice de ADRs, specs e research, com o mapa "afirmação → arquivo de prova".
+- **[`docs/servidores.md`](docs/servidores.md)** — cadastro de servidores (alvos de `exec.command`): template + instruções (sem servidores reais).
+- **[`docs/execucoes.md`](docs/execucoes.md)** — trilha de execução, terminais e onde ficam os logs.
 - **[`docs/adr/STATUS.md`](docs/adr/STATUS.md)** — o que está implementado, o que falta e o que ainda é NÃO VERIFICADO.
 - **[`docs/adr/spec-falador-graph.md`](docs/adr/spec-falador-graph.md)** — spec fina do motor.
 - **[`run.md`](run.md)** — subir, usar, verificar saúde e derrubar.

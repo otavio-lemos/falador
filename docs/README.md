@@ -41,6 +41,11 @@ Quadro detalhado de pendências e evidências: **[`adr/STATUS.md`](adr/STATUS.md
 
 [`testing.md`](testing.md) — pirâmide de testes, o que cada suíte cobre, comandos exatos, cobertura medida em 2026-11-21 e as lacunas conscientes (WhatsApp/Playwright, modelos reais, sidecars sem `.venv`).
 
+## 5a. Operação e cadastros
+
+- [`servidores.md`](servidores.md) — **cadastro de servidores** (alvos de `exec.command`): template com host, user, port, ambiente, tags, descrição e comando de checagem padrão; como ligar ao flow; segurança (allowlist, sshUser, denylist); onde guardar (privacidade). Sem servidores reais inventados — só template e instruções.
+- [`execucoes.md`](execucoes.md) — **trilha de execução**: o que é um run, terminais (stdout vs callback), eventos NDJSON, onde ficam os logs (`logs/*.log`, `exec-audit.jsonl`, `sessions/`, `context/`), como exportar uma sessão, como um run termina, métricas por nó e variáveis de ambiente.
+
 ## 6. Mapa "afirmação → prova"
 
 | Afirmação | Prova |
