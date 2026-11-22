@@ -1,6 +1,6 @@
 # Status dos ADRs — o que está implementado, o que falta, qual é a prova
 
-> Atualizado em **2026-11-21**. Fontes: código no repo, suítes de teste e `AGENTS.md` §4/§6. Quando este quadro divergir do código, o código vence — e este arquivo deve ser corrigido.
+> Atualizado em **2026-11-22**. Fontes: código no repo, suítes de teste e `AGENTS.md` §4/§6. Quando este quadro divergir do código, o código vence — e este arquivo deve ser corrigido.
 
 Legenda: ✅ implementado e verificado por teste/medição · 🟡 implementado, falta verificação no ambiente real · ⬜ não implementado / histórico.
 
@@ -14,6 +14,7 @@ Legenda: ✅ implementado e verificado por teste/medição · 🟡 implementado,
 | 006 streaming tempo real | 🟡 | `turn.detector` (d1), `interrupt`/barge-in no motor, anti-drift `drop_oldest`, contexto deslizante + reset, `trace` ponta-a-ponta, export `.md`/webhook | E2E ao vivo com SCK/mídia real após a implementação | [`ADR-006...`](ADR-006-padroes-streaming-tempo-real.md), `packages/falador-graph/test/interrupt.test.ts`, `packages/falador-nodes/test/streaming.test.ts` |
 | 007 RAG + exec.command | 🟡 | RAG BM25 multi-formato por nó; `exec.command` local/SSH com 4 camadas (d1 + gate + validador anti-injeção + dryRun/audit) | **SSH em host remoto real** (só `localhost`/alvos de teste) | [`ADR-007...`](ADR-007-rag-runbooks-conector-exec.md), `packages/falador-nodes/test/rag-exec.test.ts` |
 | 008 agente + tools + MCP | 🟡 | `agent.tools` (loop `tool_calls`), porta `tool` bidirecional, `tool.mcp` stdio/HTTP, `exec_local`/`rag.search` como tools, auditoria | **MCP server externo real**; SSH remoto; E2E do agente em call | [`ADR-008...`](ADR-008-agente-tools-mcp.md), `packages/falador-nodes/test/agent-tools.test.ts`, `tools-mcp.test.ts` |
+| 009 captura voz/chat + mic | 🟡 | Aplicações (SCK) vs Microfone (PortAudio) no mesmo nó; `/api/mics`; botão voz↔chat; `input.chat` no flow de entrevista | E2E com fala real/TCC/eco; Playwright (binário ausente); SCK `.microphone` | [`ADR-009...`](ADR-009-captura-entrada-dupla.md), [`input-modes-test-plan.md`](../input-modes-test-plan.md), `packages/falador-nodes/test/capture-input-modes.test.ts` |
 | F0 POC protocolo | ✅ fechada | Gates G1 (captura), G2, G3 (streaming, com modificação) | — | [`F0-poc-protocolo.md`](F0-poc-protocolo.md), [`research/F0-resultados.md`](research/F0-resultados.md) |
 | Spec v1.1 do motor | ✅ | Validação V0–V7, backpressure, cancel por seq/porta, ciclo de vida de `start()`, `stopWhenSourcesDone` | — | [`spec-falador-graph.md`](spec-falador-graph.md), `packages/falador-graph/test/` (41 testes, `spec.ts` 100% linhas) |
 

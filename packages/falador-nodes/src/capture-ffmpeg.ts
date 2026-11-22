@@ -24,6 +24,11 @@ import type { NodeCtx, NodeRuntime, NodeTypeDef } from '../../falador-graph/src/
 // packages/falador-nodes, o host da raiz; ambos precisam achar o sidecar).
 const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
+export function resolveSounddeviceInput(rawInput: string): string {
+  const trimmed = rawInput.trim();
+  return trimmed === '' ? 'Microfone' : trimmed.replace(/^:/, '').trim();
+}
+
 export const captureFfmpeg: NodeTypeDef = {
   type: 'capture.ffmpeg',
   sourceOnly: true,
@@ -101,8 +106,10 @@ export const captureFfmpeg: NodeTypeDef = {
         const rawInput = input.trim();
         const sckApp = rawInput.replace(/^:/, '').trim();
         const isLegacyIndex = /^:\d+$/.test(rawInput);
+        // sounddevice: device de entrada — vazio ⇒ 'Microfone' como substring padrão.
+        const sdDevice = resolveSounddeviceInput(input);
         const args = backend === 'sounddevice'
-          ? [sidecarPath, '--device', sckApp, '--rate', String(sampleRate), '--chunk-ms', String(chunkMs)]
+          ? [sidecarPath, '--device', sdDevice, '--rate', String(sampleRate), '--chunk-ms', String(chunkMs)]
           : backend === 'sck'
             ? (sckApp && sckApp !== 'auto' && !isLegacyIndex
               ? ['--app', sckApp, '--rate', String(sampleRate)]

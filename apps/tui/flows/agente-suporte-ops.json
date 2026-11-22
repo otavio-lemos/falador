@@ -1,46 +1,13 @@
 {
   "version": 1,
   "stopWhenSourcesDone": false,
-  "description": "Agente de Suporte Ops multi-step (ADR-008): captura a solicitação via SCK, transcreve com Voxtral, aguarda fim de turno com d1-2B e aciona agent.tools com busca RAG BM25 (rag.search) e diagnóstico local (exec.command readonly, dryRun=true) sujeito a aprovação humana (approvalPolicy=always).",
+  "description": "Agente de suporte/ops por chat (ADR-008): o usuário digita o pedido, agent.tools consulta runbooks locais (rag.search) e executa diagnósticos readonly (exec.command, dryRun=true) com aprovação humana em toda chamada de ferramenta. Resposta em português na conversa; sem captura de áudio para evitar eco (ADR-005).",
   "nodes": [
     {
-      "id": "captura",
-      "type": "capture.ffmpeg",
+      "id": "chat",
+      "type": "input.chat",
       "params": {
-        "input": "",
-        "chunkMs": 80,
-        "backend": "sck"
-      }
-    },
-    {
-      "id": "asr",
-      "type": "asr.realtime",
-      "params": {
-        "model": "/Users/otaviolemos/.cache/huggingface/hub/models--mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit/snapshots/fdebf7b2af834a1db4b8a3c99ab7480b333adf9e",
-        "serverVad": true,
-        "inputRate": 16000,
-        "maxPendingMs": 2000,
-        "emitInterruptOnSpeech": false
-      }
-    },
-    {
-      "id": "transcricao",
-      "type": "sink.captions",
-      "params": {
-        "mode": "callback",
-        "showParcials": true
-      }
-    },
-    {
-      "id": "turno",
-      "type": "turn.detector",
-      "params": {
-        "mode": "systemone",
-        "model": "d1-2B-MLX-4bit",
-        "minWords": 3,
-        "completeThreshold": 0.65,
-        "maxWaitMs": 2200,
-        "maxMergedTurns": 4
+        "placeholder": "Descreva o problema ou pedido de diagnóstico (Enter para enviar)..."
       }
     },
     {
@@ -58,6 +25,7 @@
       "id": "rag_docs",
       "type": "rag.search",
       "params": {
+        "toolName": "search_docs",
         "topK": 3,
         "maxChars": 2400
       }
@@ -66,6 +34,7 @@
       "id": "agente",
       "type": "agent.tools",
       "params": {
+        "model": "LiquidAI--LFM3-1.7B-MLX-4bit",
         "approvalPolicy": "always",
         "maxSteps": 5,
         "enableThinking": false,
@@ -85,28 +54,9 @@
   ],
   "edges": [
     {
-      "from": "captura.out",
-      "to": "asr.in",
-      "capacity": 32,
-      "overflow": "drop_oldest",
-      "ttlMs": 1500
-    },
-    {
-      "from": "asr.out",
-      "to": "transcricao.in",
-      "capacity": 16,
-      "overflow": "drop_oldest"
-    },
-    {
-      "from": "asr.out",
-      "to": "turno.in",
-      "capacity": 16,
-      "overflow": "drop_oldest"
-    },
-    {
-      "from": "turno.out",
-      "to": "agente.parcs",
-      "capacity": 16,
+      "from": "chat.out",
+      "to": "agente.in",
+      "capacity": 8,
       "overflow": "block"
     },
     {

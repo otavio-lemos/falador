@@ -246,7 +246,7 @@ export const toolWorkflow: NodeTypeDef = {
         parameters: {
           type: 'object',
           properties: {
-            name: { type: 'string', description: 'Nome do workflow (ex.: chat-agente-suporte).' },
+            name: { type: 'string', description: 'Nome do workflow (ex.: agente-suporte-ops).' },
           },
           required: ['name'],
         },

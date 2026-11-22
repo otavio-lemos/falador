@@ -23,14 +23,10 @@
     },
     {
       "id": "tradutor",
-      "type": "llm.omlx",
+      "type": "translate.llm",
       "params": {
-        "enableThinking": false,
-        "historyMax": 2,
         "targetLanguage": "English",
-        "template": [
-          "Translate to natural spoken English. Output ONLY the translation."
-        ]
+        "enableThinking": false
       }
     },
     {

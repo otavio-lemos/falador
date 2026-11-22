@@ -240,3 +240,11 @@ test('rota /api desconhecida responde 404 JSON (não cai no index.html)', async 
     assert.match((await res.json()).error, /desconhecida/);
   }
 });
+
+test('rota GET /api/mics responde 200 com mics array', async () => {
+  const res = await api('/api/mics');
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.ok(Array.isArray(body.mics));
+  assert.match(res.headers.get('cache-control') ?? 'no-store', /no-store/);
+});

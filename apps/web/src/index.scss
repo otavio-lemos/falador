@@ -549,48 +549,14 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   width: 100%;
 }
 
-// Métricas de consumo por etapa (quadrado Carbon separado por |)
-.stage-metrics-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: $spacing-02;
-  height: 28px;
-  padding: 0 $spacing-03;
-  background: $bg-bar;
-  border: 1px solid $border-1;
-  border-radius: 0;
-  color: $txt-1;
-  @include type-style('code-01');
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
-}
-
-.stage-metric-item {
-  display: inline-flex;
-  align-items: center;
-  gap: $spacing-01;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  svg { color: $txt-2; flex-shrink: 0; }
-}
-
-.stage-metric-sep {
-  color: $border-2;
-  user-select: none;
-  flex-shrink: 0;
-}
-
 .live2-body {
   flex: 1;
   min-height: 0;
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: $spacing-05;
-  padding: $spacing-04 $spacing-05;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: $spacing-04 $spacing-05 0;
+  overflow: hidden;
 }
 
 .docs-modal-body {
@@ -600,7 +566,7 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   padding-top: $spacing-02;
 }
 
-.live2-main { display: flex; flex-direction: column; gap: $spacing-03; min-width: 0; }
+.live2-main { display: flex; flex: 1; flex-direction: column; gap: $spacing-03; min-width: 0; min-height: 0; overflow: hidden; }
 .live2-error { @include type-style('body-01'); color: var(--cds-support-error, #ff8389); background: rgba(218, 30, 40, 0.12); border: 1px solid var(--cds-support-error, #da1e28); border-radius: 0; padding: $spacing-03 $spacing-04; }
 .live2-label { @include type-style('helper-text-01'); color: $txt-2; text-transform: uppercase; letter-spacing: 0.05em; }
 .live2-transcription {
@@ -700,45 +666,61 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 // ---- LiveView: conversa multi-componente (texto, STT, resposta, áudio e pensamento) ----
 .live-chat {
   display: flex;
+  flex: 1;
+  min-height: 0;
   flex-direction: column;
-  gap: $spacing-03;
-  background: $bg-panel;
-  border: 1px solid $border-1;
-  padding: $spacing-04;
+  gap: $spacing-02;
+  background: transparent;
+  border: 0;
+  padding: 0;
 }
 .live-chat-log {
   display: flex;
+  flex: 1;
+  min-height: 0;
   flex-direction: column;
-  gap: $spacing-03;
+  gap: $spacing-06;
   overflow-y: auto;
-  max-height: 46vh;
-  min-height: 120px;
   padding-right: $spacing-02;
+  align-content: flex-start;
 }
 .live-chat-empty { @include type-style('body-01'); color: $txt-2; margin: 0; }
-.live-chat-entry {
+.live-chat-entry,
+.live-chat-thought {
+  display: grid;
+  grid-template-columns: 4px 32px minmax(0, 1fr);
+  gap: $spacing-03;
   width: 100%;
-  padding: $spacing-03 $spacing-04;
-  background: $bg-app;
-  border-left: 2px solid $border-2;
+  padding: $spacing-03 0;
+  background: $bg-card;
 }
-.live-chat-entry--user { background: $bg-card; border-left-color: $border-2; }
-.live-chat-entry--stt { border-left-color: var(--cds-support-info); }
-.live-chat-entry--agent { border-left-color: var(--cds-support-success-inverse); }
-.live-chat-entry--audio { border-left-color: var(--cds-interactive); }
+.live-chat-accent { width: 4px; min-height: 100%; background: var(--accent); }
+.live-chat-avatar {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: $text-on-color;
+}
+.live-chat-block-body { min-width: 0; padding-right: $spacing-04; }
 .live-chat-entry-head {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: $spacing-03;
+  align-items: center;
+  gap: $spacing-02;
+  flex-wrap: wrap;
   margin-bottom: $spacing-02;
-  @include type-style('helper-text-01');
-  color: $txt-2;
 }
-.live-chat-entry-role { display: flex; align-items: baseline; gap: $spacing-02; flex-wrap: wrap; }
-.live-chat-entry-role strong { @include type-style('label-01'); color: $txt-1; }
-.live-chat-entry-head time,
-.live-chat-thought-heading time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.live-chat-entry-role { @include type-style('productive-heading-01'); color: $txt-1; }
+.live-chat-entry-meta { display: flex; align-items: center; gap: $spacing-02; flex-shrink: 0; }
+.live-chat-metrics {
+  @include type-style('helper-text-01');
+  color: var(--cds-support-info);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.live-chat-entry-head time { white-space: nowrap; font-variant-numeric: tabular-nums; color: $txt-2; }
 .live-chat-entry-text {
   @include type-style('body-01');
   color: $txt-1;
@@ -746,18 +728,6 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   white-space: pre-wrap;
   word-break: break-word;
 }
-.live-chat-entry--agent .live-chat-entry-text { color: var(--cds-support-success-inverse); }
-.live-chat-thought { width: 100%; background: $bg-app; }
-.live-chat-thought-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: $spacing-03;
-  width: 100%;
-  @include type-style('helper-text-01');
-  color: $txt-2;
-}
-.live-chat-thought-heading strong { color: $txt-1; }
 .live-chat-thought-text {
   @include type-style('body-compact-01');
   color: $txt-2;
@@ -780,11 +750,12 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 .live-chat-suggestion-text { @include type-style('body-01'); color: $txt-1; white-space: pre-wrap; }
 .live-chat-input {
   display: flex;
+  flex-shrink: 0;
   align-items: flex-end;
   gap: $spacing-03;
   background: $bg-input;
   border: 1px solid $border-2;
-  padding: $spacing-03;
+  padding: $spacing-01;
   .cds--form-item { flex: 1; }
 }
 .live-chat-gate-actions { flex-wrap: wrap; }
