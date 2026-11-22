@@ -47,6 +47,23 @@ export interface AgentStep {
   dryRun?: boolean;
 }
 
+export interface Execution {
+  id: string;
+  ts: number;
+  nodeId: string;
+  step: number;
+  tool: string;
+  host: string;
+  transport: string;
+  command: string;
+  output: string;
+  exitCode: number | null;
+  durationMs?: number;
+  dryRun?: boolean;
+  ok?: boolean;
+  truncated?: boolean;
+}
+
 export interface Thought {
   nodeId: string;
   thoughtId: string;
@@ -99,6 +116,7 @@ export function useRunner() {
   const [captions, setCaptions] = useState<Caption[]>([]);
   const [gates, setGates] = useState<Gate[]>([]);
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
+  const [executions, setExecutions] = useState<Execution[]>([]);
   const [thoughts, setThoughts] = useState<Thought[]>([]);
   const [chatMessages, setChatMessages] = useState<{ nodeId: string; text: string; ts: number }[]>([]);
   const [latency, setLatency] = useState<number | null>(null);
@@ -136,6 +154,7 @@ export function useRunner() {
     setCaptions([]);
     setGates([]);
     setAgentSteps([]);
+    setExecutions([]);
     setThoughts([]);
     setChatMessages([]);
     setCollectResults({});
@@ -232,6 +251,34 @@ export function useRunner() {
                 ...(typeof ev.dryRun === 'boolean' ? { dryRun: ev.dryRun } : {}),
               },
             ]);
+            const isExecTool =
+              String(ev.tool ?? '').startsWith('exec_') ||
+              (typeof ev.transport === 'string' && String(ev.transport).startsWith('mcp'));
+            if (phase === 'result' && isExecTool) {
+              const cmd =
+                ev.args && typeof ev.args === 'object' && typeof (ev.args as Record<string, unknown>).command === 'string'
+                  ? String((ev.args as Record<string, unknown>).command)
+                  : '';
+              setExecutions((x) => [
+                ...x.slice(-99),
+                {
+                  id: `${String(ev.nodeId ?? '')}:${typeof ev.step === 'number' ? ev.step : 0}`,
+                  ts: Date.now(),
+                  nodeId: String(ev.nodeId ?? ''),
+                  step: typeof ev.step === 'number' ? ev.step : 0,
+                  tool: String(ev.tool ?? ''),
+                  host: typeof ev.host === 'string' ? ev.host : 'local',
+                  transport: typeof ev.transport === 'string' ? ev.transport : 'local',
+                  command: cmd,
+                  output: typeof ev.output === 'string' ? ev.output : '',
+                  exitCode: typeof ev.exitCode === 'number' ? ev.exitCode : null,
+                  ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : {}),
+                  ...(typeof ev.dryRun === 'boolean' ? { dryRun: ev.dryRun } : {}),
+                  ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : {}),
+                  ...(typeof ev.truncated === 'boolean' ? { truncated: ev.truncated } : {}),
+                },
+              ]);
+            }
           } else if (ev.type === 'chat_sent') {
             setChatMessages((m) => [
               ...m.slice(-100),
@@ -268,6 +315,6 @@ export function useRunner() {
   const sendChat = async (text: string, nodeId?: string) => {
     await sendChatInput(text, nodeId);
   };
-  return { running, metrics, events, captions, gates, agentSteps, thoughts, chatMessages, collectResults, latency, latencyBreakdown, lastRunError, start, stop, reset, gate, sendChat };
+  return { running, metrics, events, captions, gates, agentSteps, executions, thoughts, chatMessages, collectResults, latency, latencyBreakdown, lastRunError, start, stop, reset, gate, sendChat };
 }
 export type Runner = ReturnType<typeof useRunner>;

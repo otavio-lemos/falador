@@ -64,6 +64,12 @@ export interface AgentStepEvent {
   ok?: boolean;
   durationMs?: number;
   dryRun?: boolean;
+  output?: string;
+  exitCode?: number;
+  host?: string;
+  transport?: string;
+  truncated?: boolean;
+  timedOut?: boolean;
 }
 
 interface OpenAiToolCall {
@@ -682,6 +688,14 @@ export const agentTools: NodeTypeDef = {
                 ok: result.ok,
                 durationMs: result.durationMs,
                 dryRun: result.dryRun,
+                output: result.output,
+                exitCode: result.exitCode,
+                host: typeof result.meta?.host === 'string'
+                  ? result.meta.host
+                  : (typeof result.meta?.serverName === 'string' ? result.meta.serverName : undefined),
+                transport: typeof result.meta?.transport === 'string' ? result.meta.transport : undefined,
+                truncated: typeof result.meta?.truncated === 'boolean' ? result.meta.truncated : undefined,
+                timedOut: typeof result.meta?.timedOut === 'boolean' ? result.meta.timedOut : undefined,
               });
             }
 

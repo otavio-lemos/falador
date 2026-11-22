@@ -11,6 +11,12 @@ import {
   Tag,
   TextArea,
   TextInput,
+  Tabs,
+  TabList,
+  Tab,
+  TabPanels,
+  TabPanel,
+  CodeSnippet,
 } from '@carbon/react';
 import {
   Pause,
@@ -247,12 +253,27 @@ export function LiveView({
   const [docsOpen, setDocsOpen] = useState(false);
   const [uploadTags, setUploadTags] = useState('');
   const [exportOpen, setExportOpen] = useState(false);
+  const [execOpen, setExecOpen] = useState(false);
+  const [execTab, setExecTab] = useState(0);
   const [exporting, setExporting] = useState(false);
   const [exportResult, setExportResult] = useState<string | null>(null);
   const [webhookUrl, setWebhookUrl] = useState(() => {
     try { return localStorage.getItem(WEBHOOK_STORAGE_KEY) ?? ''; } catch { return ''; }
   });
   const fileRef = useRef<HTMLInputElement>(null);
+  const execScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (runner.executions.length > 0) {
+      setExecTab(runner.executions.length - 1);
+    }
+  }, [runner.executions.length]);
+
+  useEffect(() => {
+    if (!execOpen) return;
+    const el = execScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [execOpen, execTab]);
 
   const lastOf = (set: Set<string>) => [...runner.captions].reverse().find((c) => set.has(c.nodeId));
   const transcription = lastOf(sinks.transcription)?.text ?? '';
@@ -720,6 +741,9 @@ export function LiveView({
         </div>
 
         <div className="live2-top-actions">
+          <Button kind="tertiary" size="sm" renderIcon={Terminal} disabled={runner.executions.length === 0} onClick={() => setExecOpen(true)}>
+            Execuções{runner.executions.length > 0 ? ` (${runner.executions.length})` : ''}
+          </Button>
           <Button kind="tertiary" size="sm" renderIcon={Download} onClick={() => { setExportResult(null); setExportOpen(true); }}>
             Exportar
           </Button>
@@ -1020,6 +1044,39 @@ export function LiveView({
           onChange={(e) => setWebhookUrl(e.target.value)}
         />
         {exportResult && <p className="export-modal-result">{exportResult}</p>}
+      </Modal>
+
+      <Modal
+        open={execOpen}
+        passiveModal
+        size="lg"
+        hasScrollingContent
+        modalHeading="Execuções do run"
+        onRequestClose={() => setExecOpen(false)}
+      >
+        {runner.executions.length === 0 ? (
+          <p>Nenhuma execução registrada.</p>
+        ) : (
+          <Tabs selectedIndex={execTab} onChange={({ selectedIndex }) => setExecTab(selectedIndex ?? 0)}>
+            <TabList aria-label="Execuções">
+              {runner.executions.map((e, i) => (
+                <Tab key={e.id + i}>{`${e.tool} · ${e.host} · ${e.exitCode ?? 'null'}`}</Tab>
+              ))}
+            </TabList>
+            <TabPanels>
+              {runner.executions.map((e, i) => (
+                <TabPanel key={e.id + i}>
+                  <div ref={i === execTab ? execScrollRef : undefined} className="logs-terminal-wrap">
+                    <CodeSnippet type="multi" feedback="Copiado">
+                      {e.command}
+                    </CodeSnippet>
+                    <pre className="logs-terminal">{e.output}</pre>
+                  </div>
+                </TabPanel>
+              ))}
+            </TabPanels>
+          </Tabs>
+        )}
       </Modal>
     </div>
   );
