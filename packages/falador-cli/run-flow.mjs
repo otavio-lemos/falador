@@ -65,6 +65,8 @@ async function main() {
   // mesmo rodando headless (sem poluir o stdout servido para o host).
   for (const n of flow.nodes ?? []) {
     if (n.type === 'sink.captions' && !(flow.bindings[n.id]?.__onCaption)) {
+      // stdout é 100% NDJSON: legenda em modo callback, nunca \r/ANSI cru.
+      n.params = { ...(n.params ?? {}), mode: 'callback' };
       flow.bindings[n.id] = {
         ...(flow.bindings[n.id] ?? {}),
         __onCaption: (cap) => line({
@@ -217,12 +219,15 @@ async function main() {
   if (runSeconds > 0) {
     setTimeout(() => { rejectPendingGates(); void rg.stop(`run-seconds ${runSeconds}`); }, runSeconds * 1000).unref?.();
   }
-  (async () => {
+  // O iterador já replaya o eventsQ desde o início; precisa ser consumido ANTES
+  // do summary, senão o process.exit() final engole run_stopped/node_error.
+  const eventsDrained = (async () => {
     try {
       for await (const ev of rg.events()) line({ ...ev });
     } catch { /* stop encerra o iterador */ }
   })();
   const summary = await rg.done.catch((e) => ({ error: String(e?.message ?? e) }));
+  await eventsDrained;
   clearInterval(metricsTimer);
   const results = {};
   for (const [id, holder] of collected) {
@@ -232,6 +237,12 @@ async function main() {
       .map((p) => (p instanceof Uint8Array ? `<bytes:${p.byteLength}>` : truncate(p)));
   }
   line({ type: 'summary', summary: { stopped: summary?.stopped ?? true, metrics: rg.snapshot() }, results });
+  // O run acabou: não há mais o que ler do host. Encerrar o stdin deixa o event
+  // loop esvaziar e o processo sair naturalmente (process.exit truncaria o stdout).
+  try {
+    process.stdin.pause();
+    process.stdin.destroy();
+  } catch { /* stdin já fechado */ }
 }
 
 function truncate(p) {

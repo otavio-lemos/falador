@@ -346,9 +346,13 @@ export class RunningGraph {
         ),
       );
     }
-    await Promise.all(startPromises);
-    this.allStarted = true;
-    void this.maybeNaturalStop();
+    // NÃO aguardar a CONCLUSÃO dos start(): uma fonte contínua (captura, tone com
+    // intervalo) manteria runGraph pendurado e o host nunca veria eventos nem
+    // conseguiria parar o run. Invocação é em ordem; conclusão é assíncrona.
+    void Promise.all(startPromises).then(() => {
+      this.allStarted = true;
+      void this.maybeNaturalStop();
+    });
   }
 
   private allStarted = false;

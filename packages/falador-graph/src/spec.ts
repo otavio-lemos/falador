@@ -79,10 +79,12 @@ export function validateFlow(raw: FlowSpec, registry: Map<string, NodeTypeDef>):
   // nós desabilitados saem do grafo junto com suas edges (Spec: enabled=false)
   const enabledNodes = raw.nodes.filter((n) => n.enabled !== false);
   const removedIds = new Set(raw.nodes.filter((n) => n.enabled === false).map((n) => n.id));
-  const rawEdges = raw.edges.filter(
-    (e) =>
-      !removedIds.has(e.from.split('.')[0]) &&
-      !removedIds.has(e.to.split('.')[0]),
+  const rawEdges = raw.edges.filter((e) =>
+    // edge malformada (from/to não-string) sobrevive ao filtro e cai na
+    // validação de referência, que devolve INVALID_EDGE_REF em vez de TypeError.
+    typeof e.from !== 'string' || typeof e.to !== 'string'
+      ? true
+      : !removedIds.has(e.from.split('.')[0]) && !removedIds.has(e.to.split('.')[0]),
   );
   for (const n of enabledNodes) {
     if (nodes.has(n.id)) throw new GraphError('DUPLICATE_NODE_ID', `nodes[${n.id}]`, `id duplicado`);
@@ -127,7 +129,10 @@ export function validateFlow(raw: FlowSpec, registry: Map<string, NodeTypeDef>):
   const edges: ValidatedEdge[] = [];
   const outEdges = new Map<string, ValidatedEdge[]>();
   for (const e of rawEdges) {
-    const path = `edges[${e.from}->${e.to}]`;
+    const path = `edges[${String(e.from)}->${String(e.to)}]`;
+    if (typeof e.from !== 'string' || typeof e.to !== 'string') {
+      throw new GraphError('INVALID_EDGE_REF', path, 'from/to devem ser strings "<nodeId>.<portName>"');
+    }
     const [fromNode, fromPort] = e.from.split('.');
     const [toNode, toPort] = e.to.split('.');
     if (!fromNode || !fromPort || !toNode || !toPort) {
@@ -153,7 +158,7 @@ export function validateFlow(raw: FlowSpec, registry: Map<string, NodeTypeDef>):
       throw new GraphError('INVALID_POLICY', path, `overflow "${String(ovf)}" inválido`);
     }
     const ttl = e.ttlMs;
-    if (ttl !== undefined && (typeof ttl !== 'number' || ttl < 0)) {
+    if (ttl !== undefined && (typeof ttl !== 'number' || !Number.isFinite(ttl) || ttl < 0)) {
       throw new GraphError('INVALID_TTL', path, 'ttlMs deve ser número >= 0');
     }
     const bt = e.blockTimeoutMs ?? 30_000;

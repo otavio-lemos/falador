@@ -16,5 +16,14 @@ export default defineConfig({
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
   ],
-  // webServer não gerencia o servidor — ele já deve estar rodando (faladorctl / web-server.mjs)
+  // Sobe o host oficial sozinho (serve apps/web/dist). Se já houver um em :8787
+  // (./faladorctl start), reaproveita; em CI sempre sobe um limpo.
+  webServer: {
+    command: 'node ../web-server.mjs',
+    url: 'http://127.0.0.1:8787/api/catalog',
+    reuseExistingServer: !process.env.CI,
+    timeout: 60_000,
+    stdout: 'ignore',
+    stderr: 'pipe',
+  },
 });

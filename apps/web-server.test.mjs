@@ -289,7 +289,7 @@ describe('apps/web-server.mjs — RAG genérico, reset-history e exportação p�
     }
 
     try {
-      // (a.1) Erros de /api/run (400 sem flow e 500 JSON malformado) gravam em web.log
+      // (a.1) Erros de /api/run (400 sem flow e 400 JSON malformado) gravam em web.log
       const badRun = await fetch(`${baseUrl}/api/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -302,7 +302,8 @@ describe('apps/web-server.mjs — RAG genérico, reset-history e exportação p�
         headers: { 'Content-Type': 'application/json' },
         body: '{',
       });
-      assert.equal(brokenJsonRun.status, 500);
+      // JSON inválido é erro do cliente: 400 (antes vazava como 500)
+      assert.equal(brokenJsonRun.status, 400);
 
       // (a.2) flow_invalid no runner grava diretamente em web.log mesmo sem stderr redirect
       const invalidFlow = {
@@ -345,7 +346,7 @@ describe('apps/web-server.mjs — RAG genérico, reset-history e exportação p�
       const diskLog = readFileSync(webLogPath, 'utf-8');
       assert.match(diskLog, /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] /m, 'linhas devem conter timestamp legível');
       assert.ok(diskLog.includes('[api/run] 400 flow obrigatório'), 'erro 400 de /api/run deve constar no web.log');
-      assert.ok(diskLog.includes('[http] 500 POST /api/run:'), 'erro 500 de /api/run deve constar no web.log');
+      assert.ok(diskLog.includes('[http] 400 POST /api/run:'), 'JSON malformado (400) deve constar no web.log');
       assert.ok(diskLog.includes('[runner] flow_invalid:'), 'flow_invalid do runner deve constar no web.log');
       assert.ok(diskLog.includes('[runner] run_started flow=teste-node-error'), 'run_started deve constar no web.log');
       assert.ok(diskLog.includes('[runner] node_error [llm] (log_error): llm.omlx falhou:'), 'node_error do runner deve constar no web.log');

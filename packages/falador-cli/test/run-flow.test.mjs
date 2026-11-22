@@ -1,0 +1,222 @@
+// falador-cli — contrato do runner headless (run-flow.mjs).
+// O runner é o processo que o host, a TUI e a CI consomem: stdout é 100% NDJSON,
+// stdin aceita gate_action/reset_history/chat_input, e qualquer sinal encerra o
+// grafo sem deixar children órfãos.
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'run-flow.mjs');
+const tmp = mkdtempSync(join(tmpdir(), 'falador-cli-test-'));
+test.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+let seq = 0;
+function writeFlow(flow) {
+  const p = join(tmp, `flow-${++seq}.json`);
+  writeFileSync(p, JSON.stringify(flow), 'utf-8');
+  return p;
+}
+
+/** Roda o CLI, opcionalmente envia linhas no stdin, e devolve stdout/stderr/exit. */
+function runCli(args, { stdinLines = [], timeoutMs = 20_000, onLine } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [CLI, ...args], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch { /* já morto */ }
+      reject(new Error(`timeout de ${timeoutMs} ms; stdout parcial: ${stdout.slice(0, 400)}`));
+    }, timeoutMs);
+
+    child.stdout.on('data', (d) => {
+      stdout += d;
+      if (onLine) {
+        for (const l of String(d).split('\n')) if (l.trim()) onLine(l);
+      }
+    });
+    child.stderr.on('data', (d) => (stderr += d));
+    child.on('error', (e) => { clearTimeout(timer); reject(e); });
+    child.on('close', (code, signal) => {
+      clearTimeout(timer);
+      resolve({ code, signal, stdout, stderr });
+    });
+    for (const line of stdinLines) child.stdin.write(line + '\n');
+  });
+}
+
+const parseNdjson = (stdout) =>
+  stdout.split('\n').filter((l) => l.trim()).map((l, i) => {
+    try {
+      return JSON.parse(l);
+    } catch {
+      assert.fail(`linha ${i + 1} não é JSON: ${l.slice(0, 200)}`);
+    }
+  });
+
+function toneFlow({ count = 5, stopWhenSourcesDone = true, intervalMs } = {}) {
+  return {
+    version: 1,
+    stopWhenSourcesDone,
+    nodes: [
+      { id: 'src', type: 'source.tone', params: { count, ...(intervalMs ? { intervalMs } : {}) } },
+      { id: 'snk', type: 'sink.collect' },
+    ],
+    edges: [{ from: 'src.out', to: 'snk.phrase' }],
+  };
+}
+
+test('--catalog: uma linha JSON, catálogo completo e saídas dinâmicas marcadas', async () => {
+  const r = await runCli(['--catalog']);
+  assert.equal(r.code, 0);
+  assert.equal(r.stderr.trim(), '', 'catálogo não deve escrever no stderr');
+  const lines = r.stdout.trim().split('\n');
+  assert.equal(lines.length, 1, '--catalog deve emitir exatamente uma linha');
+  const cat = JSON.parse(lines[0]);
+  assert.equal(cat.type, 'catalog');
+  assert.equal(cat.nodes.length, 23, `esperado 23 nós, veio ${cat.nodes.length}`);
+  for (const n of cat.nodes) {
+    assert.equal(typeof n.type, 'string');
+    assert.ok(Array.isArray(n.inputs) && Array.isArray(n.outputs), `${n.type} sem portas`);
+    assert.ok(Array.isArray(n.paramNames), `${n.type} sem paramNames`);
+  }
+  const byType = new Map(cat.nodes.map((n) => [n.type, n]));
+  assert.equal(byType.get('decision.llm').dynamicOutputs, true);
+  assert.equal(byType.get('llm.omlx').dynamicOutputs, false);
+  assert.ok(byType.has('input.chat') && byType.has('exec.command') && byType.has('tool.mcp'));
+});
+
+test('flow válido: NDJSON puro, summary com resultados em ordem, exit 0', async () => {
+  const p = writeFlow(toneFlow({ count: 4 }));
+  const r = await runCli([p]);
+  assert.equal(r.code, 0, `stderr: ${r.stderr}`);
+  assert.equal(r.stderr.trim(), '', 'run feliz não deve escrever no stderr');
+
+  const events = parseNdjson(r.stdout);
+  assert.ok(events.some((e) => e.type === 'run_started'), 'run_started');
+  assert.ok(events.some((e) => e.type === 'run_stopped'), 'run_stopped');
+  const summary = events.find((e) => e.type === 'summary');
+  assert.ok(summary, 'summary obrigatório');
+  assert.deepEqual(summary.results.snk, ['tone-1', 'tone-2', 'tone-3', 'tone-4']);
+  assert.equal(typeof summary.summary.stopped, 'boolean');
+  assert.ok(summary.summary.metrics.nodes.snk, 'metrics por nó no summary');
+  assert.equal(summary.summary.metrics.nodes.snk.in, 4);
+});
+
+test('flow inválido: flow_invalid no stdout e exit 1 (sem stack no stdout)', async () => {
+  const p = writeFlow({ version: 1, nodes: [{ id: 'x', type: 'nao.existe' }], edges: [] });
+  const r = await runCli([p]);
+  assert.equal(r.code, 1);
+  const events = parseNdjson(r.stdout);
+  const invalid = events.find((e) => e.type === 'flow_invalid');
+  assert.ok(invalid, 'flow_invalid obrigatório');
+  assert.match(invalid.error, /UNKNOWN_NODE_TYPE|não registrado/);
+  assert.ok(!r.stdout.includes(' at '), 'stdout deve ser NDJSON puro, sem stack trace');
+});
+
+test('sem argumentos: uso no stderr e exit 2', async () => {
+  const r = await runCli([]);
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /uso: node run-flow\.mjs/);
+  assert.equal(r.stdout.trim(), '');
+});
+
+test('arquivo inexistente: exit 1 e mensagem no stderr', async () => {
+  const r = await runCli([join(tmp, 'nao-existe.json')]);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /ENOENT|no such file/i);
+});
+
+test('--run-seconds encerra fonte contínua sozinho e sai limpo', async () => {
+  const p = writeFlow(toneFlow({ count: 1000, stopWhenSourcesDone: false, intervalMs: 25 }));
+  const started = Date.now();
+  const r = await runCli([p, '--run-seconds', '1'], { timeoutMs: 15_000 });
+  const elapsed = Date.now() - started;
+  assert.equal(r.code, 0, `stderr: ${r.stderr}`);
+  assert.ok(elapsed < 10_000, `deveria encerrar perto de 1 s + drain, levou ${elapsed} ms`);
+  const events = parseNdjson(r.stdout);
+  const stopped = events.find((e) => e.type === 'run_stopped');
+  assert.ok(stopped, 'run_stopped');
+  assert.match(String(stopped.reason ?? ''), /run-seconds 1/);
+  assert.ok(events.find((e) => e.type === 'summary'), 'summary');
+});
+
+test('stdin reset_history responde history_reset; chat_input responde chat_sent', async () => {
+  const flow = {
+    version: 1,
+    stopWhenSourcesDone: false,
+    nodes: [
+      { id: 'chat', type: 'input.chat', params: { initialMessage: '' } },
+      { id: 'cap', type: 'sink.captions' },
+    ],
+    edges: [{ from: 'chat.out', to: 'cap.phrase' }],
+  };
+  const p = writeFlow(flow);
+  const seen = [];
+  const child = spawn(process.execPath, [CLI, p], { stdio: ['pipe', 'pipe', 'pipe'] });
+  let out = '';
+  const done = new Promise((resolve, reject) => {
+    const t = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('timeout; stdout: ' + out.slice(0, 500))); }, 15_000);
+    child.stdout.on('data', (d) => {
+      out += d;
+      for (const l of String(d).split('\n')) if (l.trim()) seen.push(JSON.parse(l));
+    });
+    child.on('close', (code) => { clearTimeout(t); resolve(code); });
+  });
+  try {
+    // espera o run assentar antes de falar no stdin
+    await new Promise((r) => setTimeout(r, 700));
+    child.stdin.write(JSON.stringify({ type: 'reset_history', nodeId: '*' }) + '\n');
+    child.stdin.write(JSON.stringify({ type: 'chat_input', nodeId: '*', text: 'olá runner' }) + '\n');
+    await new Promise((r) => setTimeout(r, 700));
+    child.kill('SIGTERM');
+    const code = await done;
+    assert.equal(code, 0, 'SIGTERM deve encerrar com exit 0');
+    assert.ok(seen.some((e) => e.type === 'history_reset' && e.nodeId === '*'), 'history_reset');
+    assert.ok(seen.some((e) => e.type === 'chat_sent' && e.text === 'olá runner' && e.nodeId === 'chat'), 'chat_sent');
+    assert.ok(seen.some((e) => e.type === 'caption' && String(e.text).includes('olá runner')), 'caption do chat');
+  } finally {
+    try { child.kill('SIGKILL'); } catch { /* já morto */ }
+  }
+});
+
+test('SIGTERM encerra em menos de 3 s (host usa esse prazo no /api/stop)', async () => {
+  const p = writeFlow(toneFlow({ count: 1000, stopWhenSourcesDone: false, intervalMs: 50 }));
+  const child = spawn(process.execPath, [CLI, p], { stdio: ['pipe', 'pipe', 'pipe'] });
+  let exited = false;
+  const closed = new Promise((resolve) => child.on('close', (code, signal) => resolve({ code, signal })));
+  await new Promise((r) => setTimeout(r, 500));
+  const t0 = Date.now();
+  child.kill('SIGTERM');
+  const { code } = await Promise.race([
+    closed,
+    new Promise((_, rej) => setTimeout(() => rej(new Error('não morreu em 5 s após SIGTERM')), 5000)),
+  ]);
+  exited = true;
+  const ms = Date.now() - t0;
+  assert.ok(exited);
+  assert.equal(code, 0, 'SIGTERM encerra com 0 (shutdown gracioso)');
+  assert.ok(ms < 3000, `levou ${ms} ms`);
+});
+
+test('payloads grandes são truncados no results do summary (não estouram o host)', async () => {
+  const big = 'x'.repeat(500);
+  const p = writeFlow({
+    version: 1,
+    stopWhenSourcesDone: true,
+    nodes: [
+      { id: 'src', type: 'source.tone', params: { count: 1, prefix: big } },
+      { id: 'snk', type: 'sink.collect' },
+    ],
+    edges: [{ from: 'src.out', to: 'snk.phrase' }],
+  });
+  const r = await runCli([p]);
+  assert.equal(r.code, 0);
+  const summary = parseNdjson(r.stdout).find((e) => e.type === 'summary');
+  const value = summary.results.snk[0];
+  assert.ok(value.length <= 241, `esperado truncamento em 240, veio ${value.length}`);
+  assert.ok(value.endsWith('…'));
+});

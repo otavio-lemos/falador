@@ -22,7 +22,7 @@ Nenhum serviço sai para a rede — tudo bind em `127.0.0.1`.
 ## 2. Subir tudo — `faladorctl` (jeito fácil): start · stop · restart · status
 
 ```bash
-cd /Users/otaviolemos/ml/falador
+cd "$(git rev-parse --show-toplevel)"   # raiz do checkout (no Mac do dono: ~/ml/falador)
 ./faladorctl status      # lista TODOS os serviços: omlx asr tts web (pid + o que é + PARADO/✔)
 ./faladorctl start       # sobe os 4 (espera carga dos modelos; logs em logs/<nome>.log)
 ./faladorctl stop        # derruba TODOS (SIGTERM; SIGKILL só no teimoso)
@@ -42,7 +42,7 @@ Abra um **terminal para cada serviço** (ou use `nohup … &`). Não iniciar den
 **1) LLM (omlx, :8080)**
 
 ```bash
-cd /Users/otaviolemos/ml/falador
+cd "$(git rev-parse --show-toplevel)"
 omlx serve --model-dir ~/.omlx/models --host 127.0.0.1 --port 8080
 ```
 
@@ -52,7 +52,7 @@ omlx serve --model-dir ~/.omlx/models --host 127.0.0.1 --port 8080
 **2) ASR streaming (mlx-audio server, :8090)**
 
 ```bash
-cd /Users/otaviolemos/ml/falador
+cd "$(git rev-parse --show-toplevel)"
 .venv/bin/python .venv/lib/python3.12/site-packages/mlx_audio/server.py \
   --host 127.0.0.1 --port 8090 \
   --realtime-model "$HOME/.cache/huggingface/hub/models--mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit/snapshots/fdebf7b2af834a1db4b8a3c99ab7480b333adf9e"
@@ -63,7 +63,7 @@ cd /Users/otaviolemos/ml/falador
 **3) TTS + tradução nativa (sidecar, :8091)**
 
 ```bash
-cd /Users/otaviolemos/ml/falador
+cd "$(git rev-parse --show-toplevel)"
 .venv/bin/python services/sts-sidecar.py \
   --model "$HOME/.cache/huggingface/hub/models--LiquidAI--LFM3-Audio-2B-MLX-8bit/snapshots/000ea4f93adbfdabd4b24295b5e838f6a1f0ffa8" \
   --port 8091
@@ -74,7 +74,7 @@ Espera ~1,5–1,8 s de carga e imprime `[sts-sidecar] PRONTO`.
 **4) Host web + UI (:8787)**
 
 ```bash
-cd /Users/otaviolemos/ml/falador/apps
+cd "$(git rev-parse --show-toplevel)"/apps
 node web-server.mjs
 ```
 
@@ -142,9 +142,9 @@ EOF
 ### 4c. Runner headless (sem UI)
 
 ```bash
-cd /Users/otaviolemos/orca/workspaces/falador/sweetlips
+cd "$(git rev-parse --show-toplevel)"
 node packages/falador-cli/run-flow.mjs apps/tui/flows/legendas-traducao-direta.json --run-seconds 30
-node packages/falador-cli/run-flow.mjs --catalog            # catálogo JSON (22 nós)
+node packages/falador-cli/run-flow.mjs --catalog            # catálogo JSON (23 nós)
 ```
 
 Eventos saem em NDJSON (`caption` com `trace`, `gate` com metadados estruturados, `run_stopped`, …). Comandos via stdin: `{"type":"gate_action","nodeId":"...","text":"editado ou null"}` e `{"type":"reset_history","nodeId":"*"}`.
@@ -152,12 +152,23 @@ Eventos saem em NDJSON (`caption` com `trace`, `gate` com metadados estruturados
 ### 4d. Testes
 
 ```bash
-node --test --test-force-exit packages/falador-graph/test/*.test.ts   # motor: 23/23 (incl. porta tool)
-node --test --test-force-exit packages/falador-nodes/test/*.test.ts   # nós (incl. streaming, BM25, exec, agent.tools, tool.mcp): 60/60 (+1 skip N7)
-node --test --test-force-exit apps/web-server.test.mjs                # host HTTP (RAG, reset-history, export .md/webhook): 1/1
+node --test --test-force-exit packages/falador-graph/test/*.test.ts   # motor: 41 testes (1 skip = bug conhecido)
+node --test --test-force-exit packages/falador-nodes/test/*.test.ts   # nós: 141 testes (2 skip: N7 mic + gate)
+node --test apps/web-server.test.mjs apps/web-server.routes.test.mjs  # host HTTP: 14/14
+(cd packages/falador-cli && node --test --test-force-exit test/)       # runner CLI: 9/9
 FALADOR_MIC_TEST=1 node --test --test-force-exit packages/falador-nodes/test/nodes.test.ts  # + N7 mic real
 cd apps/web && npx tsc --noEmit && npm run build                      # typecheck + build UI
+cd apps/web && npx playwright test                                    # E2E (webServer sobe o host)
 ```
+
+Cobertura (Node 26, nativa):
+
+```bash
+(cd packages/falador-graph && node --test --experimental-test-coverage --test-coverage-include='src/**' test/)
+(cd packages/falador-nodes && node --test --test-force-exit --experimental-test-coverage --test-coverage-include='src/**' test/)
+```
+
+Medido em 2026-11-21: motor **94,4% linhas / 89,0% branches**; nós **86,6% / 70,8%**. Detalhes, mapa do que cada suíte prova e lacunas conscientes em [`docs/testing.md`](docs/testing.md).
 
 ---
 
@@ -191,7 +202,21 @@ kill $(lsof -ti :8787)   # host web
 
 ---
 
-## 8. Armadilhas (resumo — detalhes em AGENTS.md §4/§5)
+## 8. Verificação antes de commit
+
+```bash
+(cd packages/falador-graph && node --test test/) || exit 1
+(cd packages/falador-nodes && node --test --test-force-exit test/) || exit 1
+node --test apps/web-server.test.mjs || exit 1
+(cd packages/falador-cli && node --test --test-force-exit test/) || exit 1
+node --test apps/web-server.routes.test.mjs || exit 1
+(cd apps/web && npx tsc --noEmit && npm run build) || exit 1
+(cd apps/web && npx playwright test) || exit 1
+```
+
+Se o diff toca um nó, o teste correspondente deve falhar antes da correção e passar depois. Suíte verde sem esse ciclo não prova comportamento novo.
+
+## 9. Armadilhas (resumo — detalhes em AGENTS.md §4/§5)
 
 - LLM no omlx **SEMPRE** com `chat_template_kwargs: {"enable_thinking": false}` (senão `content` vem vazio; só `reasoning_content`). Nós `llm.omlx`/`decision.llm` já mandam por default (`enableThinking`).
 - TTS sidecar sai em 24 kHz mesmo pedindo 16 k — para `/asr-translate`, o `sample_rate` do body deve ser o **real do WAV**.

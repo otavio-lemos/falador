@@ -24,7 +24,7 @@ import { chunkDocument } from '../packages/falador-nodes/src/context-store.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = join(ROOT, 'packages/falador-cli/run-flow.mjs');
-const FLOWS_DIR = join(ROOT, 'apps/tui/flows');
+const FLOWS_DIR = process.env.FALADOR_FLOWS_DIR || join(ROOT, 'apps/tui/flows');
 const DIST = join(ROOT, 'apps/web/dist');
 const LOG_FILES = { omlx: 'omlx.log', asr: 'asr.log', tts: 'tts.log', web: 'web.log' };
 const PORT = Number(process.env.FALADOR_WEB_PORT ?? 8787);
@@ -390,6 +390,17 @@ function appendWebLog(msg) {
   } catch { /* nunca falha o servidor por erro de escrita no log */ }
 }
 
+// Nome de flow é usado como nome de arquivo: nunca pode escapar de FLOWS_DIR.
+// Aceita letras/números/._- (sem começar com '.'), resolve e confirma o diretório.
+function safeFlowPath(rawName) {
+  const name = String(rawName ?? '').replace(/\.json$/, '');
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) return null;
+  const dir = resolve(FLOWS_DIR);
+  const p = resolve(join(dir, name + '.json'));
+  if (!p.startsWith(dir + '/')) return null;
+  return { name, path: p };
+}
+
 function json(res, code, body, extraHeaders = {}) {
   const data = JSON.stringify(body);
   res.writeHead(code, { 'Content-Type': 'application/json', ...extraHeaders });
@@ -402,7 +413,11 @@ function readBody(req) {
     req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
       try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf-8') || '{}')); }
-      catch (e) { reject(e); }
+      catch (e) {
+        // JSON inválido é erro do CLIENTE (400), não do servidor (500)
+        e.statusCode = 400;
+        reject(e);
+      }
     });
     req.on('error', reject);
   });
@@ -664,31 +679,31 @@ async function handleApi(req, res, pathname) {
     return json(res, 200, { ok: true, cleared: targets }, noStore), true;
   }
   if (pathname.startsWith('/api/flows/') && req.method === 'GET') {
-    const name = decodeURIComponent(pathname.slice('/api/flows/'.length));
-    const p = join(FLOWS_DIR, name + '.json');
-    if (!p.startsWith(FLOWS_DIR) || !existsSync(p)) { res.writeHead(404); return res.end('not found'), true; }
-    const flow = JSON.parse(readFileSync(p, 'utf-8'));
-    return json(res, 200, { name, flow }), true;
+    const safe = safeFlowPath(decodeURIComponent(pathname.slice('/api/flows/'.length)));
+    if (!safe || !existsSync(safe.path)) { res.writeHead(404); return res.end('not found'), true; }
+    const flow = JSON.parse(readFileSync(safe.path, 'utf-8'));
+    return json(res, 200, { name: safe.name, flow }), true;
   }
   if (pathname.startsWith('/api/flows/') && req.method === 'DELETE') {
-    const name = decodeURIComponent(pathname.slice('/api/flows/'.length));
-    const p = join(FLOWS_DIR, name + '.json');
-    if (!p.startsWith(FLOWS_DIR) || !existsSync(p)) { res.writeHead(404); return res.end('not found'), true; }
-    unlinkSync(p);
-    return json(res, 200, { ok: true, deleted: name }), true;
+    const safe = safeFlowPath(decodeURIComponent(pathname.slice('/api/flows/'.length)));
+    if (!safe || !existsSync(safe.path)) { res.writeHead(404); return res.end('not found'), true; }
+    unlinkSync(safe.path);
+    return json(res, 200, { ok: true, deleted: safe.name }), true;
   }
   if (pathname === '/api/flows' && req.method === 'POST') {
     const body = await readBody(req);
     if (!body.name || !body.flow) return json(res, 400, { error: 'name e flow obrigatórios' }), true;
+    const safe = safeFlowPath(body.name);
+    if (!safe) return json(res, 400, { error: 'nome de flow inválido (use letras/números/._-, sem barras)' }), true;
     if (!existsSync(FLOWS_DIR)) mkdirSync(FLOWS_DIR, { recursive: true });
     // descrição vai DENTRO do flow (um arquivo, uma verdade); rename apaga o antigo
     const flow = { ...body.flow, description: body.flow.description ?? '' };
-    writeFileSync(join(FLOWS_DIR, body.name.replace(/\.json$/, '') + '.json'), JSON.stringify(flow, null, 2));
+    writeFileSync(safe.path, JSON.stringify(flow, null, 2));
     if (body.renameFrom && body.renameFrom !== body.name) {
-      const old = join(FLOWS_DIR, body.renameFrom.replace(/\.json$/, '') + '.json');
-      if (old.startsWith(FLOWS_DIR) && existsSync(old)) { try { unlinkSync(old); } catch { /* busy */ } }
+      const old = safeFlowPath(body.renameFrom);
+      if (old && existsSync(old.path)) { try { unlinkSync(old.path); } catch { /* busy */ } }
     }
-    return json(res, 200, { ok: true }), true;
+    return json(res, 200, { ok: true, name: safe.name }), true;
   }
   if (pathname === '/api/run' && req.method === 'POST') {
     const body = await readBody(req);
@@ -859,14 +874,17 @@ export function createWebServer() {
     const pathname = new URL(req.url, `http://127.0.0.1:${PORT}`).pathname;
     try {
       if (await handleApi(req, res, pathname)) return;
+      // rota /api/ desconhecida nunca cai no fallback estático (senão devolveria HTML 200)
+      if (pathname.startsWith('/api/')) return json(res, 404, { error: `rota desconhecida: ${req.method} ${pathname}` });
       // estático do build
       let file = join(DIST, pathname === '/' ? 'index.html' : pathname);
       if (!existsSync(file)) file = join(DIST, 'index.html');
       res.writeHead(200, { 'Content-Type': mime[extname(file)] ?? 'application/octet-stream' });
       res.end(readFileSync(file));
     } catch (e) {
-      appendWebLog(`[http] 500 ${req.method} ${pathname}: ${String(e?.message ?? e).slice(0, 500)}`);
-      json(res, 500, { error: String(e) });
+      const code = e?.statusCode === 400 ? 400 : 500;
+      appendWebLog(`[http] ${code} ${req.method} ${pathname}: ${String(e?.message ?? e).slice(0, 500)}`);
+      json(res, code, { error: String(e?.message ?? e) });
     }
   });
 }

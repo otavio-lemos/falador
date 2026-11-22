@@ -283,6 +283,9 @@ describe('falador-nodes — integração ao vivo (gate por porta)', () => {
     };
     const rg = await runGraph(flow, registry);
     stopRun = (reason) => void rg.stop(reason);
+    // runGraph NÃO espera a conclusão dos start() (fonte contínua): o fim do run
+    // é sinalizado pelo próprio produtor via stop(); aguardar aqui é obrigatório.
+    await rg.done;
 
     const parcs = collected.received
       .map((r) => (r as { payload: unknown }).payload)

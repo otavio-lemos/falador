@@ -18,3 +18,7 @@ context/
 context/docs.json
 sessions/
 logs/exec-audit.jsonl
+
+# artefatos de teste da UI
+apps/web/playwright-report/
+apps/web/test-results/
