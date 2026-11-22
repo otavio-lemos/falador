@@ -47,12 +47,32 @@ export async function saveFlow(name: string, flow: Flow, renameFrom?: string): P
   });
   if (!r.ok) throw new Error((await r.json()).error ?? 'falha ao salvar');
 }
+export async function deleteFlow(name: string): Promise<void> {
+  const r = await fetch('/api/flows/' + encodeURIComponent(name), { method: 'DELETE' });
+  if (!r.ok) throw new Error('falha ao remover workflow');
+}
 export async function fetchModels(): Promise<{ omlx: string[]; cache: string[] }> {
   return (await fetch('/api/models')).json();
 }
 export async function fetchApps(): Promise<string[]> {
   const j = await (await fetch('/api/apps')).json();
   return [...new Set((j.apps as { name: string }[]).map((a) => a.name).filter((n) => n && n.trim() && !n.startsWith('Open and Save Panel Service')))];
+}
+
+export interface ServiceStatusMap {
+  web: boolean;
+  asr: boolean;
+  omlx: boolean;
+  tts: boolean;
+}
+export interface ServiceStatusResult {
+  services: ServiceStatusMap;
+  ts: number;
+}
+export async function fetchServiceStatus(): Promise<ServiceStatusResult> {
+  const r = await fetch(`/api/services/status?_t=${Date.now()}`, { cache: 'no-store' });
+  if (!r.ok) throw new Error(`falha ao verificar serviços (HTTP ${r.status})`);
+  return r.json();
 }
 
 // ---- Contexto & RAG local (runbooks / docs) ----
@@ -136,8 +156,38 @@ export interface LogsResult {
   note?: string;
 }
 export async function fetchLogs(name: string, lines = 200): Promise<LogsResult> {
-  const r = await fetch(`/api/logs?name=${encodeURIComponent(name)}&lines=${lines}`);
-  if (!r.ok) throw new Error((await r.json()).error ?? 'falha ao ler logs');
+  const r = await fetch(`/api/logs?name=${encodeURIComponent(name)}&lines=${lines}&_t=${Date.now()}`, {
+    cache: 'no-store',
+  });
+  if (!r.ok) {
+    let msg = `falha ao ler logs (HTTP ${r.status})`;
+    try {
+      const j = (await r.json()) as { error?: unknown };
+      if (j && typeof j.error === 'string' && j.error) msg = j.error;
+    } catch { /* resposta não-JSON */ }
+    throw new Error(msg);
+  }
+  return r.json();
+}
+export interface ClearLogsResult {
+  ok: boolean;
+  cleared: string[];
+}
+export async function clearLogs(names?: string[]): Promise<ClearLogsResult> {
+  const r = await fetch('/api/logs/clear', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    cache: 'no-store',
+    body: JSON.stringify(names ? { names } : {}),
+  });
+  if (!r.ok) {
+    let msg = `falha ao limpar logs (HTTP ${r.status})`;
+    try {
+      const j = (await r.json()) as { error?: unknown };
+      if (j && typeof j.error === 'string' && j.error) msg = j.error;
+    } catch { /* resposta não-JSON */ }
+    throw new Error(msg);
+  }
   return r.json();
 }
 export async function gateAction(nodeId: string, text: string | null): Promise<void> {
@@ -194,10 +244,17 @@ export function openRun(
         if (!data) continue;
         let parsed: unknown; try { parsed = JSON.parse(data); } catch { continue; }
         if (evName === 'runner') onEvent(parsed as RunnerEvent);
+        else if (evName === 'runner_stderr') onEvent({ type: 'runner_stderr', ...(parsed as Record<string, unknown>) });
         else if (evName === 'ended') { onEnd((parsed as { code: number }).code ?? 0); return; }
       }
     }
     onEnd(-1); // stream fechou sem 'ended'
-  }).catch(() => onEnd(-1));
+  }).catch((err: unknown) => {
+    if (!ctl.signal.aborted) {
+      const msg = err instanceof Error ? err.message : String(err);
+      onError?.(`falha de conexão com o host (:8787): ${msg}`);
+    }
+    onEnd(-1);
+  });
   return ctl;
 }
