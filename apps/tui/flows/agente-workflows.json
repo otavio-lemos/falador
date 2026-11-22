@@ -1,13 +1,25 @@
 {
   "version": 1,
   "stopWhenSourcesDone": false,
-  "description": "Agente Especialista em Workflows do Falador (chat-only): cria, edita, valida e pesquisa workflows em apps/tui/flows/ mantendo o AGENTS.md atualizado, com busca externa anti-SSRF (tool.web_search) e seleção de modelo. Sem captura de áudio no fluxo padrão (ADR-005).",
+  "description": "Agente Especialista em Workflows do Falador: nó único Input (padrão Chat, alternável para Aplicações ou Microfone via ASR Voxtral) para criar, editar, validar e pesquisar workflows em apps/tui/flows/ mantendo o AGENTS.md atualizado, com busca externa anti-SSRF (tool.web_search) e seleção de modelo.",
   "nodes": [
     {
-      "id": "chat",
-      "type": "input.chat",
+      "id": "input",
+      "type": "capture.ffmpeg",
       "params": {
+        "input": "",
+        "chunkMs": 80,
+        "backend": "chat",
         "placeholder": "Descreva o workflow que deseja criar, editar ou pesquisar…"
+      }
+    },
+    {
+      "id": "asr",
+      "type": "asr.realtime",
+      "params": {
+        "model": "/Users/otaviolemos/.cache/huggingface/hub/models--mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit/snapshots/fdebf7b2af834a1db4b8a3c99ab7480b333adf9e",
+        "serverVad": true,
+        "inputRate": 16000
       }
     },
     {
@@ -53,7 +65,20 @@
   ],
   "edges": [
     {
-      "from": "chat.out",
+      "from": "input.out",
+      "to": "asr.in",
+      "capacity": 32,
+      "overflow": "drop_oldest",
+      "ttlMs": 1500
+    },
+    {
+      "from": "asr.out",
+      "to": "agente.parcs",
+      "capacity": 16,
+      "overflow": "drop_oldest"
+    },
+    {
+      "from": "input.out_text",
       "to": "agente.in",
       "capacity": 8,
       "overflow": "block"

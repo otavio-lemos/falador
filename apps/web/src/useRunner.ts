@@ -279,6 +279,28 @@ export function useRunner() {
                 },
               ]);
             }
+          } else if (ev.type === 'execution') {
+            const nodeId = String(ev.nodeId ?? '');
+            const ts = typeof ev.ts === 'number' ? ev.ts : Date.now();
+            setExecutions((x) => [
+              ...x.slice(-99),
+              {
+                id: String(ev.id ?? `${nodeId}:exec:${ts}:${x.length}`),
+                ts,
+                nodeId,
+                step: typeof ev.step === 'number' ? ev.step : 0,
+                tool: String(ev.tool ?? 'exec.command'),
+                host: typeof ev.host === 'string' ? ev.host : 'local',
+                transport: typeof ev.transport === 'string' ? ev.transport : 'local',
+                command: String(ev.command ?? ''),
+                output: typeof ev.output === 'string' ? ev.output : '',
+                exitCode: typeof ev.exitCode === 'number' ? ev.exitCode : null,
+                ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : {}),
+                ...(typeof ev.dryRun === 'boolean' ? { dryRun: ev.dryRun } : {}),
+                ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : {}),
+                ...(typeof ev.truncated === 'boolean' ? { truncated: ev.truncated } : {}),
+              },
+            ]);
           } else if (ev.type === 'chat_sent') {
             setChatMessages((m) => [
               ...m.slice(-100),

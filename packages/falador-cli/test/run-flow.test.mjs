@@ -253,6 +253,80 @@ test('SIGTERM encerra em menos de 3 s (host usa esse prazo no /api/stop)', async
   assert.ok(ms < 3000, `levou ${ms} ms`);
 });
 
+test('capture.ffmpeg com backend chat recebe stdin chat_input, emite chat_sent e caption via out_text, e encerra limpo no SIGTERM', async () => {
+  const flow = {
+    version: 1,
+    stopWhenSourcesDone: false,
+    nodes: [
+      { id: 'inp', type: 'capture.ffmpeg', params: { backend: 'chat', sckPath: '/nao/existe/capture' } },
+      { id: 'cap', type: 'sink.captions' },
+    ],
+    edges: [{ from: 'inp.out_text', to: 'cap.phrase' }],
+  };
+  const p = writeFlow(flow);
+  const seen = [];
+  const child = spawn(process.execPath, [CLI, p], { stdio: ['pipe', 'pipe', 'pipe'] });
+  let out = '';
+  let buf = '';
+  const waitForEvent = (pred, label, timeoutMs = 10_000) =>
+    new Promise((resolve, reject) => {
+      const existing = seen.find(pred);
+      if (existing) return resolve(existing);
+      let iv;
+      const t = setTimeout(() => {
+        clearInterval(iv);
+        reject(new Error(`timeout aguardando ${label}; stdout: ${out.slice(0, 500)}`));
+      }, timeoutMs);
+      iv = setInterval(() => {
+        const hit = seen.find(pred);
+        if (hit) {
+          clearInterval(iv);
+          clearTimeout(t);
+          resolve(hit);
+        }
+      }, 20);
+    });
+  const done = new Promise((resolve, reject) => {
+    const t = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch { /* já morto */ }
+      reject(new Error(`timeout no close; stdout: ${out.slice(0, 500)}`));
+    }, 15_000);
+    child.stdout.on('data', (d) => {
+      const s = String(d);
+      out += s;
+      buf += s;
+      let idx;
+      while ((idx = buf.indexOf('\n')) >= 0) {
+        const l = buf.slice(0, idx).trim();
+        buf = buf.slice(idx + 1);
+        if (l) seen.push(JSON.parse(l));
+      }
+    });
+    child.on('close', (code) => { clearTimeout(t); resolve(code); });
+  });
+  try {
+    await waitForEvent((e) => e.type === 'run_started', 'run_started');
+    child.stdin.write(JSON.stringify({ type: 'chat_input', nodeId: 'inp', text: 'olá capture unificado' }) + '\n');
+    await waitForEvent(
+      (e) => e.type === 'caption' && e.nodeId === 'cap' && String(e.text).includes('olá capture unificado'),
+      'caption via out_text',
+    );
+    child.kill('SIGTERM');
+    const code = await done;
+    assert.equal(code, 0, 'SIGTERM deve encerrar com exit 0');
+    assert.ok(
+      seen.some((e) => e.type === 'chat_sent' && e.nodeId === 'inp' && e.text === 'olá capture unificado'),
+      'chat_sent deve ser emitido para inp',
+    );
+    const cap = seen.find((e) => e.type === 'caption' && e.nodeId === 'cap' && e.final === true);
+    assert.ok(cap, 'caption final deve ser emitida por cap');
+    assert.equal(cap.text, 'olá capture unificado');
+    assert.ok(cap.trace?.turnId, 'caption deve carregar trace.turnId');
+  } finally {
+    try { child.kill('SIGKILL'); } catch { /* já morto */ }
+  }
+});
+
 test('payloads grandes são truncados no results do summary (não estouram o host)', async () => {
   const big = 'x'.repeat(500);
   const p = writeFlow({

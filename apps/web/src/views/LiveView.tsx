@@ -69,12 +69,10 @@ interface Props {
   scenarioName: string;
   theme: 'g100' | 'white';
   onToggleTheme: () => void;
-  micMuted: boolean;
+  inputMode: 'apps' | 'mic' | 'chat';
   speakerMuted: boolean;
   onToggleMicMute: () => void;
   onToggleSpeakerMute: () => void;
-  captureSource?: 'apps' | 'mic';
-  onToggleCaptureSource?: () => void;
   models: { omlx: string[]; cache: string[] };
   apps: string[];
   mics?: { id: number; name: string; sampleRate: number }[];
@@ -87,7 +85,7 @@ interface Props {
   onSwitchFlow: (name: string) => void;
   onUpdateStage: (nodeId: string, param: string, value: unknown) => void;
   onRegenerate: () => void;
-  onRefreshApps: () => void;
+  onRefreshApps?: () => void;
   onServiceStatus?: (status: ServiceStatusMap) => void;
   onNotify?: (msg: string) => void;
   onGoBuilder: () => void;
@@ -111,7 +109,7 @@ interface ConversationEntry {
   nodeType?: string;
 }
 
-function stageItems(stage: Stage, models: { omlx: string[]; cache: string[] }, apps: string[], mics: { id: number; name: string; sampleRate: number }[] = []): Item[] {
+function stageItems(stage: Stage, models: { omlx: string[]; cache: string[] }, apps: string[]): Item[] {
   if (stage.kind === 'approve-mode') {
     return [{ id: 'manual', label: 'Manual' }, { id: 'auto', label: 'Auto (bypass)' }];
   }
@@ -119,7 +117,11 @@ function stageItems(stage: Stage, models: { omlx: string[]; cache: string[] }, a
   if (stage.kind === 'app') {
     // primary dropdown = origem de captura
     if (stage.param === 'backend') {
-      return [{ id: 'apps', label: 'Aplicações' }, { id: 'mic', label: 'Microfone' }];
+      return [
+        { id: 'apps', label: 'Aplicações' },
+        { id: 'mic', label: 'Microfone' },
+        { id: 'chat', label: 'Chat' },
+      ];
     }
     const items: Item[] = [{ id: 'auto', label: 'Automático (áudio ativo)' }];
     for (const a of apps) {
@@ -244,10 +246,10 @@ function riskTagType(decision?: string): 'green' | 'warm-gray' | 'red' | 'magent
 
 export function LiveView({
   runner, flow, scenarioName, theme, onToggleTheme,
-  micMuted, speakerMuted, onToggleMicMute, onToggleSpeakerMute, captureSource, onToggleCaptureSource,
-  models, apps, mics, contextDocs,
+  inputMode, speakerMuted, onToggleMicMute, onToggleSpeakerMute,
+  models, apps, contextDocs,
   onUploadDoc, onRemoveDoc, onStart, flows, currentFlow,
-  onSwitchFlow, onUpdateStage, onRegenerate, onRefreshApps, onServiceStatus, onNotify,  onGoBuilder, onExit, onReset, resetSignal,
+  onSwitchFlow, onUpdateStage, onRegenerate, onServiceStatus, onNotify, onGoBuilder, onExit, onReset, resetSignal,
 }: Props) {
   const stages = useMemo(() => deriveStages(flow), [flow]);
   const sinks = useMemo(() => classifySinks(flow), [flow]);
@@ -302,7 +304,7 @@ export function LiveView({
   const hasGate = flow.nodes.some(
     (n) => n.type === 'human.approve' || (n.type === 'agent.tools' && n.params.approvalPolicy !== 'never'),
   );
-  const hasCapture = flow.nodes.some((n) => n.type === 'capture.ffmpeg');
+  const hasInput = flow.nodes.some((n) => n.type === 'capture.ffmpeg' || n.type === 'input.chat');
   const hasAudioOut = flow.nodes.some((n) => n.type === 'sink.playback' || n.type === 'tts.sts');
   const hasTTS = flow.nodes.some((n) => n.type === 'tts.sts');
   const hasLLM = flow.nodes.some((n) => n.type === 'llm.omlx' || n.type === 'agent.tools');
@@ -361,7 +363,7 @@ export function LiveView({
     setDocsOpen(false);
   }, [resetSignal]);
 
-  const chatNode = flow.nodes.find((n) => n.type === 'input.chat');
+  const chatNode = flow.nodes.find((n) => n.type === 'input.chat' || n.type === 'capture.ffmpeg');
   const captureAppNode = flow.nodes.find(
     (n) => n.type === 'capture.ffmpeg' && typeof n.params.input === 'string' && n.params.input.trim(),
   );
@@ -369,7 +371,7 @@ export function LiveView({
   const chatPlaceholder = chatNode
     ? ((typeof chatNode.params?.placeholder === 'string' && chatNode.params.placeholder.trim()) ||
       'Digite sua mensagem ou comando (Enter para enviar)...')
-    : 'Este workflow não possui entrada de texto (input.chat).';
+    : 'Este workflow não possui entrada (Input).';
 
   // Conversa única: texto, STT, respostas, áudio e pensamento derivados dos eventos
   // e dos nós realmente presentes no workflow — sem papéis ou mensagens fixas.
@@ -807,13 +809,14 @@ export function LiveView({
                 onClick={onToggleTheme}
               />
               <Button
-                kind={micMuted ? 'danger--tertiary' : 'tertiary'}
+                kind={inputMode === 'chat' ? 'danger--tertiary' : 'tertiary'}
                 size="sm"
                 hasIconOnly
-                renderIcon={micMuted ? MicrophoneOff : Microphone}
-                 iconDescription={!hasCapture ? 'Workflow sem entrada de voz' : (flow.nodes.some((n) => n.type === 'input.chat') ? (micMuted ? 'Usar voz' : 'Usar chat') : 'Alternar origem de áudio')}
+                renderIcon={inputMode === 'chat' ? MicrophoneOff : Microphone}
+                aria-pressed={inputMode !== 'chat'}
+                iconDescription={!hasInput ? 'Workflow sem entrada' : inputMode === 'chat' ? 'Usar voz' : 'Usar chat'}
                 tooltipPosition="bottom"
-                disabled={!hasCapture}
+                disabled={!hasInput}
                 onClick={onToggleMicMute}
               />
               <Button
@@ -862,37 +865,29 @@ export function LiveView({
         <section className="live2-stages-bar" aria-label="Parâmetros e métricas por etapa">
           <div className="live2-stages">
             {stages.map((s) => {
-              const items = stageItems(s, models, apps, mics ?? []);
+              const items = stageItems(s, models, apps);
               const primaryValue = s.kind === 'model-translate' && (!s.value || s.value === '—') ? '-' : s.value;
-               const isDual = Boolean(s.secondaryParam);
-               const langItems = isDual
-                 ? supportedLanguagesForModel(
-                     s.kind === 'voice' ? 'LFM3-Audio' : s.value,
-                     s.secondaryKind === 'language-optional',
-                   )
-                 : [];
-               const curLang = s.secondaryValue === '-' || s.secondaryValue === '—' ? '' : (s.secondaryValue ?? '');
-               const langDisabled = s.kind === 'model-translate' && (!s.value || s.value === '-' || s.value === '—');
-               // capture source secondary: apps or mics
-               const captureSecondaryItems: Item[] | null = (s.kind === 'app' && s.secondaryParam === 'input')
-                 ? ((s.value === 'mic' ? (mics ?? []).map((m) => m.name) : apps)).map((v) => ({ id: v, label: v }))
-                 : null;
-               const finalLangItems = captureSecondaryItems
-                 ? (captureSecondaryItems.length ? captureSecondaryItems : [{ id: s.secondaryValue ?? '', label: s.secondaryValue ?? '—' }])
-                 : (curLang && !langItems.some((l) => l.id === curLang)
-                   ? [{ id: curLang, label: curLang }, ...langItems]
-                   : langItems);
+              const selectedId = s.kind === 'app' && s.param === 'backend' ? inputMode : primaryValue;
+              const isDual = Boolean(s.secondaryParam);
+              const langItems = isDual
+                ? supportedLanguagesForModel(
+                    s.kind === 'voice' ? 'LFM3-Audio' : s.value,
+                    s.secondaryKind === 'language-optional',
+                  )
+                : [];
+              const curLang = s.secondaryValue === '-' || s.secondaryValue === '—' ? '' : (s.secondaryValue ?? '');
+              const langDisabled = s.kind === 'model-translate' && (!s.value || s.value === '-' || s.value === '—');
+              const finalLangItems = curLang && !langItems.some((l) => l.id === curLang)
+                ? [{ id: curLang, label: curLang }, ...langItems]
+                : langItems;
               return (
                 <div key={s.key} className={`stage-dd${isDual ? ' stage-dd--dual' : ''}`} style={{ ['--accent' as string]: s.accent }}>
                   <span className="stage-dd-label">{s.label}</span>
                   <div className={`stage-dd-ctrl${isDual ? ' stage-dd-ctrl--dual' : ''}`}>
-                    {s.kind === 'app' && (
-                      <Button kind="ghost" size="sm" hasIconOnly renderIcon={Renew} iconDescription="Recarregar apps de áudio" tooltipPosition="bottom" onClick={onRefreshApps} />
-                    )}
                     <Dropdown
                       id={`stage-${s.key}`} size="sm" titleText={s.label} hideLabel label={s.label}
                       items={items} itemToString={(it) => (it ? it.label : '')}
-                      selectedItem={items.find((i) => i.id === primaryValue) ?? items[0]}
+                      selectedItem={items.find((i) => i.id === selectedId) ?? items[0]}
                       onChange={({ selectedItem }) => selectedItem && selectedItem.id !== '—' && onUpdateStage(s.nodeId, s.param, selectedItem.id)}
                     />
                     {s.secondaryParam && (

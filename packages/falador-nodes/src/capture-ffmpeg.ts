@@ -13,12 +13,14 @@
 //     input = NOME do app da call (ex. 'Teams', 'zoom.us', 'Chrome'); vazio = todos.
 //     Filtro por app = TTS de outro processo NÃO entra → sem eco digital.
 //     Requer permissão de Gravação de Tela (TCC). macOS 13+ (audio-only na prática).
+//   'chat': modo texto interativo via __registerChatInput (sem áudio; emite out_text e parcs).
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import type { NodeCtx, NodeRuntime, NodeTypeDef } from '../../falador-graph/src/index.ts';
+import { inheritTrace } from './trace.ts';
 
 // defaults de caminho ancorados NO REPO (não no cwd do runner — testes rodam de
 // packages/falador-nodes, o host da raiz; ambos precisam achar o sidecar).
@@ -32,9 +34,26 @@ export function resolveSounddeviceInput(rawInput: string): string {
 export const captureFfmpeg: NodeTypeDef = {
   type: 'capture.ffmpeg',
   sourceOnly: true,
-  paramNames: ['input', 'sampleRate', 'chunkMs', 'ffmpegPath', 'backend', 'pythonPath', 'sidecarPath', 'sckPath', 'muted'],
+  paramNames: [
+    'input',
+    'sampleRate',
+    'chunkMs',
+    'ffmpegPath',
+    'backend',
+    'pythonPath',
+    'sidecarPath',
+    'sckPath',
+    'muted',
+    'placeholder',
+    'initialMessage',
+  ],
+  bindingNames: ['__registerChatInput'],
   inputs: [],
-  outputs: [{ name: 'out', type: 'pcm16k' }],
+  outputs: [
+    { name: 'out', type: 'pcm16k', required: false },
+    { name: 'out_text', type: 'phrase', required: false },
+    { name: 'parcs', type: 'tokens_parcial', required: false },
+  ],
   validateParams: (p) => {
     const errs: { path: string; code: string; message: string }[] = [];
     if (p.input !== undefined && typeof p.input !== 'string') {
@@ -48,13 +67,19 @@ export const captureFfmpeg: NodeTypeDef = {
         errs.push({ path: `params.${k}`, code: 'INVALID_PARAM', message: `${k} deve ser número > 0` });
       }
     }
-    for (const k of ['ffmpegPath', 'pythonPath', 'sidecarPath', 'sckPath'] as const) {
+    for (const k of ['ffmpegPath', 'pythonPath', 'sidecarPath', 'sckPath', 'placeholder', 'initialMessage'] as const) {
       if (p[k] !== undefined && typeof p[k] !== 'string') {
         errs.push({ path: `params.${k}`, code: 'INVALID_PARAM', message: `${k} deve ser string` });
       }
     }
-    if (p.backend !== undefined && p.backend !== 'ffmpeg' && p.backend !== 'sounddevice' && p.backend !== 'sck') {
-      errs.push({ path: 'params.backend', code: 'INVALID_PARAM', message: "backend deve ser 'ffmpeg' | 'sounddevice' | 'sck'" });
+    if (
+      p.backend !== undefined &&
+      p.backend !== 'ffmpeg' &&
+      p.backend !== 'sounddevice' &&
+      p.backend !== 'sck' &&
+      p.backend !== 'chat'
+    ) {
+      errs.push({ path: 'params.backend', code: 'INVALID_PARAM', message: "backend deve ser 'ffmpeg' | 'sounddevice' | 'sck' | 'chat'" });
     }
     return errs;
   },
@@ -62,6 +87,8 @@ export const captureFfmpeg: NodeTypeDef = {
     const backend = (ctx.params.backend as string | undefined) ?? 'sck';
     const input = (ctx.params.input as string | undefined) ?? (backend === 'sck' ? '' : ':0');
     const muted = ctx.params.muted === true;
+    const initialMessage =
+      typeof ctx.params.initialMessage === 'string' ? ctx.params.initialMessage.trim() : '';
     const sampleRate = (ctx.params.sampleRate as number | undefined) ?? 16000;
     const chunkMs = (ctx.params.chunkMs as number | undefined) ?? 80;
     const ffmpegPath = (ctx.params.ffmpegPath as string | undefined) ?? '/opt/homebrew/bin/ffmpeg';
@@ -73,6 +100,16 @@ export const captureFfmpeg: NodeTypeDef = {
     let child: ChildProcessWithoutNullStreams | null = null;
     let stopped = false;
     let rest = Buffer.alloc(0);
+
+    const emitText = async (raw: string): Promise<void> => {
+      if (stopped || ctx.signal.aborted) return;
+      const text = raw.trim();
+      if (!text) return;
+      const meta = inheritTrace(undefined, { tCaptureMs: Date.now() });
+      ctx.metrics.counter('input.chat.messages', 1);
+      await ctx.emit('out_text', text, { meta });
+      await ctx.emit('parcs', { text, final: true }, { meta });
+    };
 
     // rede de segurança: QUALQUER process.exit() (normal ou via handler de sinal)
     // executa handlers 'exit' SÍNCRONOS — matar o child aqui garante que o
@@ -90,8 +127,17 @@ export const captureFfmpeg: NodeTypeDef = {
 
     return {
       async start() {
+        const register = ctx.bindings?.__registerChatInput as
+          | ((fn: (t: string) => Promise<void>) => void)
+          | undefined;
+        if (register) register(emitText);
+        if (backend === 'chat') {
+          ctx.log('info', 'input: modo chat (sem áudio)');
+          if (initialMessage) await emitText(initialMessage);
+          return;
+        }
         if (muted) {
-          ctx.log('info', 'capture: silenciado (muted=true)');
+          ctx.log('info', 'input: silenciado (muted=true)');
           return;
         }
         // sck: ScreenCaptureKit por app (sem routing). Binário recompilado se ausente ou stale.

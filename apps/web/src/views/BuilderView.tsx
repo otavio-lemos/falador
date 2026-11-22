@@ -18,6 +18,7 @@ interface Props {
   description: string;
   runner: Runner;
   registerActions: (a: { getFlow: () => Flow; save: () => void }) => void;
+  onFlowLoaded?: (flowName: string | null) => void;
   onSaved: () => void;
   onEditFlow: () => void;
   models: { omlx: string[]; cache: string[] };
@@ -27,7 +28,7 @@ interface Props {
 }
 
 export function BuilderView({
-  catalog, currentFlow, description, runner, registerActions, onSaved, onEditFlow, models, apps, onRefreshApps, onServiceStatus,
+  catalog, currentFlow, description, runner, registerActions, onFlowLoaded, onSaved, onEditFlow, models, apps, onRefreshApps, onServiceStatus,
 }: Props) {
   const [nodes, setNodes, onNodesChange] = useNodesState<FNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -36,15 +37,20 @@ export function BuilderView({
   const [chatDraft, setChatDraft] = useState('');
 
   useEffect(() => {
-    if (!currentFlow) return;
+    if (!currentFlow) {
+      onFlowLoaded?.(null);
+      return;
+    }
     let alive = true;
+    onFlowLoaded?.(null);
     fetchFlow(currentFlow).then((flow) => {
       if (!alive) return;
       const { nodes: ns, edges: es } = flowToRf(flow, catalog);
       setNodes(ns); setEdges(es); setMeta(flow); setSelectedId(null);
-    }).catch(() => { /* flow novo/vazio */ });
+      onFlowLoaded?.(currentFlow);
+    }).catch(() => { if (alive) onFlowLoaded?.(currentFlow); });
     return () => { alive = false; };
-  }, [currentFlow, catalog, setNodes, setEdges]);
+  }, [currentFlow, catalog, setNodes, setEdges, onFlowLoaded]);
 
   const buildFlow = useCallback(() => rfToFlow(nodes, edges, { ...meta, description: description || meta.description }), [nodes, edges, meta, description]);
 
@@ -70,7 +76,7 @@ export function BuilderView({
     const outputs = type === 'decision.llm' ? [{ name: 'auto', type: 'tokens_parcial' }] : (cn?.outputs ?? []);
     const defaultParams: Record<string, unknown> =
       type === 'capture.ffmpeg'
-        ? { backend: 'sck', input: '', chunkMs: 80 }
+        ? { backend: 'sck', input: '', chunkMs: 80, placeholder: 'Digite sua mensagem ou comando (Enter para enviar)...' }
         : type === 'decision.llm'
           ? { options: ['auto'] }
           : type === 'exec.command'
@@ -126,7 +132,7 @@ export function BuilderView({
   const lastCaption = runner.captions.at(-1);
   const collectEntries = Object.entries(runner.collectResults ?? {});
   const displayDesc = description || meta.description;
-  const chatNode = nodes.find((n) => n.data.type === 'input.chat');
+  const chatNode = nodes.find((n) => n.data.type === 'input.chat' || n.data.type === 'capture.ffmpeg');
   const sendBuilderChat = async () => {
     const t = chatDraft.trim();
     if (!t || !runner.running) return;

@@ -1,13 +1,25 @@
 {
   "version": 1,
   "stopWhenSourcesDone": false,
-  "description": "Ops / Revisão de Servidor assistida por chat (ADR-007, text-only): o usuário descreve o pedido, um planejador sugere um comando de diagnóstico, o d1-2B classifica risco (leitura_segura/sensivel/bloqueado), rotas sensíveis exigem aprovação humana e a execução permanece em dryRun=true por padrão com análise final do diagnóstico.",
+  "description": "Ops / Revisão de Servidor assistida (ADR-007/ADR-009): nó único Input (padrão Chat, alternável para Aplicações via SCK ou Microfone via ASR Voxtral) alimenta um planejador que sugere um comando de diagnóstico, o d1-2B classifica risco (leitura_segura/sensivel/bloqueado), rotas sensíveis exigem aprovação humana e a execução permanece em dryRun=true por padrão com análise final do diagnóstico.",
   "nodes": [
     {
-      "id": "chat",
-      "type": "input.chat",
+      "id": "input",
+      "type": "capture.ffmpeg",
       "params": {
+        "input": "",
+        "chunkMs": 80,
+        "backend": "chat",
         "placeholder": "Descreva o problema do servidor ou pedido de diagnóstico (Enter para enviar)..."
+      }
+    },
+    {
+      "id": "asr",
+      "type": "asr.realtime",
+      "params": {
+        "model": "/Users/otaviolemos/.cache/huggingface/hub/models--mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit/snapshots/fdebf7b2af834a1db4b8a3c99ab7480b333adf9e",
+        "serverVad": true,
+        "inputRate": 16000
       }
     },
     {
@@ -124,7 +136,20 @@
   ],
   "edges": [
     {
-      "from": "chat.out",
+      "from": "input.out",
+      "to": "asr.in",
+      "capacity": 32,
+      "overflow": "drop_oldest",
+      "ttlMs": 1500
+    },
+    {
+      "from": "asr.out",
+      "to": "planejador.parcs",
+      "capacity": 16,
+      "overflow": "drop_oldest"
+    },
+    {
+      "from": "input.out_text",
       "to": "planejador.in",
       "capacity": 8,
       "overflow": "block"

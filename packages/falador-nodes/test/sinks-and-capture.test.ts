@@ -68,6 +68,28 @@ function fakePlayerScript(body: string): string {
 
 // ---- sink.captions ---------------------------------------------------------
 
+const RUNNER_LINE_RE = /^\s*(?:TAP version \d+|ok \d+|not ok \d+|1\.\.\d+|#|---$|\.\.\.$|(?:duration_ms|type|location|failureType|error|code|stack|attempt|Subtest):|[▶✔✖ℹ])/;
+
+function isRunnerOutput(s: string): boolean {
+  const plain = s.replace(/\u001B\[[0-9;]*m/g, '');
+  return RUNNER_LINE_RE.test(plain);
+}
+
+function captureStdout(t: { mock: { method: (...args: any[]) => { mock: { restore: () => void } } } }): {
+  writes: string[];
+  restore: () => void;
+} {
+  const writes: string[] = [];
+  const orig = process.stdout.write.bind(process.stdout);
+  const mocked = t.mock.method(process.stdout, 'write', (chunk: unknown, ...rest: unknown[]) => {
+    const s = String(chunk);
+    if (isRunnerOutput(s)) return (orig as (...a: unknown[]) => boolean)(chunk, ...rest);
+    writes.push(s);
+    return true;
+  });
+  return { writes, restore: () => mocked.mock.restore() };
+}
+
 describe('sink.captions', () => {
   test('valida params: mode/showParcials/outputFile inválidos', () => {
     assert.ok(sinkCaptions.validateParams!({ mode: 'bad' }).some((e) => e.path === 'params.mode'));
@@ -77,28 +99,34 @@ describe('sink.captions', () => {
   });
 
   test('stdout: parcial escreve \\r+ANSI erase, final escreve linha nova e conta métrica', async (t) => {
-    const writes: string[] = [];
-    t.mock.method(process.stdout, 'write', (chunk: unknown) => { writes.push(String(chunk)); return true; });
+    const cap = captureStdout(t);
     const ctx = makeCtx({ mode: 'stdout', showParcials: true });
     const node = sinkCaptions.create(ctx) as NodeRuntime;
-    await node.start();
-    await node.onInput('in', { seq: 1, ts: 1, payload: { text: 'ola', final: false } } as any);
-    await node.onInput('in', { seq: 2, ts: 2, payload: { text: 'ola mundo', final: true } } as any);
+    try {
+      await node.start();
+      await node.onInput('in', { seq: 1, ts: 1, payload: { text: 'ola', final: false } } as any);
+      await node.onInput('in', { seq: 2, ts: 2, payload: { text: 'ola mundo', final: true } } as any);
+    } finally {
+      cap.restore();
+    }
     await node.stop('done');
-    assert.ok(writes.some((w) => w.startsWith('\r') && w.includes('ola') && w.includes('\u001B[K') && !w.endsWith('\n')));
-    assert.ok(writes.some((w) => w.includes('ola mundo') && w.endsWith('\n')));
+    assert.ok(cap.writes.some((w) => w.startsWith('\r') && w.includes('ola') && w.includes('\u001B[K') && !w.endsWith('\n')));
+    assert.ok(cap.writes.some((w) => w.includes('ola mundo') && w.endsWith('\n')));
     assert.equal(ctx._counters['sink.captions.messages'], 2);
   });
 
   test('stdout: parcial longo (>120 chars) é truncado com reticências', async (t) => {
-    const writes: string[] = [];
-    t.mock.method(process.stdout, 'write', (chunk: unknown) => { writes.push(String(chunk)); return true; });
+    const cap = captureStdout(t);
     const ctx = makeCtx({ mode: 'stdout', showParcials: true });
     const node = sinkCaptions.create(ctx) as NodeRuntime;
-    await node.start();
-    await node.onInput('in', { seq: 1, ts: 1, payload: { text: 'x'.repeat(150), final: false } } as any);
+    try {
+      await node.start();
+      await node.onInput('in', { seq: 1, ts: 1, payload: { text: 'x'.repeat(150), final: false } } as any);
+    } finally {
+      cap.restore();
+    }
     await node.stop('done');
-    const parcial = writes.find((w) => w.includes('…'));
+    const parcial = cap.writes.find((w) => w.includes('…'));
     assert.ok(parcial, 'deve truncar parcial longo');
     assert.ok(parcial!.includes('\u001B[K'));
     const visible = parcial!.replace('\r', '').replace('\u001B[K', '');
@@ -106,35 +134,40 @@ describe('sink.captions', () => {
   });
 
   test('stdout: showParcials=false ignora parciais mas escreve final', async (t) => {
-    const writes: string[] = [];
-    t.mock.method(process.stdout, 'write', (chunk: unknown) => { writes.push(String(chunk)); return true; });
+    const cap = captureStdout(t);
     const ctx = makeCtx({ mode: 'stdout', showParcials: false });
     const node = sinkCaptions.create(ctx) as NodeRuntime;
-    await node.start();
-    await node.onInput('in', { seq: 1, ts: 1, payload: { text: 'parcial', final: false } } as any);
-    await node.onInput('in', { seq: 2, ts: 2, payload: { text: 'final', final: true } } as any);
+    try {
+      await node.start();
+      await node.onInput('in', { seq: 1, ts: 1, payload: { text: 'parcial', final: false } } as any);
+      await node.onInput('in', { seq: 2, ts: 2, payload: { text: 'final', final: true } } as any);
+    } finally {
+      cap.restore();
+    }
     await node.stop('done');
-    assert.ok(!writes.some((w) => w.includes('parcial')));
-    assert.ok(writes.some((w) => w.includes('final') && w.endsWith('\n')));
+    assert.ok(!cap.writes.some((w) => w.includes('parcial')));
+    assert.ok(cap.writes.some((w) => w.includes('final') && w.endsWith('\n')));
   });
 
   test('stdout: ignora control, payload vazio e payload sem texto', async (t) => {
-    const writes: string[] = [];
-    t.mock.method(process.stdout, 'write', (chunk: unknown) => { writes.push(String(chunk)); return true; });
+    const cap = captureStdout(t);
     const ctx = makeCtx({ mode: 'stdout' });
     const node = sinkCaptions.create(ctx) as NodeRuntime;
-    await node.start();
-    await node.onInput('in', { seq: 1, ts: 1, control: true, payload: { kind: 'interrupt' } } as any);
-    await node.onInput('in', { seq: 2, ts: 2, payload: { text: '', final: true } } as any);
-    await node.onInput('in', { seq: 3, ts: 3, payload: { nope: true } } as any);
+    try {
+      await node.start();
+      await node.onInput('in', { seq: 1, ts: 1, control: true, payload: { kind: 'interrupt' } } as any);
+      await node.onInput('in', { seq: 2, ts: 2, payload: { text: '', final: true } } as any);
+      await node.onInput('in', { seq: 3, ts: 3, payload: { nope: true } } as any);
+    } finally {
+      cap.restore();
+    }
     await node.stop('done');
-    assert.equal(writes.length, 0);
+    assert.equal(cap.writes.length, 0);
     assert.equal(ctx._counters['sink.captions.messages'] ?? 0, 0);
   });
 
   test('callback: chama __onCaption com trace, não escreve stdout, salva final em outputFile', async (t) => {
-    const writes: string[] = [];
-    t.mock.method(process.stdout, 'write', (chunk: unknown) => { writes.push(String(chunk)); return true; });
+    const cap = captureStdout(t);
     const dir = mkdtempSync(join(tmpdir(), 'falador-cap-'));
     const outFile = join(dir, 'out.txt');
     const calls: Array<{ text: string; final: boolean; trace?: unknown }> = [];
@@ -142,11 +175,15 @@ describe('sink.captions', () => {
       __onCaption: (c: { text: string; final: boolean; trace?: unknown }) => calls.push(c),
     });
     const node = sinkCaptions.create(ctx) as NodeRuntime;
-    await node.start();
-    await node.onInput('in', { seq: 1, ts: 1, payload: { text: 'oi', final: false }, meta: { trace: { turnId: 't1' } } } as any);
-    await node.onInput('in', { seq: 2, ts: 2, payload: { text: 'oi final', final: true }, meta: { trace: { turnId: 't1' } } } as any);
+    try {
+      await node.start();
+      await node.onInput('in', { seq: 1, ts: 1, payload: { text: 'oi', final: false }, meta: { trace: { turnId: 't1' } } } as any);
+      await node.onInput('in', { seq: 2, ts: 2, payload: { text: 'oi final', final: true }, meta: { trace: { turnId: 't1' } } } as any);
+    } finally {
+      cap.restore();
+    }
     await node.stop('done');
-    assert.equal(writes.length, 0);
+    assert.equal(cap.writes.length, 0);
     assert.deepEqual(calls[0], { text: 'oi', final: false, trace: { turnId: 't1' } });
     assert.equal(calls[1].final, true);
     const content = readFileSync(outFile, 'utf-8');
@@ -155,14 +192,18 @@ describe('sink.captions', () => {
   });
 
   test('outputFile em modo stdout grava apenas finais', async (t) => {
-    t.mock.method(process.stdout, 'write', () => true);
+    const cap = captureStdout(t);
     const dir = mkdtempSync(join(tmpdir(), 'falador-cap-'));
     const outFile = join(dir, 'caps.txt');
     const ctx = makeCtx({ mode: 'stdout', outputFile: outFile });
     const node = sinkCaptions.create(ctx) as NodeRuntime;
-    await node.start();
-    await node.onInput('in', { seq: 1, ts: 1, payload: { text: 'parcial', final: false } } as any);
-    await node.onInput('in', { seq: 2, ts: 2, payload: { text: 'fim', final: true } } as any);
+    try {
+      await node.start();
+      await node.onInput('in', { seq: 1, ts: 1, payload: { text: 'parcial', final: false } } as any);
+      await node.onInput('in', { seq: 2, ts: 2, payload: { text: 'fim', final: true } } as any);
+    } finally {
+      cap.restore();
+    }
     await node.stop('done');
     assert.equal(readFileSync(outFile, 'utf-8'), 'fim\n');
     rmSync(dir, { recursive: true, force: true });

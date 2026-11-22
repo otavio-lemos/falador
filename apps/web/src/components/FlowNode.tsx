@@ -26,6 +26,7 @@ export const FlowNode = memo(({ data, selected }: NodeProps<FNode>) => {
     : undefined;
   const latency = ttftTimer ?? data.metrics?.procMsP50;
   const maxPorts = Math.max(data.inputs.length, data.outputs.length);
+  const isStreaming = Boolean(data.running && data.type === 'capture.ffmpeg' && data.params?.backend !== 'chat');
 
   return (
     <div
@@ -40,9 +41,9 @@ export const FlowNode = memo(({ data, selected }: NodeProps<FNode>) => {
       <div className="fnode-body">
         <div className="fnode-sub">{data.subtitle}</div>
         <div className="fnode-type-id">{data.type}</div>
-        {(data.running && data.type.startsWith('capture') || latency != null || data.metrics) && (
+        {(isStreaming || latency != null || data.metrics) && (
           <div className="fnode-meta">
-            {data.running && data.type.startsWith('capture') && (
+            {isStreaming && (
               <Tag type="green" size="sm">Streaming</Tag>
             )}
             {latency != null && <span className="fnode-latency">{Math.round(latency)}ms</span>}

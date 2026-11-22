@@ -12,7 +12,7 @@ export interface Category {
 }
 
 export const CATEGORIES: Category[] = [
-  { id: 'captura', label: 'Entrada / Captura', emoji: '🎙️', accent: '#22d3ee', nodes: ['capture.ffmpeg', 'input.chat'] },
+  { id: 'input', label: 'Input', emoji: '🎙️', accent: '#22d3ee', nodes: ['capture.ffmpeg'] },
   { id: 'transcricao', label: 'Transcrição', emoji: '💡', accent: '#14b8a6', nodes: ['asr.realtime', 'asr.lfm3'] },
   { id: 'pensar', label: 'Pensar', emoji: '🧠', accent: '#8b5cf6', nodes: ['llm.omlx', 'translate.llm', 'agent.tools'] },
   { id: 'decidir', label: 'Decidir', emoji: '🔀', accent: '#f59e0b', nodes: ['turn.detector', 'decision.llm', 'human.approve'] },
@@ -29,7 +29,7 @@ export interface NodeMeta {
 }
 
 export const NODE_META: Record<string, NodeMeta> = {
-  'capture.ffmpeg': { title: 'Captura da call', subtitle: 'Zoom · Meet · Teams · mic', desc: 'Ouve o áudio do app que você escolher' },
+  'capture.ffmpeg': { title: 'Input', subtitle: 'Aplicações · Microfone · Chat', desc: 'Única entrada: Aplicações, Microfone ou Chat' },
   'input.chat':    { title: 'Chat / Prompt de texto', subtitle: 'Entrada escrita interativa', desc: 'Campo de prompt para escrever e ligar em nós de texto' },
   'asr.realtime':  { title: 'Transcrição em tempo real', subtitle: 'Voxtral streaming', desc: 'Converte fala em texto enquanto o outro fala' },
   'asr.lfm3':      { title: 'Transcrição + tradução direta', subtitle: 'LFM3-Audio', desc: 'Ouve e já traduz sem etapa extra de texto' },
@@ -55,6 +55,7 @@ export const NODE_META: Record<string, NodeMeta> = {
 };
 
 export function categoryOf(type: string): Category {
+  if (type === 'input.chat') return CATEGORIES[0];
   return CATEGORIES.find((c) => c.nodes.includes(type)) ?? CATEGORIES[CATEGORIES.length - 1];
 }
 export function accentOf(type: string): string {
@@ -62,7 +63,7 @@ export function accentOf(type: string): string {
 }
 
 export const SHORT_NAMES: Record<string, string> = {
-  'capture.ffmpeg': 'Captura',
+  'capture.ffmpeg': 'Input',
   'input.chat': 'Chat',
   'asr.realtime': 'Transcrição',
   'asr.lfm3': 'ASR+Trad.',
@@ -116,9 +117,10 @@ export interface ParamDoc {
 }
 
 const BACKENDS = [
-  { val: 'sck', label: 'sck — ScreenCaptureKit por app (recomendado)' },
-  { val: 'sounddevice', label: 'sounddevice — PortAudio por device' },
-  { val: 'ffmpeg', label: 'ffmpeg — avfoundation (perde samples no ffmpeg 9)' },
+  { val: 'sck', label: 'Aplicações — ScreenCaptureKit (automático)' },
+  { val: 'sounddevice', label: 'Microfone — padrão do sistema (PortAudio)' },
+  { val: 'chat', label: 'Chat — entrada de texto interativa' },
+  { val: 'ffmpeg', label: 'ffmpeg — avfoundation (legado)' },
 ];
 export const LANGS = [
   { val: 'English', label: 'English (inglês) ★' },
@@ -130,8 +132,10 @@ export const LANGS = [
 
 export const PARAM_HELP: Record<string, Record<string, ParamDoc>> = {
   'capture.ffmpeg': {
-    backend: { help: 'como capturar o áudio', def: 'sck', control: 'dropdown', options: BACKENDS },
+    backend: { help: 'modo de entrada: Aplicações (sck), Microfone (sounddevice) ou Chat (chat)', def: 'sck', control: 'dropdown', options: BACKENDS },
     input: { help: 'sck: nome do app da call (Teams/zoom.us/Chrome); sounddevice: device (BlackHole/Microfone); ffmpeg: índice :N', def: ':0' },
+    placeholder: { help: 'texto exibido no campo de chat quando em modo Chat', def: 'Digite sua mensagem ou comando…', control: 'text' },
+    initialMessage: { help: 'mensagem inicial opcional enviada automaticamente no modo Chat', def: '', control: 'textarea' },
     sampleRate: { help: 'sample rate de saída (Hz)', def: '16000', control: 'slider', min: 8000, max: 48000, step: 8000, unit: 'Hz' },
     chunkMs: { help: 'tamanho de cada frame (ms)', def: '80', control: 'slider', min: 20, max: 500, step: 20, unit: 'ms' },
     ffmpegPath: { help: 'binário ffmpeg (backend ffmpeg)', def: '/opt/homebrew/bin/ffmpeg' },

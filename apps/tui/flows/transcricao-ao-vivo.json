@@ -1,15 +1,16 @@
 {
   "version": 1,
   "stopWhenSourcesDone": false,
-  "description": "Transcrição pura em tempo real da call (sem tradução ou LLM): máxima velocidade e menor latência para acompanhar reuniões, palestras ou entrevistas no idioma original.",
+  "description": "Transcrição pura em tempo real (sem tradução ou LLM) com nó único Input (Aplicações via SCK, Microfone ou Chat): máxima velocidade e menor latência para acompanhar reuniões, palestras ou entrevistas no idioma original.",
   "nodes": [
     {
-      "id": "captura",
+      "id": "input",
       "type": "capture.ffmpeg",
       "params": {
         "input": "",
         "chunkMs": 80,
-        "backend": "sck"
+        "backend": "sck",
+        "placeholder": "Digite uma mensagem para exibir na transcrição (Enter para enviar)..."
       }
     },
     {
@@ -32,11 +33,17 @@
   ],
   "edges": [
     {
-      "from": "captura.out",
+      "from": "input.out",
       "to": "asr.in",
       "capacity": 32,
       "overflow": "drop_oldest",
       "ttlMs": 1500
+    },
+    {
+      "from": "input.out_text",
+      "to": "legenda.phrase",
+      "capacity": 16,
+      "overflow": "drop_oldest"
     },
     {
       "from": "asr.out",

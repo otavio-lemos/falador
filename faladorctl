@@ -9,13 +9,26 @@ mkdir -p logs
 REPO_DIR="$(pwd)"
 SNAP_LFM3_AUDIO="$HOME/.cache/huggingface/hub/models--LiquidAI--LFM3-Audio-2B-MLX-8bit/snapshots/000ea4f93adbfdabd4b24295b5e838f6a1f0ffa8"
 SNAP_VOXTRAL="$HOME/.cache/huggingface/hub/models--mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit/snapshots/fdebf7b2af834a1db4b8a3c99ab7480b333adf9e"
-VENV_PYTHON="$REPO_DIR/.venv/bin/python"
+VENV_DIR="$REPO_DIR/.venv"
+[ -x "$VENV_DIR/bin/python" ] || VENV_DIR="$HOME/ml/falador/.venv"
+VENV_PYTHON="$VENV_DIR/bin/python"
+
+# Credenciais locais (fora do git). FALADOR_OMLX_API_KEY é exigida pelo omlx >= 0.8
+# para binds não-loopback e é lida por todos os nós que falam com :8080.
+if [ -f "$REPO_DIR/.env.falador" ]; then
+  # shellcheck disable=SC1091
+  . "$REPO_DIR/.env.falador"
+elif [ -f "$HOME/ml/falador/.env.falador" ]; then
+  # shellcheck disable=SC1091
+  . "$HOME/ml/falador/.env.falador"
+fi
+export FALADOR_OMLX_API_KEY="${FALADOR_OMLX_API_KEY:-}"
 
 # Lista completa: todos os serviços residentes do projeto (run.md §1).
 # Formato: nome|porta|health_path|comando|timeout_s
 SERVICES=(
-  "omlx|8080|/v1/models|omlx serve --model-dir \"$HOME/.omlx/models\" --host 127.0.0.1 --port 8080|30"
-  "asr|8090|/v1/models|\"$VENV_PYTHON\" \"$REPO_DIR/.venv/lib/python3.12/site-packages/mlx_audio/server.py\" --host 127.0.0.1 --port 8090 --realtime-model \"$SNAP_VOXTRAL\"|60"
+  "omlx|8080|/v1/models|omlx serve --model-dir \"$HOME/.omlx/models\" --host 127.0.0.1 --port 8080 --api-key \"$FALADOR_OMLX_API_KEY\"|30"
+  "asr|8090|/v1/models|\"$VENV_PYTHON\" \"$VENV_DIR/lib/python3.12/site-packages/mlx_audio/server.py\" --host 127.0.0.1 --port 8090 --realtime-model \"$SNAP_VOXTRAL\"|60"
   "tts|8091|/health|\"$VENV_PYTHON\" services/sts-sidecar.py --model \"$SNAP_LFM3_AUDIO\" --port 8091|30"
   "web|8787|/api/catalog|node apps/web-server.mjs|15"
 )
@@ -26,8 +39,10 @@ pid_at_port() { pids_at_port "$1" | head -1; }
 
 wait_up() { # nome porta health_path tries
   local port="$2" health="$3" tries="$4"
+  local auth=()
+  [ "$port" = "8080" ] && [ -n "$FALADOR_OMLX_API_KEY" ] && auth=(-H "Authorization: Bearer $FALADOR_OMLX_API_KEY")
   for _ in $(seq 1 "$tries"); do
-    curl -fsS -m 1 "http://127.0.0.1:$port$health" -o /dev/null 2>/dev/null && return 0
+    curl -fsS -m 1 "${auth[@]}" "http://127.0.0.1:$port$health" -o /dev/null 2>/dev/null && return 0
     sleep 1
   done
   return 1

@@ -1,23 +1,16 @@
 {
   "version": 1,
   "stopWhenSourcesDone": false,
-  "description": "Copilot para entrevista/suporte (voz ou texto, sem eco): captura a call via SCK ou o microfone do usuário, transcreve em tempo real; com o botão de microfone desligado usa input.chat no lugar da captura. Sugere resposta curta em 1ª pessoa no mesmo idioma da entrada (sem traduzir) e roteia via d1 entre exibição direta (auto) ou aprovação manual editável (humano).",
+  "description": "Copilot para entrevista/suporte (sem eco): nó único Input (Aplicações via SCK, Microfone via PortAudio ou Chat de texto) alimenta ASR + detector de turno (d1-2B) para voz ou vai direto ao assistente no modo Chat. Sugere resposta curta em 1ª pessoa no mesmo idioma da entrada (sem traduzir) e roteia via d1 entre exibição direta (auto) ou aprovação manual editável (humano).",
   "nodes": [
     {
-      "id": "captura",
+      "id": "input",
       "type": "capture.ffmpeg",
       "params": {
         "input": "",
         "chunkMs": 80,
-        "backend": "sck"
-      }
-    },
-    {
-      "id": "chat",
-      "type": "input.chat",
-      "params": {
-        "placeholder": "Digite a pergunta ou pedido (Enter para enviar)...",
-        "initialMessage": ""
+        "backend": "sck",
+        "placeholder": "Digite a pergunta ou pedido (Enter para enviar)..."
       }
     },
     {
@@ -101,14 +94,14 @@
   ],
   "edges": [
     {
-      "from": "captura.out",
+      "from": "input.out",
       "to": "asr.in",
       "capacity": 32,
       "overflow": "drop_oldest",
       "ttlMs": 1500
     },
     {
-      "from": "chat.out",
+      "from": "input.out_text",
       "to": "assistente.in",
       "capacity": 16,
       "overflow": "drop_oldest"

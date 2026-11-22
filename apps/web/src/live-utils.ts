@@ -119,18 +119,21 @@ export function deriveStages(flow: Flow): Stage[] {
     const p = n.params as Record<string, unknown>;
     if (n.type === 'capture.ffmpeg') {
       const backend = String(p.backend ?? 'sck');
+      const mode: 'apps' | 'mic' | 'chat' =
+        backend === 'chat' || p.muted === true
+          ? 'chat'
+          : backend === 'sounddevice'
+            ? 'mic'
+            : 'apps';
       out.push({
-        key: `captura-${n.id}`,
-        label: 'Captura',
+        key: `input-${n.id}`,
+        label: 'Input',
         accent: accentOf(n.type),
         nodeId: n.id,
         nodeType: n.type,
         param: 'backend',
         kind: 'app',
-        value: backend === 'sounddevice' ? 'mic' : 'apps',
-        secondaryParam: 'input',
-        secondaryValue: String(p.input ?? ''),
-        secondaryLabel: 'Origem',
+        value: mode,
       });
     } else if (n.type === 'asr.realtime') {
       out.push({

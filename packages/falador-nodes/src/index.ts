@@ -74,7 +74,7 @@ export {
   type ExtractedPageData,
 } from './tool-crawler.ts';
 export { inheritTrace, type TraceMeta } from './trace.ts';
-export { postJsonBytes, postSse, payloadText } from './sse.ts';
+export { postJsonBytes, postSse, payloadText, omlxAuthHeaders } from './sse.ts';
 
 /** Registra todos os nós reais no registry dado. */
 export function registerFaladorNodes(registry: Registry): Registry {
