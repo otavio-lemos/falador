@@ -1,7 +1,7 @@
 {
   "version": 1,
   "stopWhenSourcesDone": false,
-  "description": "Copilot para entrevista técnica em inglês (só texto, sem eco): captura a call via SCK, transcreve a pergunta em tempo real, gera sugestão de resposta em 1ª pessoa e roteia automaticamente via d1 entre exibição direta (auto) ou revisão manual editável (humano).",
+  "description": "Copilot para entrevista técnica (só texto, sem eco): captura a call via SCK, transcreve em tempo real, sugere resposta curta em 1ª pessoa no mesmo idioma da entrada (sem traduzir) e roteia via d1 entre exibição direta (auto) ou aprovação manual editável (humano).",
   "nodes": [
     {
       "id": "captura",
@@ -35,10 +35,8 @@
       "params": {
         "enableThinking": false,
         "historyMax": 4,
-        "system": "Você está numa entrevista técnica em INGLÊS. O usuário recebeu uma pergunta em inglês e vai responder com as próprias ideias, FALANDO EM INGLÊS. Sugira a RESPOSTA em INGLÊS (não traduza a pergunta), primeira pessoa, objetiva, 2-4 frases, sem comentários.",
-        "template": [
-          "Suggest a short first-person ANSWER in ENGLISH to the interview question below. Do NOT translate the question. Output only the answer."
-        ]
+        "temperature": 0.2,
+        "system": "Você é um copilot de entrevista técnica. Com base na pergunta ou fala recebida, sugira uma resposta curta, objetiva e em 1ª pessoa NO MESMO IDIOMA da entrada recebida (nunca traduza para outro idioma). Responda em 2 a 3 frases diretas, sem comentários extras e sem repetir frases."
       }
     },
     {
@@ -92,12 +90,12 @@
     {
       "from": "asr.out",
       "to": "transcricao.in",
-      "capacity": 16,
+      "capacity": 64,
       "overflow": "drop_oldest"
     },
     {
-      "from": "asr.out",
-      "to": "assistente.parcs",
+      "from": "asr.final",
+      "to": "assistente.in",
       "capacity": 16,
       "overflow": "drop_oldest"
     },

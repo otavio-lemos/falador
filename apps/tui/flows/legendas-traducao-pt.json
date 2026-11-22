@@ -23,14 +23,11 @@
     },
     {
       "id": "tradutor",
-      "type": "llm.omlx",
+      "type": "translate.llm",
       "params": {
-        "enableThinking": false,
-        "historyMax": 0,
+        "model": "LiquidAI--LFM3-1.7B-MLX-4bit",
         "targetLanguage": "Portuguese",
-        "template": [
-          "Traduza para português do Brasil, natural e falado. Responda APENAS com a tradução."
-        ]
+        "enableThinking": false
       }
     },
     {
