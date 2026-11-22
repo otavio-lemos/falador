@@ -17,26 +17,29 @@ Fontes:
 
 ## Decisão
 
-Um único nó `capture.ffmpeg` com **duas origens mutuamente exclusivas**:
+Unificar a entrada de todos os workflows em **um único nó `input` (`type: "capture.ffmpeg"`)** com **três modos mutuamente exclusivos** selecionáveis via `backend`:
 
-- `apps` = SCK (captura por app, `capturesAudio`).
-- `mic` = PortAudio/sounddevice (microfone real).
+- `'sck'` = Aplicações via ScreenCaptureKit (`capturesAudio`), emite áudio na porta `out` (`pcm16k`).
+- `'sounddevice'` = Microfone via PortAudio/sounddevice, emite áudio na porta `out` (`pcm16k`).
+- `'chat'` = Chat de texto no mesmo nó `input` (usa `placeholder`), emite texto na porta `out_text` (`phrase`) sem iniciar captura de áudio.
 
-Mais `input.chat` como **alternativa de texto** quando o botão de voz for desligado. **Não criar novo tipo de nó.**
+**Não manter `input.chat` separado nos fluxos nem criar novo tipo de nó.** Na UI, a barra de etapas não exibe mais lista de apps/mics; a escolha entre Aplicações, Microfone e Chat ocorre no próprio nó único `input`.
 
-### Contrato de parâmetros
+### Contrato de parâmetros e saídas
 
-| Param | Tipo | Valores | Semântica |
+| Campo | Tipo | Valores | Semântica |
 |---|---|---|---|
-| `backend` | string | `'sck'` \| `'sounddevice'` | Implementação de captura (SCK vs PortAudio). |
-| `input` | string | nome do app (SCK) \| nome do device (PortAudio) | Alvo da captura. |
-| `muted` | boolean | true/false | Silencia a captura (comportamento atual; mantido por compat). |
-| `enabled` | boolean | true/false | Liga/desliga a captura como source. |
+| `backend` | string | `'sck'` \| `'sounddevice'` \| `'chat'` \| `'ffmpeg'` (legado) | Modo de entrada: Aplicações (SCK), Microfone (PortAudio) ou Chat de texto. |
+| `input` | string | nome do app (SCK) \| nome do device (PortAudio) \| `""` | Alvo da captura de áudio quando em modo `'sck'` ou `'sounddevice'`. |
+| `placeholder` | string | texto de dica | Placeholder exibido no modo `'chat'` (substitui o antigo `input.chat`). |
+| `muted` | boolean | true/false | Silencia a captura (mantido por compatibilidade). |
+| `enabled` | boolean | true/false | Liga/desliga o nó como source. |
 
-- `capture.ffmpeg` é **sourceOnly** (Spec §types): emite `audio_chunk`, não consome.
-- Quem é sourceOnly: apenas `capture.ffmpeg` (e `input.chat` como fonte de texto).
-- O que muda no grafo quando voz/chat alternam: quando `enabled=false` no capture, o edge `capture.out → asr.in` deixa de produzir; quando `input.chat` está habilitado, ele assume como fonte de texto (phrase/tokens_parcial) para o mesmo downstream. A alternância é feita por `enabled`, não por remoção de edge.
-- Por que `enabled` é melhor que `muted` para esconder captura: `muted` mantém o processo filho rodando e a fila alimentada (silêncio), consumindo CPU e podendo emitir chunks vazios; `enabled=false` não inicia (ou para) a captura e não emite nada, preservando o grafo e os bindings.
+- `capture.ffmpeg` é **sourceOnly** (Spec §types) e expõe duas saídas:
+  - `out` (`pcm16k`): chunks PCM 16 kHz mono quando `backend` é `'sck'` ou `'sounddevice'` (conectado a `asr.in`).
+  - `out_text` (`phrase`): mensagem enviada no modo `'chat'` (conectada diretamente ao nó consumidor de texto, ex.: `assistente.in`, `tradutor.in`, `agente.in`, `planejador.in` ou `legenda.phrase`).
+- Quando o usuário alterna entre voz (`'sck'` / `'sounddevice'`) e texto (`'chat'`), o mesmo nó `input` permanece no grafo, preservando layout, ID e conexões sem nó `input.chat` duplicado.
+- Por que `enabled` é melhor que `muted` para desligar captura: `muted` mantém o processo filho rodando e a fila alimentada (silêncio), consumindo CPU e podendo emitir chunks vazios; `enabled=false` (ou `backend: 'chat'`) não inicia processo de captura de áudio.
 
 ### Regras de transição
 
@@ -66,12 +69,27 @@ Mais `input.chat` como **alternativa de texto** quando o botão de voz for desli
 
 - `capture-sidecar.py --list` + `GET /api/mics` (cache 5 s, `no-store`).
 - `capture.ffmpeg`: `resolveSounddeviceInput()` — `input` vazio resolve para `Microfone`; app/device explícito preservado.
-- UI: `captureSource` persistido; dropdown Captura com `Aplicações`/`Microfone`; device picker via `/api/mics`; botão do microfone alterna voz↔chat quando o flow tem `input.chat`, e origem apps↔mic quando não tem.
-- `assistente-entrevista.json` ganhou `input.chat` (`chat.out → assistente.in`) para o modo texto.
-- Verificado: 211 testes (210 pass, 1 skip), `tsc`/build verdes, 7/7 flows válidos, voz/chat válidos no `validateFlow`, `/api/mics` ao vivo com 2 devices, browser real com troca Aplicações→Microfone e persistência.
+- Verificação inicial pré-unificação: 211 testes (210 pass, 1 skip), `tsc`/build verdes, `/api/mics` ao vivo com 2 devices, browser real com troca Aplicações→Microfone e persistência.
+
+### Unificação para nó único Input (2026-11-22)
+
+- Todos os **7/7 workflows** em `apps/tui/flows/*.json` passam a usar um único nó de entrada (`id: "input"`, `type: "capture.ffmpeg"`), removendo `input.chat` e duplicatas de entrada.
+- A UI deixa de exibir lista de apps/mics na barra de etapas; a seleção entre Aplicações (`sck`), Microfone (`sounddevice`) e Chat (`chat`) pertence ao próprio nó único `input`.
+- Os fluxos originalmente chat-only (`agente-suporte-ops.json`, `agente-workflows.json`, `revisao-servidor-ops.json`) receberam o nó `asr` (`asr.realtime`, Voxtral) conectado a `input.out`, mantendo `backend: "chat"` por padrão com `input.out_text` ligado ao consumidor principal.
+
+| Workflow | Nós | Conexões | `backend` padrão |
+|---|---|---|---|
+| `agente-suporte-ops.json` | 6 | 6 | `chat` |
+| `agente-workflows.json` | 6 | 6 | `chat` |
+| `assistente-entrevista.json` | 9 | 9 | `sck` |
+| `legendas-traducao-pt.json` | 4 | 4 | `sck` |
+| `revisao-servidor-ops.json` | 12 | 12 | `chat` |
+| `tradutor-voz-en.json` | 6 | 6 | `sck` |
+| `transcricao-ao-vivo.json` | 3 | 3 | `sck` |
 
 ## NÃO VERIFICADO
 
 - Integração de `captureMicrophone` (SCK mic) no capture-sck.swift.
 - Teste ao vivo do modo mic com fala real em call (apenas N7 mic real com sinal).
 - Comportamento em macOS < 15 para SCK mic (não aplicável, não usado).
+- Neste worktree foi verificada apenas a integridade estrutural/JSON dos 7 workflows unificados; a validação `validateFlow` com `out_text`, `placeholder` e `backend: 'chat'` e o E2E ao vivo com mic/chat/UI dependem da integração com as alterações de engine e UI.

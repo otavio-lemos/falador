@@ -943,6 +943,26 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   word-break: break-word;
 }
 
+// ADR-010 — modal de execuções (terminal por execução, Carbon Tabs)
+.logs-terminal-wrap { display: flex; flex-direction: column; gap: $spacing-03; min-height: 0; }
+.exec-terminal {
+  flex: 1;
+  min-height: 240px;
+  max-height: 52vh;
+  margin: 0;
+  overflow: auto;
+  background: #0b0e13;
+  color: #c6d0dc;
+  border-radius: 0;
+  padding: $spacing-03;
+  font-family: 'IBM Plex Mono', 'Menlo', monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.exec-terminal-empty { color: $txt-2; font-style: italic; }
+
 // ADR-006 / ADR-007 — latência breakdown, card de comando, export modal, upload com tags
 .live2-metrics-bar { display: flex; align-items: center; gap: $spacing-03; }
 .latency-trigger { background: none; border: none; padding: 0; cursor: pointer; }

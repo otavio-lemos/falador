@@ -35,6 +35,14 @@ const ALLOWED_DOC_EXTS = new Set(['.md', '.markdown', '.txt', '.pdf', '.yaml', '
 function getOmlxUrl() {
   return process.env.FALADOR_OMLX_URL || 'http://127.0.0.1:8080';
 }
+// omlx >= 0.8 exige Bearer. Injeta a key (já no ambiente do host) em TODA
+// chamada ao :8080 — sem isso o health/model probe gera 401 "API key required".
+function omlxGet(url, opts, cb) {
+  let sameHost = false;
+  try { sameHost = new URL(url).host === new URL(getOmlxUrl()).host; } catch { /* URL relativa */ }
+  const key = sameHost ? process.env.FALADOR_OMLX_API_KEY?.trim() : '';
+  return httpGet(url, key ? { ...opts, headers: { ...(opts?.headers), authorization: `Bearer ${key}` } } : opts, cb);
+}
 function getAsrUrl() {
   return process.env.FALADOR_ASR_URL || 'http://127.0.0.1:8090';
 }
@@ -45,7 +53,7 @@ const TEXT_MODEL = 'LFM3-1.7B-MLX-4bit';
 
 function probeHttpOk(url, timeoutMs = 1200) {
   return new Promise((resolve) => {
-    const req = httpGet(url, { timeout: timeoutMs }, (r) => {
+    const req = omlxGet(url, { timeout: timeoutMs }, (r) => {
       r.resume();
       resolve(typeof r.statusCode === 'number' && r.statusCode >= 200 && r.statusCode < 300);
     });
@@ -143,11 +151,16 @@ function omlxChat(messages, maxTokens = 256) {
       stream: false,
       chat_template_kwargs: { enable_thinking: false },
     });
+    const key = process.env.FALADOR_OMLX_API_KEY?.trim();
     const req = httpRequest(
       `${getOmlxUrl()}/v1/chat/completions`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          ...(key ? { Authorization: `Bearer ${key}` } : {}),
+        },
         timeout: 10000,
       },
       (r) => {
@@ -634,7 +647,7 @@ async function handleApi(req, res, pathname) {
     // REUTILIZA serviços que existem: /v1/models do omlx (:8080) + cache HF local (nomes de dir).
     const omlx = await new Promise((resolve) => {
       let out = '';
-      const h = httpGet(`${getOmlxUrl()}/v1/models`, { timeout: 2500 }, (r) => {
+      const h = omlxGet(`${getOmlxUrl()}/v1/models`, { timeout: 2500 }, (r) => {
         r.on('data', (d) => (out += d));
         r.on('end', () => { try { resolve(JSON.parse(out).data.map((m) => m.id)); } catch { resolve([]); } });
       });

@@ -1,15 +1,16 @@
 {
   "version": 1,
   "stopWhenSourcesDone": false,
-  "description": "Tradução simultânea EN → PT em tempo real (~1,1 s): captura o áudio da call (Teams, Zoom ou Meet) via SCK, transcreve com Voxtral streaming e traduz para português do Brasil natural em legendas ao vivo.",
+  "description": "Tradução simultânea para português em tempo real (~1,1 s): nó único Input (Aplicações via SCK, Microfone ou Chat), transcreve áudio com Voxtral streaming e traduz para português do Brasil natural em legendas ao vivo.",
   "nodes": [
     {
-      "id": "captura",
+      "id": "input",
       "type": "capture.ffmpeg",
       "params": {
         "input": "",
         "chunkMs": 80,
-        "backend": "sck"
+        "backend": "sck",
+        "placeholder": "Digite texto para traduzir para português (Enter para enviar)..."
       }
     },
     {
@@ -41,11 +42,17 @@
   ],
   "edges": [
     {
-      "from": "captura.out",
+      "from": "input.out",
       "to": "asr.in",
       "capacity": 32,
       "overflow": "drop_oldest",
       "ttlMs": 1500
+    },
+    {
+      "from": "input.out_text",
+      "to": "tradutor.in",
+      "capacity": 16,
+      "overflow": "drop_oldest"
     },
     {
       "from": "asr.out",

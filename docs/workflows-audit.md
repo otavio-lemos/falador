@@ -40,7 +40,31 @@ Data: 2026-11-22. Escopo: `apps/tui/flows/*.json`, motor `falador-graph`, nós `
 4. **`revisao-servidor-ops.json`** — `input.chat → planejador.in`; nó de captura/ASR/turno removido; roteamento de risco e gates preservados.
 5. **`agente-workflows.json`** — captura e ASR removidos; descrição atualizada para chat-only/ADR-005.
 
+## Unificação para nó único Input (ADR-009, 2026-11-22)
+
+Todos os **7/7 workflows** em `apps/tui/flows/*.json` foram migrados para usar **exatamente 1 único nó de entrada** (`id: "input"`, `type: "capture.ffmpeg"`), removendo `input.chat` e evitando duplicidade de nós de origem.
+
+- **Modos no mesmo nó `input`**: `backend: 'sck' | 'sounddevice' | 'chat'`, suportando Aplicações (SCK), Microfone (PortAudio) e Chat de texto (`placeholder` + saída `input.out_text`), sem lista de apps/mics na barra de etapas da UI.
+- **Fluxos originalmente de voz (`backend: "sck"`)**: `assistente-entrevista.json` (9 nós / 9 edges, removido `chat` e ligado `input.out_text → assistente.in`), `legendas-traducao-pt.json` (4/4), `tradutor-voz-en.json` (6/6) e `transcricao-ao-vivo.json` (3/3).
+- **Fluxos originalmente chat-only (`backend: "chat"`)**: `agente-suporte-ops.json` (6/6), `agente-workflows.json` (6/6) e `revisao-servidor-ops.json` (12/12) ganharam nó `asr` (`asr.realtime`, Voxtral) para permitir alternar para Aplicações ou Microfone diretamente pelo nó `input`, mantendo `backend: "chat"` como padrão.
+
 ## Validação pós-correção
+
+### Contagens após unificação do nó único Input (2026-11-22)
+
+Verificação estrutural JSON nos 7 arquivos em `apps/tui/flows/*.json` (sem `input.chat`, exatamente 1 nó `capture.ffmpeg` com `id: "input"`):
+
+```text
+apps/tui/flows/agente-suporte-ops.json: nodes=6 edges=6 backend=chat
+apps/tui/flows/agente-workflows.json: nodes=6 edges=6 backend=chat
+apps/tui/flows/assistente-entrevista.json: nodes=9 edges=9 backend=sck
+apps/tui/flows/legendas-traducao-pt.json: nodes=4 edges=4 backend=sck
+apps/tui/flows/revisao-servidor-ops.json: nodes=12 edges=12 backend=chat
+apps/tui/flows/tradutor-voz-en.json: nodes=6 edges=6 backend=sck
+apps/tui/flows/transcricao-ao-vivo.json: nodes=3 edges=3 backend=sck
+```
+
+### Contagens históricas (pré-unificação Input)
 
 Script headless com `createRegistry + registerFaladorNodes + validateFlow`, injetando os bindings que o runner cria:
 
@@ -54,12 +78,12 @@ tradutor-voz-en.json        valid=true  nodes=6  edges=5
 transcricao-ao-vivo.json    valid=true  nodes=3  edges=2
 ```
 
-`orphans` reportados pelo script são apenas fontes (`capture`, `chat`, tools) e `dead` apenas sinks — comportamento esperado.
+`orphans` reportados pelo script são apenas fontes (`input`/`capture`, `chat`, tools) e `dead` apenas sinks — comportamento esperado.
 
 ## Não verificado
 
-- Não rodei E2E com modelo/áudio reais nesta auditoria: o omlx estava sendo compilado/reiniciado pelo dono. A validação foi estática + headless.
-- A lista do catálogo na UI deve ser conferida no browser após o próximo build; os arquivos foram renomeados/removidos diretamente em `apps/tui/flows/`.
+- A validação `validateFlow` com os novos params e porta de saída de `capture.ffmpeg` (`backend: "chat"`, `placeholder`, `out_text`) depende da integração com as branches de engine (`packages/falador-nodes`) e UI (`apps/web`). Neste worktree foi verificada a integridade estrutural/JSON e de invariantes dos 7 arquivos.
+- Não rodei E2E com modelo/áudio/microfone/chat reais ou verificação no browser após a migração para nó único Input.
 
 ## Sources
 

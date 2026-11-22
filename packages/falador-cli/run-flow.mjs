@@ -118,7 +118,7 @@ async function main() {
 
   // reset de histórico em runtime para nós llm.omlx e agent.tools (ADR-006 Fase 4 / ADR-008 Fase 5)
   const resetters = new Map(); // nodeId -> () => void
-  // chatbox interativo (input.chat): envia prompts digitados para os nós input.chat
+  // chatbox interativo (input.chat e capture.ffmpeg): envia prompts digitados para os nós
   const chatSenders = new Map(); // nodeId -> (text: string) => Promise<void>
   for (const n of flow.nodes ?? []) {
     if (n.type === 'llm.omlx' || n.type === 'agent.tools') {
@@ -149,10 +149,16 @@ async function main() {
         },
       };
     }
-    if (n.type === 'input.chat' && !(flow.bindings[n.id]?.__registerChatInput)) {
+    if ((n.type === 'input.chat' || n.type === 'capture.ffmpeg') && !(flow.bindings[n.id]?.__registerChatInput)) {
       flow.bindings[n.id] = {
         ...(flow.bindings[n.id] ?? {}),
         __registerChatInput: (fn) => { chatSenders.set(n.id, fn); },
+      };
+    }
+    if (n.type === 'exec.command' && !(flow.bindings[n.id]?.__onExecution)) {
+      flow.bindings[n.id] = {
+        ...(flow.bindings[n.id] ?? {}),
+        __onExecution: (ev) => line({ type: 'execution', ...ev }),
       };
     }
   }

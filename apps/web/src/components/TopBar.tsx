@@ -13,6 +13,7 @@ export interface FlowItem {
 
 interface Props {
   view: 'builder' | 'live';
+  canGoLive?: boolean;
   latencyMs: number | null;
   running: boolean;
   theme: 'g100' | 'white';
@@ -108,7 +109,7 @@ export function TopBar(p: Props) {
               kind={p.view === 'live' ? 'primary' : 'tertiary'}
               size="sm"
               onClick={p.onGoLive}
-              disabled={!p.currentFlow}
+              disabled={!p.currentFlow || p.canGoLive === false}
             >
               Workflow
             </Button>

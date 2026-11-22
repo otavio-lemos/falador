@@ -13,7 +13,12 @@ test('builder loads a real workflow and canvas', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Workflow' })).toBeEnabled();
   // o flow default é carregado do /api/flows com nome real e contagem de nós
   await expect(page.getByRole('heading', { name: 'assistente-entrevista' })).toBeVisible();
-  await expect(page.getByText(/10 nós[\s·]*10 conexões/)).toBeVisible();
+  await expect(page.getByText(/9 nós[\s·]*9 conexões/)).toBeVisible();
+  // paleta unificada Input com capture.ffmpeg único (sem input.chat)
+  const inputCat = page.locator('.pal-cat').filter({ has: page.locator('.pal-cat-head', { hasText: 'Input' }) }).first();
+  await expect(inputCat).toBeVisible();
+  await expect(inputCat.locator('.pal-item-id', { hasText: 'capture.ffmpeg' })).toBeVisible();
+  await expect(page.locator('.palette .pal-item-id', { hasText: 'input.chat' })).toHaveCount(0);
   // nós reais do canvas (rótulo visível é o id curto do nó)
   await expect(page.getByText('capture.ffmpeg').first()).toBeVisible();
   await expect(page.getByText('asr.realtime').first()).toBeVisible();
@@ -58,13 +63,15 @@ test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed 
   await page.route('**/api/flows/agente-suporte-ops', async (route) => {
     const response = await route.fetch();
     const payload = await response.json();
+    if (!payload.flow.nodes.some((n: any) => n.id === 'asr')) {
+      payload.flow.nodes.push({ id: 'asr', type: 'asr.realtime', params: {} });
+      payload.flow.edges.push({ from: 'asr.out', to: 'agente.parcs' });
+    }
     payload.flow.nodes.push(
-      { id: 'asr', type: 'asr.realtime', params: {} },
       { id: 'voz', type: 'tts.sts', params: {} },
       { id: 'alto', type: 'sink.playback', params: {} },
     );
     payload.flow.edges.push(
-      { from: 'asr.out', to: 'agente.parcs' },
       { from: 'agente.out', to: 'voz.in' },
       { from: 'voz.out', to: 'alto.in' },
     );
@@ -77,7 +84,7 @@ test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed 
     { type: 'caption', nodeId: 'asr', kind: 'stt', text: 'fala transcrita ao vivo', final: true },
     { type: 'thought', nodeId: 'agente', thoughtId: 'agente:1:1', text: 'Analisar a intenção antes de responder.', final: true },
     { type: 'agent_step', nodeId: 'agente', step: 1, phase: 'result', tool: 'search_docs', args: { query: 'pedido' }, ok: true, durationMs: 6 },
-    { type: 'caption', nodeId: 'resposta', text: 'Opa, tudo bem? Como posso ajudar?', final: true },
+    { type: 'caption', nodeId: 'diagnostico', text: 'Opa, tudo bem? Como posso ajudar?', final: true },
     { type: 'node_error', nodeId: 'voz', code: 'log_info', message: 'fala: "Opa, tudo bem?" (42 KB)' },
     { type: 'node_error', nodeId: 'alto', code: 'log_info', message: 'playback ok (1,2s)' },
     { type: 'gate', nodeId: 'agente', text: 'Sugestão que precisa de revisão humana.' },
@@ -100,8 +107,10 @@ test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed 
   await expect(page.locator('.live-chat-entry--stt')).toContainText('Transcrição');
   await expect(page.locator('.live-chat-entry--agent')).toContainText('Opa, tudo bem? Como posso ajudar?');
   await expect(page.locator('.live-chat-entry--agent')).toContainText('Agente');
-  await expect(page.locator('[data-node-id="voz"]')).toContainText('Síntese de voz');
-  await expect(page.locator('[data-node-id="alto"]')).toContainText('Reprodução de áudio');
+  await expect(page.locator('[data-node-id="voz"]')).toContainText('TTS');
+  await expect(page.locator('[data-node-id="voz"]')).toContainText('fala: "Opa, tudo bem?" (42 KB)');
+  await expect(page.locator('[data-node-id="alto"]')).toContainText('Playback');
+  await expect(page.locator('[data-node-id="alto"]')).toContainText('playback ok (1,2s)');
   await expect(page.locator('.live-chat-thought')).toHaveCount(0);
   await expect(page.getByText('Orquestrador', { exact: true })).toHaveCount(0);
 
@@ -110,7 +119,7 @@ test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed 
   expect(userBox?.x).toBe(agentBox?.x);
 
   await expect(page.getByRole('region', { name: 'Sugestão de resposta pendente' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Aprovar', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Aprovar & Falar', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Editar', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Regerar', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Rejeitar', exact: true })).toBeVisible();
@@ -128,10 +137,11 @@ test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed 
   await thoughtsToggle.click();
   await expect(page.locator('.live-chat-thought')).toHaveCount(0);
 
-  const badges = await page.locator('.logs-service-badges').boundingBox();
-  const title = await page.locator('.logs-panel-title').boundingBox();
-  const clear = await page.getByRole('button', { name: 'Limpar logs' }).boundingBox();
-  const collapseButtons = page.getByRole('button', { name: 'Recolher logs' });
+  const logsPanel = page.locator('.live2 .logs-panel');
+  const badges = await logsPanel.locator('.logs-service-badges').boundingBox();
+  const title = await logsPanel.locator('.logs-panel-title').boundingBox();
+  const clear = await logsPanel.getByRole('button', { name: 'Limpar logs' }).boundingBox();
+  const collapseButtons = logsPanel.getByRole('button', { name: 'Recolher logs' });
   expect(await collapseButtons.count()).toBe(2);
   const collapseLeft = await collapseButtons.first().boundingBox();
   const collapseRight = await collapseButtons.last().boundingBox();
@@ -141,23 +151,50 @@ test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed 
   expect(badges!.x).toBeGreaterThan(clear!.x + clear!.width);
   expect(badges!.x).toBeGreaterThan(thoughts!.x + thoughts!.width);
   expect(collapseRight!.x).toBeGreaterThanOrEqual(badges!.x + badges!.width);
-  expect(await page.locator('.logs-panel-count').count()).toBe(0);
-  const head = await page.locator('.logs-panel-head').boundingBox();
+  expect(await logsPanel.locator('.logs-panel-count').count()).toBe(0);
+  const head = await logsPanel.locator('.logs-panel-head').boundingBox();
   expect(head!.height).toBeLessThanOrEqual(42);
 });
 
-test('capture stage offers Aplicações/Microfone and persists the mic source', async ({ page }) => {
-  await page.evaluate(() => localStorage.setItem('falador.captureSource', 'apps'));
+test('unified Input stage syncs bidirectionally with mic button and preserves Execuções', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('falador.inputMode', 'apps'));
   await page.reload();
 
   await page.getByRole('button', { name: 'Workflow' }).click();
-  const captura = page.locator('.stage-dd').filter({ hasText: 'Captura' }).first();
-  await expect(captura).toBeVisible();
-  await expect(captura.getByRole('combobox').first()).toContainText('Aplicações');
+  await expect(page.getByRole('button', { name: /Execuções/ })).toBeVisible();
 
-  await captura.getByRole('combobox').first().click();
-  await page.getByRole('option', { name: 'Microfone' }).click();
+  const inputStage = page.locator('.stage-dd').filter({ hasText: 'Input' }).first();
+  await expect(inputStage).toBeVisible();
+  await expect(page.locator('.stage-dd').filter({ hasText: 'Captura' })).toHaveCount(0);
 
-  await expect.poll(() => page.evaluate(() => localStorage.getItem('falador.captureSource'))).toBe('mic');
-  await expect(captura.getByRole('combobox').nth(1)).toContainText('Microfone (MacBook Pro)');
+  const inputCombo = inputStage.getByRole('combobox');
+  await expect(inputCombo).toHaveCount(1);
+  await expect(inputCombo).toContainText('Aplicações');
+  await expect(page.getByRole('button', { name: 'Recarregar apps de áudio' })).toHaveCount(0);
+
+  await inputCombo.click();
+  await expect(inputStage.getByRole('option')).toHaveText(['Aplicações', 'Microfone', 'Chat']);
+
+  await page.getByRole('option', { name: 'Chat', exact: true }).click();
+  const useVoiceBtn = page.getByRole('button', { name: 'Usar voz' });
+  await expect(useVoiceBtn).toBeVisible();
+  await expect(useVoiceBtn).toHaveAttribute('aria-pressed', 'false');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('falador.inputMode'))).toBe('chat');
+
+  await inputCombo.click();
+  await page.getByRole('option', { name: 'Microfone', exact: true }).click();
+  const useChatBtn = page.getByRole('button', { name: 'Usar chat' });
+  await expect(useChatBtn).toBeVisible();
+  await expect(useChatBtn).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('falador.inputMode'))).toBe('mic');
+
+  await useChatBtn.click();
+  await expect(inputCombo).toContainText('Chat');
+  await expect(page.getByRole('button', { name: 'Usar voz' })).toHaveAttribute('aria-pressed', 'false');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('falador.inputMode'))).toBe('chat');
+
+  await page.getByRole('button', { name: 'Usar voz' }).click();
+  await expect(inputCombo).toContainText('Microfone');
+  await expect(page.getByRole('button', { name: 'Usar chat' })).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('falador.inputMode'))).toBe('mic');
 });

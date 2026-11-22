@@ -542,6 +542,7 @@ export const execCommand: NodeTypeDef = {
     { name: 'out', type: 'phrase', required: false },
     { name: 'tool', type: 'tool', required: false },
   ],
+  bindingNames: ['__onExecution'],
   validateParams: (p): ParamError[] => {
     const errs: ParamError[] = [];
     if (p.transport !== undefined && p.transport !== 'local' && p.transport !== 'ssh') {
@@ -608,6 +609,7 @@ export const execCommand: NodeTypeDef = {
     };
 
     const defaultRunId = typeof ctx.bindings?.runId === 'string' ? ctx.bindings.runId : 'unknown';
+    const onExecution = ctx.bindings?.__onExecution as ((ev: Record<string, unknown>) => void) | undefined;
 
     const activeChildren = new Set<ChildProcess>();
     let controlInterrupted = false;
@@ -672,6 +674,17 @@ export const execCommand: NodeTypeDef = {
           },
           ctx,
         );
+        try {
+          onExecution?.({
+            nodeId: ctx.id,
+            command: deniedCommand,
+            output: `EXEC_POLICY_DENIED: ${validation.reason}`,
+            host: deniedHost,
+            ok: false,
+            dryRun,
+            ts: Date.now(),
+          });
+        } catch { /* callback do host não derruba o nó */ }
         return {
           kind: 'denied',
           reason: validation.reason,
@@ -717,6 +730,19 @@ export const execCommand: NodeTypeDef = {
           stderr: '',
           reason,
         });
+        try {
+          onExecution?.({
+            nodeId: ctx.id,
+            command,
+            output: report,
+            host,
+            ok: true,
+            exitCode: 0,
+            durationMs,
+            dryRun: true,
+            ts: Date.now(),
+          });
+        } catch { /* callback do host */ }
         return {
           kind: 'ok',
           command,
@@ -742,6 +768,10 @@ export const execCommand: NodeTypeDef = {
 
       if (ctx.signal.aborted || execOpts.signal?.aborted) {
         const tExecEndMs = Date.now();
+        const report = 'Execução cancelada (signal abortado).';
+        try {
+          onExecution?.({ nodeId: ctx.id, command, output: report, host, ok: false, exitCode: null, durationMs: tExecEndMs - tExecStartMs, dryRun: false, ts: Date.now() });
+        } catch { /* callback do host */ }
         return {
           kind: 'ok',
           command,
@@ -754,7 +784,7 @@ export const execCommand: NodeTypeDef = {
           timedOut: false,
           truncated: false,
           interrupted: true,
-          report: 'Execução cancelada (signal abortado).',
+          report,
         };
       }
 
@@ -879,6 +909,21 @@ export const execCommand: NodeTypeDef = {
         stderr: stderrText,
         reason,
       });
+
+      const __ok = !timedOut && !interrupted && execResult.exitCode === 0 && !execResult.errorMsg;
+      try {
+        onExecution?.({
+          nodeId: ctx.id,
+          command,
+          output: report,
+          host,
+          ok: __ok,
+          exitCode: execResult.exitCode,
+          durationMs,
+          dryRun: false,
+          ts: Date.now(),
+        });
+      } catch { /* callback do host */ }
 
       return {
         kind: 'ok',
