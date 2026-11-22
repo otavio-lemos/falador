@@ -1,5 +1,15 @@
 // falador-nodes — helpers HTTP/SSE (ZERO dependências; Node >= 22 fetch/WebSocket nativos)
 
+/**
+ * Header de autenticação do omlx (:8080). O omlx >= 0.8 exige API key para binds
+ * não-loopback; sem ela o /v1/chat/completions responde 401 "API key required".
+ * Vem de FALADOR_OMLX_API_KEY (faladorctl exporta a partir de .env.falador).
+ */
+export function omlxAuthHeaders(): Record<string, string> {
+  const key = process.env.FALADOR_OMLX_API_KEY?.trim();
+  return key ? { authorization: `Bearer ${key}` } : {};
+}
+
 /** POST JSON e devolve o body como Uint8Array. */
 export async function postJsonBytes(
   url: string,
@@ -14,7 +24,7 @@ export async function postJsonBytes(
   try {
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...omlxAuthHeaders() },
       body: JSON.stringify(body),
       signal: ctrl.signal,
     });
@@ -48,7 +58,7 @@ export async function postSse(
 ): Promise<void> {
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
+    headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...omlxAuthHeaders() },
     body: JSON.stringify(body),
     signal,
   });

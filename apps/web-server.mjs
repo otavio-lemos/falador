@@ -688,6 +688,42 @@ async function handleApi(req, res, pathname) {
     });
     return true;
   }
+  if (pathname === '/api/mics' && req.method === 'GET') {
+    // Microfones/dispositivos de entrada via capture-sidecar --list (PortAudio).
+    // Indices PortAudio ≠ avfoundation; por isso a UI lista daqui, não do ffmpeg.
+    const pythonPath = join(ROOT, '.venv', 'bin', 'python');
+    const sidecar = join(ROOT, 'services', 'capture-sidecar.py');
+    if (!existsSync(sidecar)) {
+      return json(res, 200, { mics: [], note: 'capture-sidecar.py ausente' }), true;
+    }
+    const child = spawn(existsSync(pythonPath) ? pythonPath : 'python3', [sidecar, '--list'], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    let out = '';
+    let settled = false;
+    const reply = (payload) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(to);
+      res.setHeader('Cache-Control', 'no-store');
+      json(res, 200, payload);
+    };
+    const to = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch { /* já morto */ }
+      reply({ mics: [], note: 'timeout ao listar microfones' });
+    }, 6000);
+    child.on('error', (err) => reply({ mics: [], note: `erro ao listar microfones: ${err.message}` }));
+    child.stdout.on('data', (d) => (out += d));
+    child.on('exit', () => {
+      try {
+        const mics = JSON.parse(out);
+        reply({ mics: Array.isArray(mics) ? mics : [] });
+      } catch {
+        reply({ mics: [], note: 'saída do capture-sidecar inválida' });
+      }
+    });
+    return true;
+  }
   if (pathname === '/api/logs' && req.method === 'GET') {
     // Logs dos 4 serviços residentes (omlx/asr/tts via faladorctl e web via appendWebLog/host).
     // Allowlist fixa de nomes: nunca lê caminho arbitrário.

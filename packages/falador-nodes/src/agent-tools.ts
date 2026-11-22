@@ -15,7 +15,7 @@ import type {
   ToolDef,
   ToolProvider,
 } from '../../falador-graph/src/index.ts';
-import { payloadText, postJsonBytes } from './sse.ts';
+import { omlxAuthHeaders, payloadText, postJsonBytes } from './sse.ts';
 import { inheritTrace } from './trace.ts';
 
 const DEFAULT_BASE = 'http://127.0.0.1:8080';
@@ -171,7 +171,7 @@ async function callChatCompletions(
 ): Promise<OpenAiChatResponse> {
   const res = await fetch(`${baseUrl}/v1/chat/completions`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...omlxAuthHeaders() },
     body: JSON.stringify(body),
     signal,
   });
