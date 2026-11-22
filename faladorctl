@@ -24,10 +24,13 @@ elif [ -f "$HOME/ml/falador/.env.falador" ]; then
 fi
 export FALADOR_OMLX_API_KEY="${FALADOR_OMLX_API_KEY:-}"
 
+OMLX_KEY_ARG=""
+[ -n "$FALADOR_OMLX_API_KEY" ] && OMLX_KEY_ARG=" --api-key \"$FALADOR_OMLX_API_KEY\""
+
 # Lista completa: todos os serviços residentes do projeto (run.md §1).
 # Formato: nome|porta|health_path|comando|timeout_s
 SERVICES=(
-  "omlx|8080|/v1/models|omlx serve --model-dir \"$HOME/.omlx/models\" --host 127.0.0.1 --port 8080 --api-key \"$FALADOR_OMLX_API_KEY\"|30"
+  "omlx|8080|/v1/models|omlx serve --model-dir \"$HOME/.omlx/models\" --host 127.0.0.1 --port 8080${OMLX_KEY_ARG}|30"
   "asr|8090|/v1/models|\"$VENV_PYTHON\" \"$VENV_DIR/lib/python3.12/site-packages/mlx_audio/server.py\" --host 127.0.0.1 --port 8090 --realtime-model \"$SNAP_VOXTRAL\"|60"
   "tts|8091|/health|\"$VENV_PYTHON\" services/sts-sidecar.py --model \"$SNAP_LFM3_AUDIO\" --port 8091|30"
   "web|8787|/api/catalog|node apps/web-server.mjs|15"
@@ -39,10 +42,12 @@ pid_at_port() { pids_at_port "$1" | head -1; }
 
 wait_up() { # nome porta health_path tries
   local port="$2" health="$3" tries="$4"
-  local auth=()
-  [ "$port" = "8080" ] && [ -n "$FALADOR_OMLX_API_KEY" ] && auth=(-H "Authorization: Bearer $FALADOR_OMLX_API_KEY")
   for _ in $(seq 1 "$tries"); do
-    curl -fsS -m 1 "${auth[@]}" "http://127.0.0.1:$port$health" -o /dev/null 2>/dev/null && return 0
+    if [ "$port" = "8080" ] && [ -n "$FALADOR_OMLX_API_KEY" ]; then
+      curl -fsS -m 1 -H "Authorization: Bearer $FALADOR_OMLX_API_KEY" "http://127.0.0.1:$port$health" -o /dev/null 2>/dev/null && return 0
+    else
+      curl -fsS -m 1 "http://127.0.0.1:$port$health" -o /dev/null 2>/dev/null && return 0
+    fi
     sleep 1
   done
   return 1
