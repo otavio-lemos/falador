@@ -25,7 +25,7 @@ function reg() {
 }
 
 describe('translate.llm, human.approve e asr.lfm3', () => {
-  test('assistente-entrevista: asr.final -> assistente.in valida e não força inglês', () => {
+  test('assistente-entrevista: asr.out -> turn.detector -> assistente.parcs valida e não força inglês', () => {
     const raw = JSON.parse(readFileSync(fileURLToPath(new URL('../../../apps/tui/flows/assistente-entrevista.json', import.meta.url)), 'utf-8')) as FlowSpec;
     const bindings: Record<string, Record<string, unknown>> = {};
     for (const n of raw.nodes) {
@@ -34,8 +34,9 @@ describe('translate.llm, human.approve e asr.lfm3', () => {
     }
     const v = validateFlow({ ...raw, bindings }, reg());
     assert.equal(v.nodes.size, raw.nodes.length);
-    assert.ok(raw.edges.some((e) => e.from === 'asr.final' && e.to === 'assistente.in'));
-    assert.ok(!raw.edges.some((e) => e.to === 'assistente.parcs'));
+    assert.ok(raw.edges.some((e) => e.from === 'asr.out' && e.to === 'turno.in'));
+    assert.ok(raw.edges.some((e) => e.from === 'turno.out' && e.to === 'assistente.parcs'));
+    assert.ok(!raw.edges.some((e) => e.from === 'asr.final' && e.to === 'assistente.in'));
     const asst = raw.nodes.find((n) => n.id === 'assistente')!;
     assert.equal(asst.params?.template, undefined);
     assert.ok(!/em INGLÊS/.test(String(asst.params?.system)));

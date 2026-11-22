@@ -54,9 +54,21 @@ export async function deleteFlow(name: string): Promise<void> {
 export async function fetchModels(): Promise<{ omlx: string[]; cache: string[] }> {
   return (await fetch('/api/models')).json();
 }
+export interface MicInfo { id: number; name: string; sampleRate: number }
 export async function fetchApps(): Promise<string[]> {
   const j = await (await fetch('/api/apps')).json();
   return [...new Set((j.apps as { name: string }[]).map((a) => a.name).filter((n) => n && n.trim() && !n.startsWith('Open and Save Panel Service')))];
+}
+export async function fetchMics(): Promise<MicInfo[]> {
+  try {
+    const j = await (await fetch('/api/mics')).json();
+    const list = (j.mics ?? []) as { id?: number; name?: string; sampleRate?: number }[];
+    return list
+      .map((m) => ({ id: Number(m.id ?? 0), name: String(m.name ?? ''), sampleRate: Number(m.sampleRate ?? 16000) }))
+      .filter((m) => m.name.trim() !== '');
+  } catch {
+    return [];
+  }
 }
 
 export interface ServiceStatusMap {

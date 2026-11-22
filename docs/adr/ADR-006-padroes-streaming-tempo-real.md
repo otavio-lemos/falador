@@ -59,7 +59,7 @@ Cada fase é **independente, testável isoladamente e não quebra fluxos existen
    - Adicionar param opcional `maxPendingMs` (default `2000`, validado `> 0`).
    - Converter `PENDING_MAX_FRAMES` fixo (`192`, ~19 s) para cálculo dinâmico baseado em `maxPendingMs` e tamanho médio de frame (ou rastrear `{ bytes, ts }` e descartar tudo com `Date.now() - ts > maxPendingMs` antes do `flush()` na reconexão).
    - Emitir métrica `asr.realtime.pendingDropped` quando descartar frames antigos.
-3. Fluxos live em `apps/tui/flows/` (`assistente-entrevista.json`, `legendas-traducao-pt.json`, `legendas-traducao-direta.json`, `transcricao-ao-vivo.json`, `tradutor-voz-en.json`)
+3. Fluxos live em `apps/tui/flows/` (`assistente-entrevista.json`, `legendas-traducao-pt.json`, `transcricao-ao-vivo.json`, `tradutor-voz-en.json`)
    - Na aresta `captura.out -> asr.in`: alterar de `capacity: 128, overflow: "block"` para `capacity: 32, overflow: "drop_oldest", ttlMs: 1500` (~2,5 s de teto, expirando chunks > 1,5 s).
    - Manter `overflow: "block"` apenas nas arestas de controle/decisão (`assistente -> decisao -> sugestao/revisao`), onde não se pode perder uma resposta pronta.
 

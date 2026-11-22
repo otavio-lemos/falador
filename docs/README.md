@@ -14,6 +14,7 @@
 | [006 — padrões de streaming](adr/ADR-006-padroes-streaming-tempo-real.md) | Anti-drift, barge-in, `turn.detector` d1, contexto deslizante, `trace`, export | IMPLEMENTADO (E2E ao vivo com SCK: NÃO VERIFICADO) |
 | [007 — RAG + `exec.command`](adr/ADR-007-rag-runbooks-conector-exec.md) | RAG BM25 local + conector local/SSH com 4 camadas de segurança | IMPLEMENTADO (SSH em host remoto real: NÃO VERIFICADO) |
 | [008 — agente + tools + MCP](adr/ADR-008-agente-tools-mcp.md) | `agent.tools` com `tool_calls` nativo, porta `tool`, `tool.mcp` | IMPLEMENTADO (MCP externo real: NÃO VERIFICADO) |
+| [009 — captura voz/chat + mic](adr/ADR-009-captura-entrada-dupla.md) | Aplicações (SCK) vs Microfone (PortAudio) no mesmo nó; botão alterna voz↔chat | IMPLEMENTADO (E2E fala real: NÃO VERIFICADO) |
 | [F0 — POC de protocolo](adr/F0-poc-protocolo.md) | Protocolo da fase 0 | FECHADA (ver research) |
 
 Quadro detalhado de pendências e evidências: **[`adr/STATUS.md`](adr/STATUS.md)**.
@@ -30,6 +31,8 @@ Quadro detalhado de pendências e evidências: **[`adr/STATUS.md`](adr/STATUS.md
 | [`adr/research/G3b-resultados.md`](adr/research/G3b-resultados.md) | Streaming vs offline do decode: mesma qualidade (EN WER 0; PT 0,087 nos dois) |
 | [`adr/research/mlx-audio-analise.md`](adr/research/mlx-audio-analise.md) | Por que `mlx-audio` é o núcleo e o que ele (não) suporta |
 | [`adr/research/workflow-engines-2026-11.md`](adr/research/workflow-engines-2026-11.md) | Padrões de Pipecat/LiveKit/n8n que inspiraram o motor |
+| [`workflows-audit.md`](workflows-audit.md) | Auditoria dos 9 workflows em 2026-11-22: 3 remoções, 5 correções, 7 fluxos finais e fontes de mercado |
+| [`input-modes-test-plan.md`](input-modes-test-plan.md) | Plano de testes da entrada dupla (unitário, headless, UI, live) com o que foi executado e o que ficou NÃO VERIFICADO |
 | [`testing.md`](testing.md) §1/§5 | Pesquisa real (Node 26 `node:test`, cobertura nativa, fuzz com PRNG semeado, Playwright) que fundamentou a evolução das suítes — consolidada no guia de testes |
 | [`../lfm2-runtimes-research.md`](../lfm2-runtimes-research.md) | Runtimes alternativos para LFM2 (nota de pesquisa) |
 

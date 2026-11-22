@@ -107,6 +107,7 @@ function createEmptySession(flowName = 'sessao') {
     captions: [], // { ts, nodeId, kind, text, trace? }
     approved: [], // { ts, nodeId, text }
     agentSteps: [], // { ts, nodeId, step, phase, tool, args?, ok?, durationMs?, dryRun? }
+    execucoes: [], // { id, ts, nodeId, step, tool, host, transport, command, output, exitCode, durationMs, dryRun, ok, truncated, timedOut? }
     topics: [],
     traces: [],
   };
@@ -336,6 +337,26 @@ function formatSessionMarkdown(session, latencySummary) {
     lines.push('');
   }
 
+  if (Array.isArray(session.execucoes) && session.execucoes.length > 0) {
+    lines.push('## Execuções');
+    lines.push('');
+    for (const e of session.execucoes) {
+      const dur = typeof e.durationMs === 'number' ? ` (${e.durationMs}ms)` : '';
+      lines.push(`### ${e.tool} · ${e.host} · exit=${e.exitCode ?? 'null'}${dur}`);
+      lines.push('');
+      lines.push('```sh');
+      lines.push(String(e.command ?? ''));
+      lines.push('```');
+      lines.push('');
+      if (e.output) {
+        lines.push('```');
+        lines.push(String(e.output).trimEnd());
+        lines.push('```');
+        lines.push('');
+      }
+    }
+  }
+
   lines.push('## Resumo de Latência');
   lines.push('');
   const fmt = (stat) => (stat.p50 == null ? '—' : `p50=${stat.p50}ms / p95=${stat.p95}ms`);
@@ -500,8 +521,41 @@ function startRun(flow, runSeconds, flowName) {
           ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : {}),
           ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : {}),
           ...(typeof ev.dryRun === 'boolean' ? { dryRun: ev.dryRun } : {}),
+          ...(typeof ev.output === 'string' ? { output: ev.output } : {}),
+          ...(typeof ev.exitCode === 'number' ? { exitCode: ev.exitCode } : {}),
+          ...(typeof ev.host === 'string' ? { host: ev.host } : {}),
+          ...(typeof ev.transport === 'string' ? { transport: ev.transport } : {}),
+          ...(typeof ev.truncated === 'boolean' ? { truncated: ev.truncated } : {}),
+          ...(typeof ev.timedOut === 'boolean' ? { timedOut: ev.timedOut } : {}),
         });
         if (sessionBuffer.agentSteps.length > 500) sessionBuffer.agentSteps.shift();
+
+        const isExecTool =
+          String(ev.tool ?? '').startsWith('exec_') ||
+          (typeof ev.transport === 'string' && ev.transport.startsWith('mcp'));
+        if (String(ev.phase ?? '') === 'result' && isExecTool) {
+          const cmd =
+            ev.args && typeof ev.args === 'object' && typeof ev.args.command === 'string'
+              ? String(ev.args.command)
+              : '';
+          sessionBuffer.execucoes.push({
+            id: `${String(ev.nodeId ?? '')}:${typeof ev.step === 'number' ? ev.step : 0}`,
+            ts: new Date().toISOString(),
+            nodeId: String(ev.nodeId ?? ''),
+            step: typeof ev.step === 'number' ? ev.step : 0,
+            tool: String(ev.tool ?? ''),
+            host: typeof ev.host === 'string' ? ev.host : 'local',
+            transport: typeof ev.transport === 'string' ? ev.transport : 'local',
+            command: cmd,
+            output: typeof ev.output === 'string' ? ev.output : '',
+            exitCode: typeof ev.exitCode === 'number' ? ev.exitCode : null,
+            ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : {}),
+            ...(typeof ev.dryRun === 'boolean' ? { dryRun: ev.dryRun } : {}),
+            ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : {}),
+            ...(typeof ev.truncated === 'boolean' ? { truncated: ev.truncated } : {}),
+          });
+          if (sessionBuffer.execucoes.length > 500) sessionBuffer.execucoes.shift();
+        }
       }
       // undici keep-alive: o child do runner pode não sair sozinho no fim do run
       // (lição §4) — emitido run_stopped/summary, encerra o child e libera o next run.

@@ -126,15 +126,13 @@ EOF
 
 | Flow | O que é |
 |---|---|
-| `assistente-entrevista.json` | **Default (ADR-005/006):** captura SCK (`drop_oldest`, `ttlMs: 1500`) → Voxtral streaming → transcrição + assistente LLM → votação `d1` auto/humano → sugestão na tela (auto) ou card editável (humano). Sem TTS = sem eco |
+| `assistente-entrevista.json` | **Default (ADR-005/006):** captura SCK (`drop_oldest`, `ttlMs: 1500`) → Voxtral streaming → transcrição → `turn.detector` (`d1`,systemone, fronteira de turno) → assistente LLM → votação `d1` auto/humano → sugestão na tela (auto) ou card editável (humano). Sem TTS = sem eco |
 | `legendas-traducao-pt.json` | Tradução simultânea EN → PT em tempo real (~1,1 s): captura SCK → Voxtral streaming → LLM tradutor → legendas PT |
-| `legendas-traducao-direta.json` | Tradução direta do áudio para PT via `asr.lfm3` (janela 12 s, sem nó LLM, menor uso de memória) |
 | `transcricao-ao-vivo.json` | Transcrição pura em tempo real (captura SCK → Voxtral streaming → legendas, menor latência) |
-| `tradutor-voz-en.json` | Pipeline completo de interpretação por voz: STT → Tradução PT→EN → Legenda + TTS EN → Alto-falante |
-| `revisao-servidor-ops.json` | **Ops / SRE single-shot (ADR-007):** voz → `turn.detector` (`d1`) → planejador LLM (`useContext: true` RAG BM25) → triagem `d1` (`leitura_segura` / `sensivel` / `bloqueado`) → `human.approve` → `exec.command` (`dryRun: true`, `mode: "readonly"`) → analista LLM → diagnóstico |
-| `agente-suporte-ops.json` | **Agente de Suporte multi-step (ADR-008):** voz → `turn.detector` → `agent.tools` (loop `tool_calls`, `approvalPolicy: "always"`, `maxSteps: 5`) conectado via porta bidirecional `tool` a `exec.command` (`dryRun: true`) e `rag.search` (BM25) → diagnóstico |
-| `agente-workflows.json` | **Agente Especialista em Workflows:** chatbox (`input.chat`) + voz (SCK→Voxtral) → `agent.tools` com `tool.workflow` (valida/salva workflows e auto-atualiza o AGENTS.md) + `tool.web_search` (anti-SSRF) → legendas. Botão **«Agente Workflows»** na TopBar; modelo selecionável no Live |
-| `chat-agente-suporte.json` | **Suporte por Chat/Prompt (sem voz):** chatbox → `agent.tools` (`approvalPolicy: "always"`) com `rag.search` + `exec.command` (`dryRun: true`) → resposta |
+| `tradutor-voz-en.json` | Pipeline completo de interpretação por voz: STT → `translate.llm` (PT→EN) → Legenda + TTS EN → Alto-falante |
+| `revisao-servidor-ops.json` | **Ops / SRE com risco e HITL (ADR-007, chat-only):** pedido digitado → planejador LLM (`useContext: true`, RAG BM25) → triagem `d1` (`leitura_segura` / `sensivel` / `bloqueado`) → `human.approve` → `exec.command` (`dryRun: true`) → analista LLM → diagnóstico |
+| `agente-suporte-ops.json` | **Agente de Suporte multi-step (ADR-008, chat-only):** `input.chat` → `agent.tools` (loop `tool_calls`, `approvalPolicy: "always"`) conectado via porta `tool` a `exec.command` (`dryRun: true`) e `rag.search` (BM25) → diagnóstico. Substitui o antigo `chat-agente-suporte.json` |
+| `agente-workflows.json` | **Agente Especialista em Workflows (chat-only):** `input.chat` → `agent.tools` com `tool.workflow` (valida/salva workflows e auto-atualiza o AGENTS.md) + `tool.web_search` (anti-SSRF) → legendas. Botão «Agente Workflows» na TopBar |
 | `test/demo-engine` / `test/demo-live` | fixtures de smoke (sintético / integração omlx+sidecar) — em `flows/test/`, fora do dropdown |
 
 > Captura nos flows: `backend: 'sck'`, `input: ''` — **escolha o app da call** no Inspector (Teams, zoom.us, Google Chrome…). SCK ouve SÓ esse app; precisa de permissão de Gravação de Tela (Ajustes → Privacidade e Segurança).
@@ -143,7 +141,7 @@ EOF
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
-node packages/falador-cli/run-flow.mjs apps/tui/flows/legendas-traducao-direta.json --run-seconds 30
+node packages/falador-cli/run-flow.mjs apps/tui/flows/legendas-traducao-pt.json --run-seconds 30
 node packages/falador-cli/run-flow.mjs --catalog            # catálogo JSON (23 nós)
 ```
 
@@ -175,6 +173,8 @@ Medido em 2026-11-21: motor **94,4% linhas / 89,0% branches**; nós **86,6% / 70
 ## 6. Entrada de áudio (captura)
 
 - **Oficial (ADR-005): ScreenCaptureKit por app** — `backend: 'sck'`, input = nome do app da call. Sem Multi-Output, sem BlackHole, sem mudar routing; o dono apagou o Multi-Output em 2026-11-19. Permissão: **Gravação de Tela** (TCC) pro processo que roda o helper. Binário `services/capture-sck` compilado sob demanda do `.swift` (swiftc/CLT).
+- **Duas origens no mesmo nó (ADR-009, 2026-11-22):** no Live, a etapa Captura oferece **Aplicações** (`backend:'sck'`) ou **Microfone** (`backend:'sounddevice'`). O device é listado por `GET /api/mics` (`services/capture-sidecar.py --list`); a escolha fica em `localStorage.falador.captureSource`.
+- **Botão do microfone:** em fluxos com `input.chat` (ex.: `assistente-entrevista.json`) ele alterna **voz↔chat** — no modo chat, captura/ASR/turn/sink de STT são desabilitados e o `input.chat` alimenta o assistente. Em fluxos sem chat, ele alterna apenas Aplicações↔Microfone.
 - Alternativas no mesmo nó: `backend: 'sounddevice'` (PortAudio; input = nome do device, ex. 'BlackHole', 'Microfone' — precisa de algo tocando NO device, ex. Multi-Output) e `backend: 'ffmpeg'` (avfoundation :N — **ffmpeg 9.0.2 perde ~75% dos samples nesta máquina**, AGENTS §4).
 - BlackHole 2ch continua instalado — útil p/ injeção de teste ou se a voz na call voltar (playback-sidecar.py pronto, não fiado).
 - Cenário 2 em call real: o áudio do entrevistador entra pelo SCK direto do app da call; você lê a sugestão e responde com sua voz.

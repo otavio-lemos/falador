@@ -454,7 +454,7 @@ describe('apps/web-server.mjs — RAG genérico, reset-history e exportação p�
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     const baseUrl = `http://127.0.0.1:${server.address().port}`;
 
-    // Flow que permanece ativo aguardando input (como chat-agente-suporte)
+    // Flow que permanece ativo aguardando input (como agente-suporte-ops)
     const chatFlow = {
       version: 1,
       stopWhenSourcesDone: false,

@@ -8,7 +8,7 @@ import { TopBar } from './components/TopBar';
 import { BuilderView } from './views/BuilderView';
 import { LiveView } from './views/LiveView';
 import { useRunner } from './useRunner';
-import { fetchCatalog, fetchFlows, fetchFlow, fetchModels, fetchApps, fetchContext, saveFlow, deleteFlow, uploadDoc, removeDoc, clearLogs, resetHistory, type Catalog, type Flow, type ContextDoc, type ServiceStatusMap } from './api';
+import { fetchCatalog, fetchFlows, fetchFlow, fetchModels, fetchApps, fetchMics, fetchContext, saveFlow, deleteFlow, uploadDoc, removeDoc, clearLogs, resetHistory, type Catalog, type Flow, type ContextDoc, type ServiceStatusMap } from './api';
 import { applyContext, isDecisionModel, sanitizeFlow } from './live-utils';
 
 function scenarioLabel(name: string): string {
@@ -44,6 +44,10 @@ export function App() {
   const [liveFlow, setLiveFlow] = useState<Flow | null>(null);
   const [models, setModels] = useState<{ omlx: string[]; cache: string[] }>({ omlx: [], cache: [] });
   const [apps, setApps] = useState<string[]>([]);
+  const [mics, setMics] = useState<{ id: number; name: string; sampleRate: number }[]>([]);
+  const [captureSource, setCaptureSource] = useState<'apps' | 'mic'>(() => {
+    try { return localStorage.getItem('falador.captureSource') === 'mic' ? 'mic' : 'apps'; } catch { return 'apps'; }
+  });
   const [contextDocs, setContextDocs] = useState<ContextDoc[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const [resetSignal, setResetSignal] = useState(0);
@@ -78,6 +82,7 @@ export function App() {
     }).catch(() => setToast('Falha ao listar flows'));
     fetchModels().then(setModels).catch(() => {});
     fetchApps().then(setApps).catch(() => {});
+    fetchMics().then(setMics).catch(() => {});
     fetchContext().then(setContextDocs).catch(() => {});
   }, []);
 
@@ -104,12 +109,50 @@ export function App() {
     }
   }, [runner.agentSteps, refreshFlows]);
 
-  const applyAudioMutes = (f: Flow, mic: boolean, spk: boolean): Flow => {
-    if (!mic && !spk) return f;
+  const pickMic = (current?: string): string => {
+    if (current && mics.some((m) => m.name === current)) return current;
+    const preferred = mics.find((m) => /microfone|mic/i.test(m.name))?.name ?? mics[0]?.name;
+    return preferred ?? (current?.trim() || 'Microfone');
+  };
+
+  const applyInputMode = (
+    f: Flow,
+    voiceOn: boolean,
+    source: 'apps' | 'mic',
+    selectedApp?: string,
+    selectedMic?: string,
+    spk = speakerMuted,
+  ): Flow => {
+    try { localStorage.setItem('falador.captureSource', source); } catch { /* ignore */ }
+    const chatNode = f.nodes.find((n) => n.type === 'input.chat');
+    const voiceTypes = new Set(['capture.ffmpeg', 'asr.realtime', 'asr.lfm3', 'turn.detector']);
+    const voiceIds = new Set(f.nodes.filter((n) => voiceTypes.has(n.type)).map((n) => n.id));
+    const voiceSinkIds = new Set(
+      f.edges
+        .filter((e) => voiceIds.has(e.from.split('.')[0]) && f.nodes.some((n) => n.type === 'sink.captions' && n.id === e.to.split('.')[0]))
+        .map((e) => e.to.split('.')[0]),
+    );
+    for (const id of voiceSinkIds) voiceIds.add(id);
     return {
       ...f,
       nodes: f.nodes.map((n) => {
-        if (mic && n.type === 'capture.ffmpeg') return { ...n, params: { ...n.params, muted: true } };
+        if (voiceIds.has(n.id)) {
+          const params: Record<string, unknown> = { ...n.params };
+          if (n.type === 'capture.ffmpeg') {
+            if (!voiceOn) params.muted = true;
+            else delete params.muted;
+            params.backend = source === 'mic' ? 'sounddevice' : 'sck';
+            if (source === 'mic') {
+              params.input = pickMic(selectedMic ?? (typeof n.params.input === 'string' ? n.params.input : undefined));
+            } else if (selectedApp && selectedApp.trim()) {
+              params.input = selectedApp;
+            }
+          }
+          return { ...n, enabled: voiceOn, params };
+        }
+        if (chatNode && n.id === chatNode.id) {
+          return { ...n, enabled: !voiceOn };
+        }
         if (spk && (n.type === 'sink.playback' || n.type === 'tts.sts')) return { ...n, params: { ...n.params, muted: true } };
         return n;
       }),
@@ -125,18 +168,33 @@ export function App() {
     }
     runner.start(applyContext(sanitizeFlow(f), contextDocs), currentFlow);
   };
-  const startWithContext = (f: Flow, name?: string, mic = micMuted, spk = speakerMuted) =>
-    runner.start(applyAudioMutes(applyContext(sanitizeFlow(f), contextDocs), mic, spk), name ?? currentFlow);
+  const startWithContext = (f: Flow, name?: string, voiceOn = !micMuted, source = captureSource) =>
+    runner.start(
+      applyInputMode(applyContext(sanitizeFlow(f), contextDocs), voiceOn, source),
+      name ?? currentFlow,
+    );
+
+  const onToggleCaptureSource = () => {
+    const next = captureSource === 'mic' ? 'apps' : 'mic';
+    setCaptureSource(next);
+    try { localStorage.setItem('falador.captureSource', next); } catch { /* ignore */ }
+    if (liveFlow && runner.running) startWithContext(liveFlow, currentFlow, !micMuted, next);
+  };
 
   const onToggleMicMute = () => {
+    // Sem chat no flow, o botão não deve matar a captura: alterna só a origem.
+    if (!liveFlow?.nodes.some((n) => n.type === 'input.chat')) {
+      onToggleCaptureSource();
+      return;
+    }
     const next = !micMuted;
     setMicMuted(next);
-    if (liveFlow && runner.running) startWithContext(liveFlow, currentFlow, next, speakerMuted);
+    if (liveFlow && runner.running) startWithContext(liveFlow, currentFlow, !next, captureSource);
   };
   const onToggleSpeakerMute = () => {
     const next = !speakerMuted;
     setSpeakerMuted(next);
-    if (liveFlow && runner.running) startWithContext(liveFlow, currentFlow, micMuted, next);
+    if (liveFlow && runner.running) startWithContext(liveFlow, currentFlow, !micMuted, captureSource);
   };
   const onGoLive = () => {
     const f = actionsRef.current?.getFlow();
@@ -145,6 +203,7 @@ export function App() {
     setLiveFlow(f);
     setView('live');
     fetchApps().then(setApps).catch(() => {});
+    fetchMics().then(setMics).catch(() => {});
     fetchModels().then(setModels).catch(() => {});
   };
   const onSave = () => { actionsRef.current?.save(); setToast('Workflow salvo'); };
@@ -197,11 +256,16 @@ export function App() {
 
   const onUpdateStage = (nodeId: string, param: string, value: unknown) => {
     if (!liveFlow) return;
+    const target = liveFlow.nodes.find((n) => n.id === nodeId);
     const next: Flow = {
       ...liveFlow,
       nodes: liveFlow.nodes.map((n) => {
         if (n.id !== nodeId) return n;
-        const nextParams: Record<string, unknown> = { ...n.params, [param]: value };
+         const nextParams: Record<string, unknown> = { ...n.params, [param]: value };
+         if (n.type === 'capture.ffmpeg' && param === 'backend') {
+           nextParams.backend = value === 'mic' ? 'sounddevice' : 'sck';
+           if (value === 'mic') nextParams.input = pickMic(typeof nextParams.input === 'string' ? nextParams.input : undefined);
+         }
         if (n.type === 'decision.llm' && param === 'model') {
           nextParams.mode = isDecisionModel(String(value)) ? 'systemone' : 'chat';
         }
@@ -215,6 +279,13 @@ export function App() {
       }),
     };
     setLiveFlow(next);
+    if (target?.type === 'capture.ffmpeg' && param === 'backend') {
+      const src: 'apps' | 'mic' = value === 'mic' ? 'mic' : 'apps';
+      setCaptureSource(src);
+      try { localStorage.setItem('falador.captureSource', src); } catch { /* ignore */ }
+      if (runner.running) startWithContext(next, currentFlow, !micMuted, src);
+      return;
+    }
     if (runner.running) startWithContext(next);
   };
   const onRegenerate = () => { if (liveFlow && runner.running) startWithContext(liveFlow); };
@@ -231,7 +302,7 @@ export function App() {
       setMicMuted(false);
       setSpeakerMuted(false);
       setCurrentFlow(name); setLiveFlow(f);
-      if (runner.running) startWithContext(f, name, false, false);
+      if (runner.running) startWithContext(f, name, true);
     } catch { setToast('Falha ao carregar o flow'); }
   };
 
@@ -315,7 +386,8 @@ export function App() {
               theme={theme} onToggleTheme={toggleTheme}
               micMuted={micMuted} speakerMuted={speakerMuted}
               onToggleMicMute={onToggleMicMute} onToggleSpeakerMute={onToggleSpeakerMute}
-              models={models} apps={apps}
+              captureSource={captureSource} onToggleCaptureSource={onToggleCaptureSource}
+              models={models} apps={apps} mics={mics}
               contextDocs={contextDocs} onUploadDoc={onUploadDoc} onRemoveDoc={onRemoveDoc}
               onStart={startWithContext}
               flows={flows} currentFlow={currentFlow} onSwitchFlow={onSwitchLiveFlow}

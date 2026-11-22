@@ -13,7 +13,7 @@ test('builder loads a real workflow and canvas', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Workflow' })).toBeEnabled();
   // o flow default é carregado do /api/flows com nome real e contagem de nós
   await expect(page.getByRole('heading', { name: 'assistente-entrevista' })).toBeVisible();
-  await expect(page.getByText(/8 nós[\s·]*7 conexões/)).toBeVisible();
+  await expect(page.getByText(/10 nós[\s·]*10 conexões/)).toBeVisible();
   // nós reais do canvas (rótulo visível é o id curto do nó)
   await expect(page.getByText('capture.ffmpeg').first()).toBeVisible();
   await expect(page.getByText('asr.realtime').first()).toBeVisible();
@@ -55,7 +55,7 @@ test('new workflow action is exposed in the flow menu', async ({ page }) => {
 });
 
 test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed accordions', async ({ page }) => {
-  await page.route('**/api/flows/chat-agente-suporte', async (route) => {
+  await page.route('**/api/flows/agente-suporte-ops', async (route) => {
     const response = await route.fetch();
     const payload = await response.json();
     payload.flow.nodes.push(
@@ -92,7 +92,7 @@ test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed 
 
   await page.getByRole('button', { name: 'Workflow' }).click();
   await page.getByRole('combobox', { name: 'Workflow' }).click();
-  await page.getByRole('option', { name: 'chat-agente-suporte' }).click();
+  await page.getByRole('option', { name: 'agente-suporte-ops' }).click();
   await page.getByRole('button', { name: 'Iniciar', exact: true }).click();
 
   await expect(page.locator('.live-chat-entry--user')).toContainText('opa blz?');
@@ -144,4 +144,20 @@ test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed 
   expect(await page.locator('.logs-panel-count').count()).toBe(0);
   const head = await page.locator('.logs-panel-head').boundingBox();
   expect(head!.height).toBeLessThanOrEqual(42);
+});
+
+test('capture stage offers Aplicações/Microfone and persists the mic source', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('falador.captureSource', 'apps'));
+  await page.reload();
+
+  await page.getByRole('button', { name: 'Workflow' }).click();
+  const captura = page.locator('.stage-dd').filter({ hasText: 'Captura' }).first();
+  await expect(captura).toBeVisible();
+  await expect(captura.getByRole('combobox').first()).toContainText('Aplicações');
+
+  await captura.getByRole('combobox').first().click();
+  await page.getByRole('option', { name: 'Microfone' }).click();
+
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('falador.captureSource'))).toBe('mic');
+  await expect(captura.getByRole('combobox').nth(1)).toContainText('Microfone (MacBook Pro)');
 });

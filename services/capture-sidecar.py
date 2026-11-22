@@ -7,6 +7,7 @@
 import argparse
 import sys
 
+import json
 import numpy as np
 import sounddevice as sd
 
@@ -14,9 +15,18 @@ ap = argparse.ArgumentParser()
 ap.add_argument('--device', default='BlackHole', help='nome (substring) ou índice PortAudio de device de ENTRADA')
 ap.add_argument('--rate', type=int, default=16000, help='sample rate de SAÍDA (resample do clock nativo)')
 ap.add_argument('--chunk-ms', type=int, default=80)
+ap.add_argument('--list', action='store_true', help='lista devices de entrada (JSON) e sai')
 a = ap.parse_args()
 
 devs = sd.query_devices()
+if a.list:
+    out = []
+    for i, d in enumerate(devs):
+        if d['max_input_channels'] > 0:
+            out.append({'id': i, 'name': str(d['name']), 'sampleRate': int(d['default_samplerate'])})
+    print(json.dumps(out))
+    sys.exit(0)
+
 if a.device.isdigit():
     inputs = [i for i, d in enumerate(devs) if d['max_input_channels'] > 0]
     dev = inputs[int(a.device)]

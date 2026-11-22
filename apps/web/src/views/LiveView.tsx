@@ -26,9 +26,9 @@ import {
   Download,
   Reset,
   Terminal,
-  Chip,
-  Meter,
-  Time,
+  User,
+  Bot,
+  Router,
   Sun,
   Moon,
   Microphone,
@@ -67,8 +67,11 @@ interface Props {
   speakerMuted: boolean;
   onToggleMicMute: () => void;
   onToggleSpeakerMute: () => void;
+  captureSource?: 'apps' | 'mic';
+  onToggleCaptureSource?: () => void;
   models: { omlx: string[]; cache: string[] };
   apps: string[];
+  mics?: { id: number; name: string; sampleRate: number }[];
   contextDocs: ContextDoc[];
   onUploadDoc: (file: File, tags?: string[]) => void;
   onRemoveDoc: (name: string) => void;
@@ -98,14 +101,20 @@ interface ConversationEntry {
   text: string;
   ts: number;
   live?: boolean;
+  tag?: string;
+  nodeType?: string;
 }
 
-function stageItems(stage: Stage, models: { omlx: string[]; cache: string[] }, apps: string[]): Item[] {
+function stageItems(stage: Stage, models: { omlx: string[]; cache: string[] }, apps: string[], mics: { id: number; name: string; sampleRate: number }[] = []): Item[] {
   if (stage.kind === 'approve-mode') {
     return [{ id: 'manual', label: 'Manual' }, { id: 'auto', label: 'Auto (bypass)' }];
   }
   if (stage.kind === 'voice') return [{ id: 'female', label: 'Feminino' }, { id: 'male', label: 'Masculino' }];
   if (stage.kind === 'app') {
+    // primary dropdown = origem de captura
+    if (stage.param === 'backend') {
+      return [{ id: 'apps', label: 'Aplicações' }, { id: 'mic', label: 'Microfone' }];
+    }
     const items: Item[] = [{ id: 'auto', label: 'Automático (áudio ativo)' }];
     for (const a of apps) {
       if (a && !items.some((i) => i.id === a)) items.push({ id: a, label: a });
@@ -229,8 +238,8 @@ function riskTagType(decision?: string): 'green' | 'warm-gray' | 'red' | 'magent
 
 export function LiveView({
   runner, flow, scenarioName, theme, onToggleTheme,
-  micMuted, speakerMuted, onToggleMicMute, onToggleSpeakerMute,
-  models, apps, contextDocs,
+  micMuted, speakerMuted, onToggleMicMute, onToggleSpeakerMute, captureSource, onToggleCaptureSource,
+  models, apps, mics, contextDocs,
   onUploadDoc, onRemoveDoc, onStart, flows, currentFlow,
   onSwitchFlow, onUpdateStage, onRegenerate, onRefreshApps, onServiceStatus, onNotify,  onGoBuilder, onExit, onReset, resetSignal,
 }: Props) {
@@ -332,6 +341,10 @@ export function LiveView({
   }, [resetSignal]);
 
   const chatNode = flow.nodes.find((n) => n.type === 'input.chat');
+  const captureAppNode = flow.nodes.find(
+    (n) => n.type === 'capture.ffmpeg' && typeof n.params.input === 'string' && n.params.input.trim(),
+  );
+  const captureApp = typeof captureAppNode?.params.input === 'string' ? captureAppNode.params.input : '';
   const chatPlaceholder = chatNode
     ? ((typeof chatNode.params?.placeholder === 'string' && chatNode.params.placeholder.trim()) ||
       'Digite sua mensagem ou comando (Enter para enviar)...')
@@ -372,6 +385,8 @@ export function LiveView({
         text: caption.text,
         ts: caption.ts,
         live: true,
+        tag: kind === 'stt' ? (captureApp || 'ASR') : 'Resposta',
+        nodeType: source?.type,
       });
     };
 
@@ -379,6 +394,7 @@ export function LiveView({
       items.push({
         id: `chat-${m.ts}-${i}`, kind: 'user', nodeId: m.nodeId,
         title: 'Você', subtitle: 'Entrada escrita', text: m.text, ts: m.ts,
+        tag: captureApp || 'Chat', nodeType: chatNode?.type,
       });
     }
     for (const [i, c] of runner.captions.entries()) {
@@ -399,6 +415,10 @@ export function LiveView({
             : 'Resposta',
         text: c.text,
         ts: c.ts,
+        tag: isStt
+          ? (captureApp || (source?.type === 'asr.lfm3' ? 'Tradução' : 'ASR'))
+          : (source?.type === 'agent.tools' ? 'Especialista' : source?.type === 'translate.llm' ? 'Tradução' : 'Resposta'),
+        nodeType: source?.type,
       });
     }
     for (const [i, ev] of runner.events.entries()) {
@@ -412,6 +432,7 @@ export function LiveView({
         title: label(nodeId),
         subtitle: type === 'tts.sts' ? 'Síntese de voz' : 'Reprodução de áudio',
         text, ts: Number(ev._uiTs ?? 0),
+        tag: type === 'tts.sts' ? 'TTS' : 'Playback', nodeType: type,
       });
     }
     if (showThoughts) {
@@ -420,6 +441,7 @@ export function LiveView({
           id: `thought-${t.thoughtId}`, kind: 'thought', nodeId: t.nodeId,
           title: label(t.nodeId), subtitle: t.final ? 'Pensamento' : 'Pensamento · em andamento',
           text: t.text, ts: t.ts,
+          tag: 'Roteamento', nodeType: nodes.get(t.nodeId)?.type,
         });
       }
       const latestSteps = new Map<string, AgentStep>();
@@ -435,13 +457,14 @@ export function LiveView({
           id: `agent-step-${key}`, kind: 'thought', nodeId: s.nodeId,
           title: label(s.nodeId), subtitle: `Passo ${s.step} · ${phase}`,
           text: `${s.tool}${duration}${s.dryRun ? ' · dry-run' : ''}${args}`, ts: s.ts,
+          tag: `Passo ${s.step}`, nodeType: nodes.get(s.nodeId)?.type,
         });
       }
     }
     if (liveStt) pushLive(liveStt, 'stt');
     if (liveAgent) pushLive(liveAgent, 'agent');
     return items.sort((a, b) => a.ts - b.ts);
-  }, [flow.nodes, flow.edges, runner.chatMessages, runner.captions, runner.events, runner.thoughts, runner.agentSteps, sinks, showThoughts, liveAgent, liveStt]);
+  }, [flow.nodes, flow.edges, runner.chatMessages, runner.captions, runner.events, runner.thoughts, runner.agentSteps, sinks, showThoughts, liveAgent, liveStt, captureApp, chatNode]);
   const chatLogRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = chatLogRef.current;
@@ -634,6 +657,77 @@ export function LiveView({
     };
   };
 
+  const metricsByNode: Record<string, string> = {};
+  for (const s of stages) {
+    const mm = stageMetrics(s);
+    const parts = [mm.ctx, mm.tps, mm.time].filter((v) => v && v !== '—');
+    if (parts.length > 0) metricsByNode[s.nodeId] = parts.join(' · ');
+  }
+
+  const renderConversationEntry = (m: ConversationEntry) => {
+    const role = m.kind === 'user' ? 'Você'
+      : m.kind === 'stt' ? 'Transcrição'
+        : m.kind === 'agent' ? 'Agente'
+          : m.kind === 'audio' ? 'Voz'
+            : 'Orquestrador';
+    const tag = m.tag ?? m.subtitle;
+    let tagType: 'gray' | 'cyan' | 'green' | 'blue' | 'purple' = 'gray';
+    let accent = 'var(--cds-support-info)';
+    let icon = <User size={18} />;
+    if (m.kind === 'stt') {
+      tagType = 'cyan'; accent = 'var(--cds-support-info)'; icon = <Microphone size={18} />;
+    } else if (m.kind === 'agent') {
+      tagType = 'green'; accent = 'var(--cds-support-success-inverse)'; icon = <Bot size={18} />;
+    } else if (m.kind === 'audio') {
+      tagType = 'blue'; accent = 'var(--cds-interactive)'; icon = <VolumeUp size={18} />;
+    } else if (m.kind === 'thought') {
+      tagType = 'purple'; accent = 'var(--cds-support-purple, var(--cds-interactive))'; icon = <Router size={18} />;
+    }
+    const head = (
+      <span className="live-chat-entry-head">
+        <strong className="live-chat-entry-role">{role}</strong>
+        <Tag type={tagType} size="sm">{tag}</Tag>
+        <span className="live-chat-entry-meta">
+          {metricsByNode[m.nodeId] && (
+            <span className="live-chat-metrics" title="Contexto / Tokens por segundo / Tempo">
+              {metricsByNode[m.nodeId]}
+            </span>
+          )}
+          <time>{new Date(m.ts).toLocaleTimeString()}</time>
+        </span>
+      </span>
+    );
+    const style = { ['--accent' as string]: accent };
+    if (m.kind === 'thought') {
+      return (
+        <div key={m.id} className="live-chat-thought" data-node-id={m.nodeId} style={style}>
+          <span className="live-chat-accent" aria-hidden="true" />
+          <span className="live-chat-avatar" aria-hidden="true">{icon}</span>
+          <div className="live-chat-block-body">
+            <Accordion>
+              <AccordionItem title={head}>
+                <div className="live-chat-thought-text">{m.text}</div>
+              </AccordionItem>
+            </Accordion>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <article key={m.id} className={`live-chat-entry live-chat-entry--${m.kind}`} data-node-id={m.nodeId} style={style}>
+        <span className="live-chat-accent" aria-hidden="true" />
+        <span className="live-chat-avatar" aria-hidden="true">{icon}</span>
+        <div className="live-chat-block-body">
+          {head}
+          <div className="live-chat-entry-text">
+            {m.text}
+            {m.live && <span className="live-cursor" />}
+          </div>
+        </div>
+      </article>
+    );
+  };
+
   return (
     <div className="live2">
       <header className="live2-top">
@@ -696,7 +790,7 @@ export function LiveView({
                 size="sm"
                 hasIconOnly
                 renderIcon={micMuted ? MicrophoneOff : Microphone}
-                iconDescription={!hasCapture ? 'Workflow sem entrada de voz' : (micMuted ? 'Ativar captura de voz' : 'Mutar captura de voz')}
+                 iconDescription={!hasCapture ? 'Workflow sem entrada de voz' : (flow.nodes.some((n) => n.type === 'input.chat') ? (micMuted ? 'Usar voz' : 'Usar chat') : 'Alternar origem de áudio')}
                 tooltipPosition="bottom"
                 disabled={!hasCapture}
                 onClick={onToggleMicMute}
@@ -744,21 +838,26 @@ export function LiveView({
         <section className="live2-stages-bar" aria-label="Parâmetros e métricas por etapa">
           <div className="live2-stages">
             {stages.map((s) => {
-              const items = stageItems(s, models, apps);
-              const m = stageMetrics(s);
+              const items = stageItems(s, models, apps, mics ?? []);
               const primaryValue = s.kind === 'model-translate' && (!s.value || s.value === '—') ? '-' : s.value;
-              const isDual = Boolean(s.secondaryParam);
-              const langItems = isDual
-                ? supportedLanguagesForModel(
-                    s.kind === 'voice' ? 'LFM3-Audio' : s.value,
-                    s.secondaryKind === 'language-optional',
-                  )
-                : [];
-              const curLang = s.secondaryValue === '-' || s.secondaryValue === '—' ? '' : (s.secondaryValue ?? '');
-              const langDisabled = s.kind === 'model-translate' && (!s.value || s.value === '-' || s.value === '—');
-              const finalLangItems = curLang && !langItems.some((l) => l.id === curLang)
-                ? [{ id: curLang, label: curLang }, ...langItems]
-                : langItems;
+               const isDual = Boolean(s.secondaryParam);
+               const langItems = isDual
+                 ? supportedLanguagesForModel(
+                     s.kind === 'voice' ? 'LFM3-Audio' : s.value,
+                     s.secondaryKind === 'language-optional',
+                   )
+                 : [];
+               const curLang = s.secondaryValue === '-' || s.secondaryValue === '—' ? '' : (s.secondaryValue ?? '');
+               const langDisabled = s.kind === 'model-translate' && (!s.value || s.value === '-' || s.value === '—');
+               // capture source secondary: apps or mics
+               const captureSecondaryItems: Item[] | null = (s.kind === 'app' && s.secondaryParam === 'input')
+                 ? ((s.value === 'mic' ? (mics ?? []).map((m) => m.name) : apps)).map((v) => ({ id: v, label: v }))
+                 : null;
+               const finalLangItems = captureSecondaryItems
+                 ? (captureSecondaryItems.length ? captureSecondaryItems : [{ id: s.secondaryValue ?? '', label: s.secondaryValue ?? '—' }])
+                 : (curLang && !langItems.some((l) => l.id === curLang)
+                   ? [{ id: curLang, label: curLang }, ...langItems]
+                   : langItems);
               return (
                 <div key={s.key} className={`stage-dd${isDual ? ' stage-dd--dual' : ''}`} style={{ ['--accent' as string]: s.accent }}>
                   <span className="stage-dd-label">{s.label}</span>
@@ -793,13 +892,6 @@ export function LiveView({
                       />
                     )}
                   </div>
-                  <div className="stage-metrics-bar" title={`${s.label} · Contexto / Velocidade / Tempo`}>
-                    <span className="stage-metric-item"><Chip size={14} /><span>{m.ctx}</span></span>
-                    <span className="stage-metric-sep" aria-hidden="true">|</span>
-                    <span className="stage-metric-item"><Meter size={14} /><span>{m.tps}</span></span>
-                    <span className="stage-metric-sep" aria-hidden="true">|</span>
-                    <span className="stage-metric-item"><Time size={14} /><span>{m.time}</span></span>
-                  </div>
                 </div>
               );
             })}
@@ -822,36 +914,7 @@ export function LiveView({
                       {runner.running ? 'Envie uma mensagem para conversar com o agente.' : 'Inicie a sessão para conversar com o agente.'}
                     </p>
                   )}
-                  {conversation.map((m) => (
-                    m.kind === 'thought' ? (
-                      <Accordion key={m.id} className="live-chat-thought" data-node-id={m.nodeId}>
-                        <AccordionItem
-                          title={(
-                            <span className="live-chat-thought-heading">
-                              <span><strong>{m.title}</strong> · {m.subtitle}</span>
-                              <time>{new Date(m.ts).toLocaleTimeString()}</time>
-                            </span>
-                          )}
-                        >
-                          <div className="live-chat-thought-text">{m.text}</div>
-                        </AccordionItem>
-                      </Accordion>
-                    ) : (
-                      <article key={m.id} className={`live-chat-entry live-chat-entry--${m.kind}`} data-node-id={m.nodeId}>
-                        <header className="live-chat-entry-head">
-                          <span className="live-chat-entry-role">
-                            <strong>{m.title}</strong>
-                            <span>{m.subtitle}</span>
-                          </span>
-                          <time>{new Date(m.ts).toLocaleTimeString()}</time>
-                        </header>
-                        <div className="live-chat-entry-text">
-                          {m.text}
-                          {m.live && <span className="live-cursor" />}
-                        </div>
-                      </article>
-                    )
-                  ))}
+                  {conversation.map(renderConversationEntry)}
                 </div>
                 {hasGate && gate && !gateInfo.isCommand && (
                   <section className="live-chat-suggestion" aria-label="Sugestão de resposta pendente">
@@ -891,17 +954,17 @@ export function LiveView({
                   </section>
                 )}
                 <div className="live-chat-input">
-                  <TextArea
+                  <TextInput
                     id="live-chat-input"
                     labelText="Mensagem"
                     hideLabel
-                    rows={2}
+                    size="sm"
                     placeholder={runner.running ? chatPlaceholder : 'Inicie a sessão para conversar...'}
                     value={chatInput}
                     disabled={!runner.running || sendingChat || !chatNode}
                     onChange={(e) => setChatInput(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
+                      if (e.key === 'Enter') {
                         e.preventDefault();
                         void handleSendChat();
                       }
@@ -909,7 +972,7 @@ export function LiveView({
                   />
                   <Button
                     kind="primary"
-                    size="md"
+                    size="sm"
                     renderIcon={Play}
                     disabled={!runner.running || sendingChat || !chatInput.trim() || !chatNode}
                     onClick={() => void handleSendChat()}

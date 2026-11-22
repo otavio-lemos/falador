@@ -1,46 +1,13 @@
 {
   "version": 1,
   "stopWhenSourcesDone": false,
-  "description": "Ops / Revisão de Servidor assistida por voz (ADR-007): captura a solicitação via SCK, transcreve com Voxtral, aguarda fim de turno com d1-2B, consulta runbooks locais (.md/.pdf) via RAG BM25, classifica risco (leitura_segura/sensivel/bloqueado), exige aprovação humana e executa em modo dryRun=true por padrão com análise final do diagnóstico.",
+  "description": "Ops / Revisão de Servidor assistida por chat (ADR-007, text-only): o usuário descreve o pedido, um planejador sugere um comando de diagnóstico, o d1-2B classifica risco (leitura_segura/sensivel/bloqueado), rotas sensíveis exigem aprovação humana e a execução permanece em dryRun=true por padrão com análise final do diagnóstico.",
   "nodes": [
     {
-      "id": "captura",
-      "type": "capture.ffmpeg",
+      "id": "chat",
+      "type": "input.chat",
       "params": {
-        "input": "",
-        "chunkMs": 80,
-        "backend": "sck"
-      }
-    },
-    {
-      "id": "asr",
-      "type": "asr.realtime",
-      "params": {
-        "model": "/Users/otaviolemos/.cache/huggingface/hub/models--mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit/snapshots/fdebf7b2af834a1db4b8a3c99ab7480b333adf9e",
-        "serverVad": true,
-        "inputRate": 16000,
-        "maxPendingMs": 2000,
-        "emitInterruptOnSpeech": false
-      }
-    },
-    {
-      "id": "transcricao",
-      "type": "sink.captions",
-      "params": {
-        "mode": "callback",
-        "showParcials": true
-      }
-    },
-    {
-      "id": "turno",
-      "type": "turn.detector",
-      "params": {
-        "mode": "systemone",
-        "model": "d1-2B-MLX-4bit",
-        "minWords": 3,
-        "completeThreshold": 0.65,
-        "maxWaitMs": 2200,
-        "maxMergedTurns": 4
+        "placeholder": "Descreva o problema do servidor ou pedido de diagnóstico (Enter para enviar)..."
       }
     },
     {
@@ -157,28 +124,9 @@
   ],
   "edges": [
     {
-      "from": "captura.out",
-      "to": "asr.in",
-      "capacity": 32,
-      "overflow": "drop_oldest",
-      "ttlMs": 1500
-    },
-    {
-      "from": "asr.out",
-      "to": "transcricao.in",
-      "capacity": 16,
-      "overflow": "drop_oldest"
-    },
-    {
-      "from": "asr.out",
-      "to": "turno.in",
-      "capacity": 16,
-      "overflow": "drop_oldest"
-    },
-    {
-      "from": "turno.out",
-      "to": "planejador.parcs",
-      "capacity": 16,
+      "from": "chat.out",
+      "to": "planejador.in",
+      "capacity": 8,
       "overflow": "block"
     },
     {
