@@ -1,7 +1,7 @@
 // Deriva as ETAPAS do workflow (dropdowns por etapa da tela de execução) e
 // classifica os sinks de legenda em transcrição (alimentado pelo ASR) vs sugestão.
 import type { Flow, ContextDoc } from './api';
-import { accentOf } from './data';
+import { accentOf, shortNodeName } from './data';
 
 export interface Stage {
   key: string;
@@ -80,7 +80,7 @@ function normalizeOptionalLang(raw: unknown): string {
   return s === '-' || s === '—' ? '' : s;
 }
 
-function topoRank(flow: Flow): Map<string, number> {
+function topoRank(flow: Pick<Flow, 'nodes' | 'edges'>): Map<string, number> {
   const rank = new Map<string, number>();
   const indeg = new Map<string, number>();
   const adj = new Map<string, string[]>();
@@ -111,6 +111,28 @@ function topoRank(flow: Flow): Map<string, number> {
   }
   for (const n of flow.nodes) if (!rank.has(n.id)) rank.set(n.id, idx++);
   return rank;
+}
+
+export interface NodeDisplayName { label: string; number: number }
+
+// Nome exibido de cada componente: nome curto + número da instância na ordem
+// topológica (Input 1, Transcrição 1, Output 1, Output 2…). É a ÚNICA fonte do
+// nome mostrado no canvas, no mini-mapa, na conversa e na barra de etapas.
+export function nodeDisplayNames(
+  nodes: Flow['nodes'],
+  edges: Flow['edges'],
+): Map<string, NodeDisplayName> {
+  const rank = topoRank({ nodes, edges });
+  const ordered = [...nodes].sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
+  const count = new Map<string, number>();
+  const out = new Map<string, NodeDisplayName>();
+  for (const n of ordered) {
+    const base = shortNodeName(n.type, n.id, n.params);
+    const number = (count.get(base) ?? 0) + 1;
+    count.set(base, number);
+    out.set(n.id, { label: `${base} ${number}`, number });
+  }
+  return out;
 }
 
 export function deriveStages(flow: Flow): Stage[] {
@@ -291,7 +313,7 @@ export function deriveStages(flow: Flow): Stage[] {
 }
 
 export interface StageInstance extends Stage {
-  instanceLabel: string;
+  number: number;
   isDefault: boolean;
 }
 
@@ -305,6 +327,7 @@ export interface StageGroup {
 
 export function deriveStageGroups(flow: Flow): StageGroup[] {
   const stages = deriveStages(flow);
+  const names = nodeDisplayNames(flow.nodes, flow.edges);
   const groupsMap = new Map<string, Stage[]>();
   for (const s of stages) {
     const arr = groupsMap.get(s.label) ?? [];
@@ -313,9 +336,9 @@ export function deriveStageGroups(flow: Flow): StageGroup[] {
   }
   const out: StageGroup[] = [];
   for (const [label, list] of groupsMap) {
-    const instances: StageInstance[] = list.map((s, idx) => ({
+    const instances: StageInstance[] = list.map((s) => ({
       ...s,
-      instanceLabel: `${label} ${idx + 1}`,
+      number: names.get(s.nodeId)?.number ?? 1,
       isDefault: Boolean(s.isDefault),
     }));
     const def = instances.find((i) => i.isDefault) ?? instances[0];

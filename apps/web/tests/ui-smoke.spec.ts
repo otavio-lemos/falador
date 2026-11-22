@@ -25,6 +25,9 @@ test('builder loads a real workflow and canvas', async ({ page }) => {
   await expect(outputCat.locator('.pal-item-id', { hasText: 'sink.captions' })).toBeVisible();
   await expect(page.locator('.palette .pal-item-id', { hasText: 'sink.playback' })).toHaveCount(0);
   await expect(page.locator('.palette .pal-item-id', { hasText: 'tts.sts' })).toHaveCount(0);
+  await expect(page.locator('.fnode-title-main', { hasText: /^Input 1$/ })).toBeVisible();
+  await expect(page.locator('.fnode-title-main', { hasText: /^Transcrição 1$/ })).toBeVisible();
+  await expect(page.locator('.fnode-title-main', { hasText: /^Output 3$/ })).toBeVisible();
   // nós reais do canvas (rótulo visível é o id curto do nó)
   await expect(page.getByText('capture.ffmpeg').first()).toBeVisible();
   await expect(page.getByText('asr.realtime').first()).toBeVisible();
@@ -171,6 +174,8 @@ test('unified Input and Output stages use instance selectors, sync with topbar, 
 
   await page.getByRole('button', { name: 'Workflow' }).click();
   await expect(page.getByRole('button', { name: /Execuções/ })).toBeVisible();
+  // mini-mapa mostra o mesmo nome do componente no workflow
+  await expect(page.locator('.wf-minimap text', { hasText: /^Output 3$/ })).toBeVisible();
 
   const inputStage = page.locator('.stage-dd').filter({ has: page.locator('.stage-dd-label', { hasText: 'Input' }) }).first();
   await expect(inputStage).toBeVisible();
@@ -179,7 +184,7 @@ test('unified Input and Output stages use instance selectors, sync with topbar, 
   const inputInstCombo = inputStage.getByRole('combobox').nth(0);
   const inputModeCombo = inputStage.getByRole('combobox').nth(1);
   await expect(inputStage.getByRole('combobox')).toHaveCount(2);
-  await expect(inputInstCombo).toContainText('Input 1');
+  await expect(inputInstCombo).toContainText('1');
   await expect(inputModeCombo).toContainText('Aplicações');
   await expect(page.getByRole('button', { name: 'Recarregar apps de áudio' })).toHaveCount(0);
 
@@ -215,13 +220,13 @@ test('unified Input and Output stages use instance selectors, sync with topbar, 
   await expect(outputStage.getByRole('combobox')).toHaveCount(2);
   const outInstCombo = outputStage.getByRole('combobox').nth(0);
   const outModeCombo = outputStage.getByRole('combobox').nth(1);
-  await expect(outInstCombo).toContainText('Output 2 ★');
+  await expect(outInstCombo).toContainText('2 ★');
   await expect(outModeCombo).toContainText('Escrever');
 
   // Alterar Output 1 não altera Output 2 (padrão)
   await outInstCombo.click();
-  await expect(outputStage.getByRole('option')).toHaveText(['Output 1', 'Output 2 ★', 'Output 3']);
-  await outputStage.getByRole('option', { name: 'Output 1', exact: true }).click();
+  await expect(outputStage.getByRole('option')).toHaveText(['1', '2 ★', '3']);
+  await outputStage.getByRole('option', { name: '1', exact: true }).click();
   await outModeCombo.click();
   await outputStage.getByRole('option', { name: 'Falar', exact: true }).click();
   await expect(outModeCombo).toContainText('Falar');
@@ -230,7 +235,7 @@ test('unified Input and Output stages use instance selectors, sync with topbar, 
   const speakBtn = page.getByRole('button', { name: 'Falar' });
   await expect(speakBtn).toHaveAttribute('aria-pressed', 'false');
   await speakBtn.click();
-  await expect(outInstCombo).toContainText('Output 2 ★');
+  await expect(outInstCombo).toContainText('2 ★');
   await expect(outModeCombo).toContainText('Falar');
   const writeBtn = page.getByRole('button', { name: 'Só escrever' });
   await expect(writeBtn).toHaveAttribute('aria-pressed', 'true');

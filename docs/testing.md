@@ -54,7 +54,7 @@ cd apps/web && npx playwright test
 | `falador-nodes` | 141 | 139 | 2 (N7 mic + gate) | **86,55%** | **70,81%** | 84,88% |
 | `apps/web-server.test.mjs` + `web-server.routes.test.mjs` | 14 | 14 | 0 | não medido | — | — |
 | `packages/falador-cli` (`run-flow.test.mjs`) | 9 | 9 | 0 | não medido | — | — |
-| Playwright (`ui-smoke.spec.ts`) | 4 | 4 | 0 | — | — | — |
+| Playwright (`ui-smoke.spec.ts`) | 6 | 6 | 0 | — | — | — |
 
 Evolução desde o baseline de 2026-11-21 (antes desta rodada):
 
@@ -98,7 +98,8 @@ Maiores saltos por arquivo (nós): `sinks.ts` 53,13% → **97,32%**; `capture-ff
 - `apps/web-server.test.mjs`: RAG/contexto, export `.md`, reset-history, 409/parada por desconexão SSE, `/api/logs`, `/api/stop`+`/api/run`.
 - `apps/web-server.routes.test.mjs`: catálogo (23 nós), CRUD de flows com rename, path traversal em POST/GET/DELETE, JSON inválido = 400, `/api/models` sem omlx, `/api/apps`, allowlist/clamp de logs, gate/chat/stop sem run, 404 JSON para `/api/*` desconhecida.
 - `packages/falador-cli/test/run-flow.test.mjs`: catálogo, NDJSON puro, summary/ordem/truncamento, flow inválido, exit codes, `--run-seconds`, stdin (`reset_history`/`chat_input`) e SIGTERM < 3 s.
-- `apps/web/tests/ui-smoke.spec.ts`: 4 testes de fumaça no Chromium; o `webServer` do Playwright sobe o host (reaproveita um já ativo fora de CI).
+- `apps/web/tests/ui-smoke.spec.ts`: 6 testes de fumaça no Chromium; o `webServer` do Playwright sobe o host (reaproveita um já ativo fora de CI). Cobre o **nome exibido dos componentes** (`Input 1`, `Transcrição 1`, `Output 3` no canvas e no mini-mapa) e o dropdown de instância mostrando **só o número** (`1`, `2 ★`, `3`).
+  - **Armadilha medida em 2026-11-22:** com `reuseExistingServer`, se já houver um host em `:8787` de **outro checkout** (ex.: `~/ml/falador` servindo o `dist` antigo), a suíte testa código velho e passa/falha por engano. Para testar o worktree atual: `FALADOR_WEB_PORT=8799 node apps/web-server.mjs` + config temporário apontando `baseURL` para `:8799` (ou derrube o host antes com `./faladorctl stop`).
 
 ## 5. Técnicas usadas (e por quê)
 
@@ -118,6 +119,7 @@ Maiores saltos por arquivo (nós): `sinks.ts` 53,13% → **97,32%**; `capture-ff
 | ~~Runner CLI sem teste~~ | **RESOLVIDO 2026-11-21**: 9 testes de contrato | `packages/falador-cli/test/run-flow.test.mjs` |
 | ~~Playwright sem `webServer`~~ | **RESOLVIDO 2026-11-21**: E2E sobe o host sozinho | `playwright.config.ts` |
 | Sidecars Python não testados aqui | Worktree sem `.venv` | Rodar no checkout principal (`~/ml/falador`) ou CI com venv |
+| N4 (`llm.omlx`+`tts.sts` ao vivo) falha em 2026-11-22 | omlx `:8080` passou a exigir API key (`curl /v1/models` → `API key required`); sidecar TTS `:8091` responde 200 | configurar a chave no omlx/nó ou desligar a auth; o teste não é o culpado |
 | `faladorctl` sem teste | Shell de operação | Teste de `status`/`stop` com portas fake |
 
 ## 7. Antes de commitar

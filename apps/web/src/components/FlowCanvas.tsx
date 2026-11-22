@@ -9,6 +9,7 @@ import {
 import { FlowNode, PORT_COLOR } from './FlowNode';
 import { NodeEditor } from './NodeEditor';
 import type { FNode, FaladorNodeData } from '../flow-utils';
+import { nodeDisplayNames } from '../live-utils';
 import type { NodeMetrics, RunnerEvent, RunSnapshot } from '../api';
 
 const nodeTypes = { falador: FlowNode };
@@ -38,11 +39,20 @@ interface Props {
 export function FlowCanvas(p: Props) {
   const { screenToFlowPosition } = useReactFlow();
 
-  // enriquece nós com métricas/running
+  // nome exibido = o mesmo do workflow ("Input 1", "Output 2"…), nunca o rótulo genérico
+  const names = useMemo(
+    () => nodeDisplayNames(
+      p.nodes.map((n) => ({ id: n.id, type: n.data.type, params: n.data.params })),
+      p.edges.map((e) => ({ from: e.source, to: e.target })),
+    ),
+    [p.nodes, p.edges],
+  );
+
+  // enriquece nós com nome real + métricas/running
   const nodes = useMemo(() => p.nodes.map((n) => ({
     ...n,
-    data: { ...n.data, metrics: p.metrics[n.id], running: p.running },
-  })), [p.nodes, p.metrics, p.running]);
+    data: { ...n.data, title: names.get(n.id)?.label ?? n.data.title, metrics: p.metrics[n.id], running: p.running },
+  })), [p.nodes, p.metrics, p.running, names]);
 
   // arestas coloridas pelo tipo real da porta de saída
   const edges = useMemo(() => p.edges.map((e) => {
@@ -109,7 +119,7 @@ export function FlowCanvas(p: Props) {
       </ReactFlow>
       {p.selectedId && (
         <EditorAnchor
-          nodes={p.nodes} selectedId={p.selectedId}
+          nodes={nodes} selectedId={p.selectedId}
           onChange={(params) => p.onParamsChange(p.selectedId!, params)}
           onClose={() => p.onSelect(null)}
           metrics={p.metrics[p.selectedId]} events={p.events}

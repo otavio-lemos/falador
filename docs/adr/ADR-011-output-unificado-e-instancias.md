@@ -14,7 +14,7 @@
 
 2. **Agrupamento por componente com seletor de instância no Executor (`deriveStageGroups`)**:
    - Todos os componentes da barra de etapas (`Input`, `Transcrição`, `Assistente`, `Traduzir`, `Decisão`, `Aprovação`, `Output`, etc.) são agrupados uma única vez por tipo.
-   - Cada etapa possui um dropdown de **instância** (`Componente 1`, `Componente 2`, … — inclusive quando há só 1 instância, exibindo `Componente 1`) seguido do dropdown de configuração da instância selecionada (e idioma, quando aplicável).
+   - Cada etapa possui um dropdown de **instância** seguido do dropdown de configuração da instância selecionada (e idioma, quando aplicável). **Emenda 2026-11-22 (pedido do dono):** o dropdown de instância mostra **apenas o número** (`1`, `2`, `3`…, com `★` na padrão) — o nome do componente já está no rótulo da etapa; e o nome exibido em **todo** lugar (canvas do Builder, mini-mapa do Executor, conversa e logs) é `Nome N` (`Input 1`, `Transcrição 1`, `Output 1`, `Turno 1`, `Assistente 1`, `Decisão 1`, `Output 2`, `Aprovação 1`, `Output 3`…), com `N` na ordem topológica. Fonte única: `nodeDisplayNames()` em `apps/web/src/live-utils.ts` — nada de nome genérico de tipo no card e nada de numeração divergente entre telas.
 
 3. **Seletor de `Padrão` (`isDefault`) para `Input` e `Output` + reset pelo botão da topbar**:
    - No Builder (`capture.ffmpeg` e `sink.captions`), a propriedade booleana `isDefault` marca qual instância é a padrão (exclusiva por tipo no canvas, com tag visual `Padrão` no card).

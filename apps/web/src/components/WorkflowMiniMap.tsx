@@ -3,7 +3,8 @@
 // destacando e ampliando o(s) nó(s) que estiverem em execução no momento.
 import { useMemo } from 'react';
 import type { Flow } from '../api';
-import { accentOf, shortNodeName } from '../data';
+import { accentOf } from '../data';
+import { nodeDisplayNames } from '../live-utils';
 
 interface Props {
   flow: Flow;
@@ -23,6 +24,7 @@ interface PlacedNode {
 
 export function WorkflowMiniMap({ flow, activeNodeIds, running }: Props) {
   const layout = useMemo(() => {
+    const names = nodeDisplayNames(flow.nodes, flow.edges);
     const activeNodes = flow.nodes.filter((n) => n.enabled !== false);
     const idSet = new Set(activeNodes.map((n) => n.id));
     const edges = flow.edges
@@ -91,7 +93,7 @@ export function WorkflowMiniMap({ flow, activeNodeIds, running }: Props) {
       list.forEach((n, ri) => {
         const pn: PlacedNode = {
           id: n.id,
-          label: shortNodeName(n.type, n.id, n.params),
+          label: names.get(n.id)?.label ?? n.id,
           accent: accentOf(n.type),
           col: ci,
           row: ri,

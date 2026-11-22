@@ -47,6 +47,7 @@ import {
   deriveStages,
   deriveStageGroups,
   classifySinks,
+  nodeDisplayNames,
   shortModel,
   supportedLanguagesForModel,
   isTextModel,
@@ -58,7 +59,6 @@ import {
 } from '../live-utils';
 import { WorkflowMiniMap } from '../components/WorkflowMiniMap';
 import { LogsPanel } from '../components/LogsPanel';
-import { shortNodeName } from '../data';
 
 const WEBHOOK_STORAGE_KEY = 'falador.webhookUrl';
 const THOUGHTS_STORAGE_KEY = 'falador.showThoughts';
@@ -258,6 +258,7 @@ export function LiveView({
 }: Props) {
   const stages = useMemo(() => deriveStages(flow), [flow]);
   const stageGroups = useMemo(() => deriveStageGroups(flow), [flow]);
+  const names = useMemo(() => nodeDisplayNames(flow.nodes, flow.edges), [flow]);
   const [selectedByGroup, setSelectedByGroup] = useState<Record<string, string>>({});
   const sinks = useMemo(() => classifySinks(flow), [flow]);
 
@@ -420,10 +421,7 @@ export function LiveView({
       const to = e.to.split('.')[0];
       if (!directParent.has(to)) directParent.set(to, e.from.split('.')[0]);
     }
-    const label = (nodeId: string) => {
-      const n = nodes.get(nodeId);
-      return n ? shortNodeName(n.type, n.id, n.params) : nodeId;
-    };
+    const label = (nodeId: string) => names.get(nodeId)?.label ?? nodeId;
     const sourceLabel = (sinkId: string) => label(directParent.get(sinkId) ?? sinkId);
     const pushLive = (caption: Caption, kind: 'stt' | 'agent') => {
       const sourceId = directParent.get(caption.nodeId) ?? caption.nodeId;
@@ -906,7 +904,7 @@ export function LiveView({
                 ?? grp.instances[0];
               const instanceItems: Item[] = grp.instances.map((i) => ({
                 id: i.nodeId,
-                label: grp.instances.length > 1 && i.isDefault ? `${i.instanceLabel} ★` : i.instanceLabel,
+                label: grp.instances.length > 1 && i.isDefault ? `${i.number} ★` : String(i.number),
               }));
               const items = stageItems(s, models, apps);
               const primaryValue = s.kind === 'model-translate' && (!s.value || s.value === '—') ? '-' : s.value;
