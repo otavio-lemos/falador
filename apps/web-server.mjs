@@ -14,7 +14,8 @@
 // Executa APENAS local (127.0.0.1). Nada de rede externa (exceto webhook opt-in explícito).
 import { spawn } from 'node:child_process';
 import { createServer, get as httpGet, request as httpRequest } from 'node:http';
-import { readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
+import { connect as netConnect } from 'node:net';
+import { appendFileSync, readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join, dirname, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -25,14 +26,55 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = join(ROOT, 'packages/falador-cli/run-flow.mjs');
 const FLOWS_DIR = join(ROOT, 'apps/tui/flows');
 const DIST = join(ROOT, 'apps/web/dist');
-const LOGS_DIR = process.env.FALADOR_LOGS_DIR || join(ROOT, 'logs');
+const LOG_FILES = { omlx: 'omlx.log', asr: 'asr.log', tts: 'tts.log', web: 'web.log' };
 const PORT = Number(process.env.FALADOR_WEB_PORT ?? 8787);
 
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml' };
 const ALLOWED_DOC_EXTS = new Set(['.md', '.markdown', '.txt', '.pdf', '.yaml', '.yml', '.json']);
 
-const OMLX = process.env.FALADOR_OMLX_URL || 'http://127.0.0.1:8080';
+function getOmlxUrl() {
+  return process.env.FALADOR_OMLX_URL || 'http://127.0.0.1:8080';
+}
+function getAsrUrl() {
+  return process.env.FALADOR_ASR_URL || 'http://127.0.0.1:8090';
+}
+function getTtsUrl() {
+  return process.env.FALADOR_TTS_URL || 'http://127.0.0.1:8091';
+}
 const TEXT_MODEL = 'LFM3-1.7B-MLX-4bit';
+
+function probeHttpOk(url, timeoutMs = 1200) {
+  return new Promise((resolve) => {
+    const req = httpGet(url, { timeout: timeoutMs }, (r) => {
+      r.resume();
+      resolve(typeof r.statusCode === 'number' && r.statusCode >= 200 && r.statusCode < 300);
+    });
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+  });
+}
+
+function probeTcpOk(urlStr, timeoutMs = 1200) {
+  return new Promise((resolve) => {
+    try {
+      const u = new URL(urlStr);
+      const port = Number(u.port) || (u.protocol === 'https:' ? 443 : 80);
+      const socket = netConnect({ host: u.hostname, port });
+      let settled = false;
+      const done = (ok) => {
+        if (settled) return;
+        settled = true;
+        socket.destroy();
+        resolve(ok);
+      };
+      socket.setTimeout(timeoutMs, () => done(false));
+      socket.once('connect', () => done(true));
+      socket.once('error', () => done(false));
+    } catch {
+      resolve(false);
+    }
+  });
+}
 
 function getContextDir() {
   return process.env.FALADOR_CONTEXT_DIR || join(ROOT, 'context');
@@ -42,6 +84,9 @@ function getContextFile() {
 }
 function getSessionsDir() {
   return process.env.FALADOR_SESSIONS_DIR || join(ROOT, 'sessions');
+}
+function getLogsDir() {
+  return process.env.FALADOR_LOGS_DIR || join(ROOT, 'logs');
 }
 
 let currentRun = null; // { child, clients:Set<res>, stopRequested }
@@ -98,7 +143,7 @@ function omlxChat(messages, maxTokens = 256) {
       chat_template_kwargs: { enable_thinking: false },
     });
     const req = httpRequest(
-      OMLX + '/v1/chat/completions',
+      `${getOmlxUrl()}/v1/chat/completions`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
@@ -331,9 +376,23 @@ function classifyFlowTranscriptionSinks(flow) {
   return transcription;
 }
 
-function json(res, code, body) {
+function formatLogTimestamp(d = new Date()) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
+function appendWebLog(msg) {
+  try {
+    const dir = getLogsDir();
+    mkdirSync(dir, { recursive: true });
+    const clean = String(msg ?? '').replace(/\r?\n/g, ' ').trim();
+    if (!clean) return;
+    appendFileSync(join(dir, LOG_FILES.web), `[${formatLogTimestamp()}] ${clean}\n`, 'utf-8');
+  } catch { /* nunca falha o servidor por erro de escrita no log */ }
+}
+
+function json(res, code, body, extraHeaders = {}) {
   const data = JSON.stringify(body);
-  res.writeHead(code, { 'Content-Type': 'application/json' });
+  res.writeHead(code, { 'Content-Type': 'application/json', ...extraHeaders });
   res.end(data);
 }
 
@@ -365,7 +424,10 @@ function startRun(flow, runSeconds, flowName) {
   const clients = new Set();
   const transcriptionSinks = classifyFlowTranscriptionSinks(flow);
   sessionBuffer = createEmptySession(flowName || flow?.name || 'sessao');
-  currentRun = { child, clients, stopRequested: false };
+  let resolveExit;
+  const exitPromise = new Promise((r) => { resolveExit = r; });
+  const runEntry = { child, clients, stopRequested: false, exitPromise };
+  currentRun = runEntry;
   let clientStopTimer = null;
   const sses = (res) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
@@ -433,24 +495,42 @@ function startRun(flow, runSeconds, flowName) {
           try { if (child.exitCode === null) child.kill('SIGKILL'); } catch { /* race de exit */ }
         }, 300);
       }
-      if (ev.type === 'node_error' || ev.type === 'flow_invalid' || ev.type === 'edge_overflow' || ev.type === 'run_stopped') {
-        console.error(`[runner] ${JSON.stringify(ev).slice(0, 500)}`);
+      if (ev.type === 'run_started') {
+        appendWebLog(`[runner] run_started flow=${flowName || flow?.name || 'sessao'} runId=${ev.runId ?? ''}`.trim());
+      } else if (ev.type === 'node_error') {
+        appendWebLog(`[runner] node_error [${ev.nodeId ?? '?'}] (${ev.code ?? 'error'}): ${String(ev.message ?? '').slice(0, 500)}`);
+      } else if (ev.type === 'flow_invalid') {
+        appendWebLog(`[runner] flow_invalid: ${String(ev.error ?? JSON.stringify(ev)).slice(0, 500)}`);
+      } else if (ev.type === 'edge_overflow') {
+        appendWebLog(`[runner] edge_overflow: ${JSON.stringify(ev).slice(0, 500)}`);
+      } else if (ev.type === 'run_stopped') {
+        appendWebLog(`[runner] run_stopped runId=${ev.runId ?? ''} reason=${ev.reason ?? ''}`.trim());
       }
       broadcast('runner', ev);
     }
   });
   child.stderr.on('data', (d) => {
-    const line = d.toString().trim();
-    if (line) console.error(`[runner stderr] ${line}`);
+    const raw = d.toString();
+    for (const l of raw.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)) {
+      appendWebLog(`[runner_stderr] ${l.slice(0, 500)}`);
+    }
+    const line = raw.trim();
     broadcast('runner_stderr', { line });
   });
+  child.on('error', (err) => {
+    appendWebLog(`[runner] spawn_error: ${String(err?.message ?? err).slice(0, 500)}`);
+  });
   child.on('exit', (code) => {
+    if (code && code !== 0) {
+      appendWebLog(`[runner] exit code=${code}`);
+    }
     sessionBuffer.endedAt = new Date().toISOString();
     broadcast('ended', { code });
     for (const res of clients) {
       try { res.end(); } catch { /* já fechado */ }
     }
-    currentRun = null;
+    if (currentRun === runEntry) currentRun = null;
+    resolveExit();
   });
   return { sse: sses, pid: child.pid };
 }
@@ -473,11 +553,19 @@ async function handleApi(req, res, pathname) {
     });
     return json(res, 200, { flows }), true;
   }
+  if (pathname === '/api/services/status' && req.method === 'GET') {
+    const [asr, omlx, tts] = await Promise.all([
+      probeTcpOk(getAsrUrl()),
+      probeHttpOk(`${getOmlxUrl()}/v1/models`),
+      probeHttpOk(`${getTtsUrl()}/health`),
+    ]);
+    return json(res, 200, { services: { web: true, asr, omlx, tts }, ts: Date.now() }, { 'Cache-Control': 'no-store' }), true;
+  }
   if (pathname === '/api/models' && req.method === 'GET') {
     // REUTILIZA serviços que existem: /v1/models do omlx (:8080) + cache HF local (nomes de dir).
     const omlx = await new Promise((resolve) => {
       let out = '';
-      const h = httpGet(`${OMLX}/v1/models`, { timeout: 2500 }, (r) => {
+      const h = httpGet(`${getOmlxUrl()}/v1/models`, { timeout: 2500 }, (r) => {
         r.on('data', (d) => (out += d));
         r.on('end', () => { try { resolve(JSON.parse(out).data.map((m) => m.id)); } catch { resolve([]); } });
       });
@@ -496,49 +584,84 @@ async function handleApi(req, res, pathname) {
     if (!existsSync(bin)) return json(res, 200, { apps: [], note: 'capture-sck ainda não compilado (rode um flow sck primeiro)' }), true;
     const child = spawn(bin, ['--list'], { stdio: ['ignore', 'pipe', 'ignore'] });
     let out = '';
-    const to = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* já morto */ } }, 6000);
+    let settled = false;
+    const reply = (payload) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(to);
+      json(res, 200, payload);
+    };
+    const to = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch { /* já morto */ }
+      reply({ apps: [], note: 'timeout ao listar apps' });
+    }, 6000);
+    child.on('error', (err) => reply({ apps: [], note: `erro ao listar apps: ${err.message}` }));
     child.stdout.on('data', (d) => (out += d));
     child.on('exit', () => {
-      clearTimeout(to);
       try {
-        const raw = JSON.parse(out);
-        const SKIP_PREFIXES = ['com.apple.'];
-        const SKIP_SUFFIXES = ['.xpc', '.helper', 'Service', 'Agent', 'Daemon'];
-        const SKIP_NAMES = [
-          'loginwindow', 'Dock', 'Finder', 'WindowManager',
-          'CursorUIViewService', 'LocalAuthenticationRemoteService',
-          'AccessibilityVisualsAgent', 'MenuBarAgent', 'TextInputSwitcher',
-          'UserNotificationCenter',
-        ];
+        const raw = JSON.parse(out).map((a) => ({
+          ...a,
+          name: String(a.name ?? '').replace(/[\u200e\u200f]/g, '').trim(),
+        }));
+        // Mantém SOMENTE apps reais de voz / chamadas / browsers (Meet/Teams web) / mídia.
+        // Exclui helpers/xpc do macOS (ex: Preencher Automaticamente, Open and Save Panel) e utilitários sem voz.
+        const APPLE_AUDIO_BUNDLES = new Set(['com.apple.Safari', 'com.apple.FaceTime', 'com.apple.QuickTimePlayerX', 'com.apple.Music', 'com.apple.TV']);
+        const VOICE_APP_RE = /\b(teams|zoom|meet|chrome|safari|firefox|arc|brave|edge|opera|vivaldi|whatsapp|discord|slack|telegram|facetime|webex|skype|signal|quicktime|spotify|music|vlc|iina|loom|krisp|obs|gather|around|tuple|pop|huddle|phone)\b/i;
+        const SKIP_HELPER_RE = /(helper|xpc|service|agent|daemon|preencher|open and save)/i;
         const apps = raw.filter((a) => {
-          if (!a.bundleId) return false;
-          if (SKIP_PREFIXES.some((p) => a.bundleId.startsWith(p))) return false;
-          if (SKIP_SUFFIXES.some((s) => a.bundleId.endsWith(s) || a.name.endsWith(s))) return false;
-          if (SKIP_NAMES.includes(a.name)) return false;
-          return true;
+          if (!a.bundleId || !a.name) return false;
+          if (SKIP_HELPER_RE.test(a.bundleId) || SKIP_HELPER_RE.test(a.name)) return false;
+          if (a.bundleId.startsWith('com.apple.') && !APPLE_AUDIO_BUNDLES.has(a.bundleId)) return false;
+          return VOICE_APP_RE.test(a.name) || VOICE_APP_RE.test(a.bundleId);
         });
-        return json(res, 200, { apps });
-      } catch { return json(res, 200, { apps: [] }); }
+        reply({ apps });
+      } catch { reply({ apps: [] }); }
     });
     return true;
   }
   if (pathname === '/api/logs' && req.method === 'GET') {
-    // Logs dos 4 serviços residentes (escritos por ./faladorctl em logs/<name>.log).
+    // Logs dos 4 serviços residentes (omlx/asr/tts via faladorctl e web via appendWebLog/host).
     // Allowlist fixa de nomes: nunca lê caminho arbitrário.
-    const LOG_FILES = { omlx: 'omlx.log', asr: 'asr.log', tts: 'tts.log', web: 'web.log' };
+    const noStore = { 'Cache-Control': 'no-store' };
     const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
-    const name = String(u.searchParams.get('name') ?? 'web').toLowerCase();
-    const file = LOG_FILES[name];
-    if (!file) return json(res, 400, { error: `nome inválido (use: ${Object.keys(LOG_FILES).join(', ')})` }), true;
+    const name = String(u.searchParams.get('name') ?? 'web').trim().toLowerCase();
+    const file = Object.hasOwn(LOG_FILES, name) ? LOG_FILES[name] : null;
+    if (!file) return json(res, 400, { error: `nome inválido (use: ${Object.keys(LOG_FILES).join(', ')})` }, noStore), true;
     const maxLines = Math.min(Math.max(Number(u.searchParams.get('lines')) || 200, 1), 2000);
-    const p = join(LOGS_DIR, file);
+    const p = join(getLogsDir(), file);
     if (!existsSync(p)) {
-      return json(res, 200, { name, path: p, lines: [], total: 0, truncated: false, note: 'log ainda não existe — suba os serviços com ./faladorctl start' }), true;
+      return json(res, 200, { name, path: p, lines: [], total: 0, truncated: false, note: 'log ainda não existe — suba os serviços com ./faladorctl start' }, noStore), true;
     }
-    const all = readFileSync(p, 'utf-8').split(/\r?\n/);
+    // Remove eventuais bytes NUL esparsos caso um log aberto via `>` (sem O_APPEND) tenha sido truncado.
+    const raw = readFileSync(p, 'utf-8').replace(/\0+/g, '');
+    const all = raw ? raw.split(/\r?\n/) : [];
     while (all.length && all[all.length - 1] === '') all.pop();
     const tail = all.slice(-maxLines);
-    return json(res, 200, { name, path: p, lines: tail, total: all.length, truncated: all.length > tail.length }), true;
+    return json(res, 200, { name, path: p, lines: tail, total: all.length, truncated: all.length > tail.length }, noStore), true;
+  }
+  if (pathname === '/api/logs/clear' && req.method === 'POST') {
+    const body = await readBody(req);
+    const noStore = { 'Cache-Control': 'no-store' };
+    let targets;
+    if (body.names === undefined) {
+      targets = Object.keys(LOG_FILES);
+    } else {
+      if (!Array.isArray(body.names)) {
+        return json(res, 400, { error: `names deve ser array (use: ${Object.keys(LOG_FILES).join(', ')})` }, noStore), true;
+      }
+      const normalized = body.names.map((n) => String(n ?? '').trim().toLowerCase());
+      const invalid = normalized.filter((n) => !Object.hasOwn(LOG_FILES, n));
+      if (invalid.length > 0) {
+        return json(res, 400, { error: `nome inválido (${invalid.join(', ')}); use: ${Object.keys(LOG_FILES).join(', ')}` }, noStore), true;
+      }
+      targets = [...new Set(normalized)];
+    }
+    const dir = getLogsDir();
+    if (targets.length > 0) mkdirSync(dir, { recursive: true });
+    for (const name of targets) {
+      writeFileSync(join(dir, LOG_FILES[name]), '', 'utf-8');
+    }
+    return json(res, 200, { ok: true, cleared: targets }, noStore), true;
   }
   if (pathname.startsWith('/api/flows/') && req.method === 'GET') {
     const name = decodeURIComponent(pathname.slice('/api/flows/'.length));
@@ -546,6 +669,13 @@ async function handleApi(req, res, pathname) {
     if (!p.startsWith(FLOWS_DIR) || !existsSync(p)) { res.writeHead(404); return res.end('not found'), true; }
     const flow = JSON.parse(readFileSync(p, 'utf-8'));
     return json(res, 200, { name, flow }), true;
+  }
+  if (pathname.startsWith('/api/flows/') && req.method === 'DELETE') {
+    const name = decodeURIComponent(pathname.slice('/api/flows/'.length));
+    const p = join(FLOWS_DIR, name + '.json');
+    if (!p.startsWith(FLOWS_DIR) || !existsSync(p)) { res.writeHead(404); return res.end('not found'), true; }
+    unlinkSync(p);
+    return json(res, 200, { ok: true, deleted: name }), true;
   }
   if (pathname === '/api/flows' && req.method === 'POST') {
     const body = await readBody(req);
@@ -562,9 +692,15 @@ async function handleApi(req, res, pathname) {
   }
   if (pathname === '/api/run' && req.method === 'POST') {
     const body = await readBody(req);
-    if (!body.flow) return json(res, 400, { error: 'flow obrigatório' }), true;
+    if (!body.flow) {
+      appendWebLog('[api/run] 400 flow obrigatório');
+      return json(res, 400, { error: 'flow obrigatório' }), true;
+    }
     const r = startRun(body.flow, body.runSeconds ?? 0, body.flowName);
-    if (r.error) return json(res, 409, r), true;
+    if (r.error) {
+      appendWebLog(`[api/run] 409 ${r.error}`);
+      return json(res, 409, r), true;
+    }
     r.sse(res);
     return true;
   }
@@ -607,9 +743,17 @@ async function handleApi(req, res, pathname) {
     return json(res, 200, { ok: true }), true;
   }
   if (pathname === '/api/stop' && req.method === 'POST') {
-    if (!currentRun) return json(res, 200, { ok: 'nenhum run' }), true;
-    currentRun.stopRequested = true;
-    currentRun.child.kill('SIGTERM');
+    const run = currentRun;
+    if (!run) return json(res, 200, { ok: 'nenhum run' }), true;
+    run.stopRequested = true;
+    try { run.child.kill('SIGTERM'); } catch { /* já morto */ }
+    const killTimer = setTimeout(() => {
+      try { if (run.child.exitCode === null) run.child.kill('SIGKILL'); } catch { /* já morto */ }
+    }, 2800);
+    killTimer.unref?.();
+    await Promise.race([run.exitPromise, new Promise((r) => setTimeout(r, 3300))]);
+    clearTimeout(killTimer);
+    if (currentRun === run) currentRun = null;
     return json(res, 200, { ok: true }), true;
   }
   if (pathname === '/api/session/export' && req.method === 'POST') {
@@ -721,6 +865,7 @@ export function createWebServer() {
       res.writeHead(200, { 'Content-Type': mime[extname(file)] ?? 'application/octet-stream' });
       res.end(readFileSync(file));
     } catch (e) {
+      appendWebLog(`[http] 500 ${req.method} ${pathname}: ${String(e?.message ?? e).slice(0, 500)}`);
       json(res, 500, { error: String(e) });
     }
   });
