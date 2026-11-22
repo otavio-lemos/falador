@@ -220,12 +220,12 @@ test('unified Input and Output stages use instance selectors, sync with topbar, 
   await expect(outputStage.getByRole('combobox')).toHaveCount(2);
   const outInstCombo = outputStage.getByRole('combobox').nth(0);
   const outModeCombo = outputStage.getByRole('combobox').nth(1);
-  await expect(outInstCombo).toContainText('2 ★');
+  await expect(outInstCombo).toContainText('2');
   await expect(outModeCombo).toContainText('Escrever');
 
   // Alterar Output 1 não altera Output 2 (padrão)
   await outInstCombo.click();
-  await expect(outputStage.getByRole('option')).toHaveText(['1', '2 ★', '3']);
+  await expect(outputStage.getByRole('option')).toHaveText(['1', '2', '3']);
   await outputStage.getByRole('option', { name: '1', exact: true }).click();
   await outModeCombo.click();
   await outputStage.getByRole('option', { name: 'Falar', exact: true }).click();
@@ -235,7 +235,7 @@ test('unified Input and Output stages use instance selectors, sync with topbar, 
   const speakBtn = page.getByRole('button', { name: 'Falar' });
   await expect(speakBtn).toHaveAttribute('aria-pressed', 'false');
   await speakBtn.click();
-  await expect(outInstCombo).toContainText('2 ★');
+  await expect(outInstCombo).toContainText('2');
   await expect(outModeCombo).toContainText('Falar');
   const writeBtn = page.getByRole('button', { name: 'Só escrever' });
   await expect(writeBtn).toHaveAttribute('aria-pressed', 'true');

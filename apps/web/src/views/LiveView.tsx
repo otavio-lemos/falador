@@ -904,7 +904,7 @@ export function LiveView({
                 ?? grp.instances[0];
               const instanceItems: Item[] = grp.instances.map((i) => ({
                 id: i.nodeId,
-                label: grp.instances.length > 1 && i.isDefault ? `${i.number} ★` : String(i.number),
+                label: String(i.number),
               }));
               const items = stageItems(s, models, apps);
               const primaryValue = s.kind === 'model-translate' && (!s.value || s.value === '—') ? '-' : s.value;
