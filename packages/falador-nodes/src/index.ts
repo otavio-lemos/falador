@@ -1,6 +1,7 @@
 // falador-nodes — ponto de entrada: registro dos nós reais
 import type { Registry } from '../../falador-graph/src/index.ts';
 import { llmOmlx } from './llm-omlx.ts';
+import { translateLlm } from './translate-llm.ts';
 import { ttsSts } from './tts-sts.ts';
 import { asrRealtime, LFM3_AUDIO_SNAPSHOT } from './asr-realtime.ts';
 import { asrLfm3 } from './asr-lfm3.ts';
@@ -19,6 +20,7 @@ import { toolWebSearch } from './tool-web-search.ts';
 import { toolCrawler } from './tool-crawler.ts';
 
 export { llmOmlx, type ContextProvider } from './llm-omlx.ts';
+export { translateLlm } from './translate-llm.ts';
 export { ttsSts, type AudioChunkPayload } from './tts-sts.ts';
 export { asrRealtime, LFM3_AUDIO_SNAPSHOT, VOXTRAL_SNAPSHOT } from './asr-realtime.ts';
 export { asrLfm3 } from './asr-lfm3.ts';
@@ -78,6 +80,7 @@ export { postJsonBytes, postSse, payloadText } from './sse.ts';
 export function registerFaladorNodes(registry: Registry): Registry {
   return registry
     .register(llmOmlx)
+    .register(translateLlm)
     .register(ttsSts)
     .register(asrRealtime)
     .register(asrLfm3)
