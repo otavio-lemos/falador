@@ -2,8 +2,8 @@
 // (Novo, Editar, Salvar) · pill de latência · Modelos · Testar Fluxo · Iniciar Live.
 // A edição de nome + descrição abre um Modal Carbon limpo com TextInput + TextArea.
 import { useEffect, useState } from 'react';
-import { Button, Dropdown, Modal, Search, Tag, TextArea, TextInput } from '@carbon/react';
-import { Save, Play, Stop, ArrowLeft, Edit, Add, Catalog, Bot } from '@carbon/icons-react';
+import { Button, Dropdown, Modal, Search, TextArea, TextInput } from '@carbon/react';
+import { Save, Play, Stop, Edit, Add, Catalog, Bot, Copy, TrashCan } from '@carbon/icons-react';
 import { isTextModel, isAsrModel, isTtsModel, isStsModel, isDecisionModel } from '../live-utils';
 
 export interface FlowItem {
@@ -15,6 +15,8 @@ interface Props {
   view: 'builder' | 'live';
   latencyMs: number | null;
   running: boolean;
+  theme: 'g100' | 'white';
+  onToggleTheme: () => void;
   flows: FlowItem[];
   currentFlow: string;
   description: string;
@@ -25,6 +27,8 @@ interface Props {
   onSelectFlow: (name: string) => void;
   onRename: (newName: string, newDesc: string) => void;
   onNewFlow: () => void;
+  onDuplicateFlow: () => void;
+  onDeleteFlow: () => void;
   onSave: () => void;
   onTest: () => void;
   onGoLive: () => void;
@@ -91,106 +95,115 @@ export function TopBar(p: Props) {
   return (
     <header className="topbar">
       <div className="topbar-left">
-        <span className="topbar-title">Audio AI Pipeline Builder</span>
-
-        {p.view === 'builder' && (
-          <div className="topbar-flow">
-            <div className="topbar-flow-select">
-              <Dropdown
-                id="topbar-flow-dropdown"
-                size="md"
-                titleText="Workflow"
-                hideLabel
-                label="Selecionar workflow"
-                items={p.flows}
-                itemToString={(item) => (item ? item.name : '')}
-                selectedItem={selectedFlowItem}
-                onChange={({ selectedItem }) => {
-                  if (selectedItem) p.onSelectFlow(selectedItem.name);
-                }}
-              />
-            </div>
+        <div className="live2-workflow-col">
+          <div className="nav-mode-tabs" role="tablist" aria-label="Modo da interface">
             <Button
-              kind="tertiary"
-              size="md"
-              hasIconOnly
-              renderIcon={Add}
-              iconDescription="Novo workflow"
-              tooltipPosition="bottom"
-              onClick={p.onNewFlow}
-            />
+              kind={p.view === 'builder' ? 'primary' : 'tertiary'}
+              size="sm"
+              onClick={p.onGoBuilder}
+            >
+              Builder
+            </Button>
             <Button
-              kind="tertiary"
-              size="md"
-              hasIconOnly
-              renderIcon={Edit}
-              iconDescription="Editar nome e descrição"
-              tooltipPosition="bottom"
-              onClick={p.onOpenEdit}
+              kind={p.view === 'live' ? 'primary' : 'tertiary'}
+              size="sm"
+              onClick={p.onGoLive}
               disabled={!p.currentFlow}
-            />
-            <Button
-              kind="tertiary"
-              size="md"
-              hasIconOnly
-              renderIcon={Save}
-              iconDescription="Salvar workflow"
-              tooltipPosition="bottom"
-              onClick={p.onSave}
-              disabled={!p.currentFlow}
+            >
+              Workflow
+            </Button>
+          </div>
+          <div className="live-flow-select">
+            <Dropdown
+              id="topbar-flow-dropdown"
+              size="sm"
+              titleText="Workflow"
+              hideLabel
+              label="Selecionar workflow"
+              items={p.flows}
+              itemToString={(item) => (item ? item.name : '')}
+              selectedItem={selectedFlowItem}
+              onChange={({ selectedItem }) => {
+                if (selectedItem) p.onSelectFlow(selectedItem.name);
+              }}
             />
           </div>
-        )}
+        </div>
+
+        <div className="topbar-aux-grid">
+          <Button
+            kind="tertiary"
+            size="sm"
+            renderIcon={Add}
+            onClick={p.onNewFlow}
+          >
+            Novo
+          </Button>
+          <Button
+            kind="tertiary"
+            size="sm"
+            renderIcon={Save}
+            onClick={p.onSave}
+            disabled={!p.currentFlow}
+          >
+            Salvar
+          </Button>
+          <Button
+            kind="tertiary"
+            size="sm"
+            renderIcon={Copy}
+            onClick={p.onDuplicateFlow}
+            disabled={!p.currentFlow}
+          >
+            Duplicar
+          </Button>
+          <Button
+            kind="danger--tertiary"
+            size="sm"
+            renderIcon={TrashCan}
+            onClick={p.onDeleteFlow}
+            disabled={!p.currentFlow}
+          >
+            Remover
+          </Button>
+        </div>
       </div>
 
-      <div className="topbar-center">
-        <Tag type="green" size="md" className="latency-pill">
-          Live Latency: {p.latencyMs != null ? `${Math.round(p.latencyMs)}ms` : '—'}
-        </Tag>
-      </div>
-
-      <div className="topbar-right">
+      <div className="topbar-right-grid">
         <Button
           kind="tertiary"
-          size="md"
+          size="sm"
           renderIcon={Bot}
           onClick={p.onOpenWorkflowAgent}
         >
-          Agente Workflows
+          Eu ajudo
         </Button>
+        {p.running ? (
+          <Button kind="danger" size="sm" renderIcon={Stop} onClick={p.onStop}>
+            Parar
+          </Button>
+        ) : (
+          <Button kind="secondary" size="sm" renderIcon={Play} onClick={p.onTest}>
+            Testar
+          </Button>
+        )}
         <Button
           kind="tertiary"
-          size="md"
+          size="sm"
           renderIcon={Catalog}
           onClick={() => setModelsOpen(true)}
         >
           Modelos
         </Button>
-        {p.view === 'builder' ? (
-          p.running ? (
-            <Button kind="danger" size="md" renderIcon={Stop} onClick={p.onStop}>
-              Parar
-            </Button>
-          ) : (
-            <>
-              <Button kind="secondary" size="md" renderIcon={Play} onClick={p.onTest}>
-                Testar Fluxo
-              </Button>
-              <Button kind="primary" size="md" renderIcon={Play} onClick={p.onGoLive}>
-                Iniciar Live
-              </Button>
-            </>
-          )
-        ) : (
-          <>
-            <Button kind="secondary" size="md" renderIcon={ArrowLeft} onClick={p.onGoBuilder}>
-              Builder
-            </Button>
-            <Button kind="danger" size="md" renderIcon={Stop} onClick={p.onStop} disabled={!p.running}>
-              Parar
-            </Button>
-          </>
-        )}
+        <Button
+          kind="tertiary"
+          size="sm"
+          renderIcon={Edit}
+          onClick={p.onOpenEdit}
+          disabled={!p.currentFlow}
+        >
+          Detalhes
+        </Button>
       </div>
 
       {/* Modal Carbon: Editar nome e descrição do workflow */}

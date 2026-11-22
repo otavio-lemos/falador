@@ -1,6 +1,6 @@
 // Conversão flow JSON (runner) ↔ React Flow + auto-layout em camadas sem cruzamentos.
 import type { Node, Edge } from '@xyflow/react';
-import type { Catalog, CatalogNode, Flow } from './api';
+import type { Catalog, CatalogNode, Flow, NodeMetrics } from './api';
 import { accentOf, NODE_META } from './data';
 
 export interface FaladorNodeData {
@@ -13,7 +13,7 @@ export interface FaladorNodeData {
   accent: string;
   title: string;
   subtitle: string;
-  metrics?: { p50?: number; ttft?: number; in: number; out: number };
+  metrics?: NodeMetrics;
   running?: boolean;
   [k: string]: unknown;
 }

@@ -21,7 +21,10 @@ function portColor(type: string) {
 }
 
 export const FlowNode = memo(({ data, selected }: NodeProps<FNode>) => {
-  const latency = data.metrics?.ttft ?? data.metrics?.p50;
+  const ttftTimer = data.metrics?.timers
+    ? Object.entries(data.metrics.timers).find(([k]) => k.includes('ttft'))?.[1]?.lastMs
+    : undefined;
+  const latency = ttftTimer ?? data.metrics?.procMsP50;
   const maxPorts = Math.max(data.inputs.length, data.outputs.length);
 
   return (

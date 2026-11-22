@@ -93,12 +93,23 @@ export function useRunner() {
   const [latency, setLatency] = useState<number | null>(null);
   const [latencyBreakdown, setLatencyBreakdown] = useState<LatencyBreakdown | null>(null);
   const [lastRunError, setLastRunError] = useState<string | null>(null);
+  const [collectResults, setCollectResults] = useState<Record<string, unknown[]>>({});
   const ctlRef = useRef<AbortController | null>(null);
+  const genRef = useRef(0);
 
-  const applyMetrics = (snap: RunSnapshot) => {
+  const extractNodesSnapshot = (raw: unknown): RunSnapshot => {
+    if (!raw || typeof raw !== 'object') return {};
+    const obj = raw as Record<string, unknown>;
+    if (obj.nodes && typeof obj.nodes === 'object') return obj.nodes as RunSnapshot;
+    return obj as RunSnapshot;
+  };
+
+  const applyMetrics = (raw: unknown) => {
+    const snap = extractNodesSnapshot(raw);
     setMetrics(snap);
     let ttft: number | null = null;
     for (const m of Object.values(snap)) {
+      if (!m || typeof m !== 'object') continue;
       for (const [k, t] of Object.entries(m.timers ?? {})) {
         if (k.includes('ttft')) ttft = t.lastMs;
       }
@@ -107,11 +118,11 @@ export function useRunner() {
   };
 
   const start = (flow: Flow, flowName?: string) => {
-    // Run único no host: pare (idempotente) o run anterior ANTES de abrir outro,
-    // senão o host responde 409 e a UI fica "parada" sem mostrar erro.
+    // Run único no host: serializa stopRun() + guarda de geração antes de abrir outro,
+    // evitando 409 e impedindo que um stop atrasado mate o run recém-aberto.
+    const myGen = ++genRef.current;
     ctlRef.current?.abort();
     ctlRef.current = null;
-    void stopRun();
 
     setRunning(true);
     setLastRunError(null);
@@ -121,73 +132,95 @@ export function useRunner() {
     setGates([]);
     setAgentSteps([]);
     setChatMessages([]);
+    setCollectResults({});
     setLatency(null);
     setLatencyBreakdown(null);
-    // Guarda de geração: callbacks de um run antigo (abortado/desconectado) não
-    // podem derrubar o estado `running` nem sobrescrever o erro do run atual.
-    let myCtl: AbortController;
-    myCtl = openRun(
-      flow,
-      (ev) => {
-        setEvents((e) => [...e.slice(-400), ev]);
-        if (ev.type === 'metrics') applyMetrics(ev.snapshot as RunSnapshot);
-        else if (ev.type === 'summary') applyMetrics((ev.metrics as RunSnapshot) ?? {});
-        else if (ev.type === 'caption') {
-          const trace = ev.trace && typeof ev.trace === 'object' ? (ev.trace as TraceMeta) : undefined;
-          setCaptions((c) => [
-            ...c.slice(-120),
-            { nodeId: String(ev.nodeId), text: String(ev.text ?? ''), final: !!ev.final, ts: Date.now(), ...(trace ? { trace } : {}) },
-          ]);
-          if (trace) {
-            const bd = computeBreakdown(trace);
-            if (Object.keys(bd).length > 0) {
-              setLatencyBreakdown(bd);
-              if (bd.totalMs != null) setLatency(bd.totalMs);
-              else if (bd.llmTtftMs != null) setLatency(bd.llmTtftMs);
+
+    void (async () => {
+      try { await stopRun(); } catch { /* host pode estar offline; openRun reportará */ }
+      if (genRef.current !== myGen) return;
+
+      let myCtl: AbortController;
+      myCtl = openRun(
+        flow,
+        (ev) => {
+          if (genRef.current !== myGen) return;
+          setEvents((e) => [...e.slice(-400), ev]);
+          if (ev.type === 'flow_invalid') {
+            setLastRunError(String(ev.error ?? 'Workflow inválido'));
+          } else if (ev.type === 'runner_stderr' && typeof ev.line === 'string' && ev.line.trim()) {
+            setLastRunError((cur) => cur ?? String(ev.line).trim());
+          } else if (ev.type === 'metrics') {
+            applyMetrics(ev.snapshot);
+          } else if (ev.type === 'summary') {
+            const sum = ev.summary as { metrics?: unknown } | undefined;
+            applyMetrics(sum?.metrics ?? ev.metrics);
+            if (ev.results && typeof ev.results === 'object') {
+              setCollectResults(ev.results as Record<string, unknown[]>);
             }
+          } else if (ev.type === 'caption') {
+            const trace = ev.trace && typeof ev.trace === 'object' ? (ev.trace as TraceMeta) : undefined;
+            setCaptions((c) => [
+              ...c.slice(-120),
+              { nodeId: String(ev.nodeId), text: String(ev.text ?? ''), final: !!ev.final, ts: Date.now(), ...(trace ? { trace } : {}) },
+            ]);
+            if (trace) {
+              const bd = computeBreakdown(trace);
+              if (Object.keys(bd).length > 0) {
+                setLatencyBreakdown(bd);
+                if (bd.totalMs != null) setLatency(bd.totalMs);
+                else if (bd.llmTtftMs != null) setLatency(bd.llmTtftMs);
+              }
+            }
+          } else if (ev.type === 'gate') {
+            const meta = ev.meta && typeof ev.meta === 'object' ? (ev.meta as GateMeta) : undefined;
+            setGates((g) => [
+              ...g.filter((x) => x.nodeId !== ev.nodeId),
+              { nodeId: String(ev.nodeId), text: String(ev.text ?? ''), ...(meta ? { meta } : {}) },
+            ]);
+          } else if (ev.type === 'gate_cancelled') {
+            setGates((g) => g.filter((x) => x.nodeId !== ev.nodeId));
+          } else if (ev.type === 'agent_step') {
+            const phaseRaw = String(ev.phase ?? 'calling');
+            const phase: AgentStep['phase'] =
+              phaseRaw === 'rejected' || phaseRaw === 'result' || phaseRaw === 'repeated'
+                ? phaseRaw
+                : 'calling';
+            setAgentSteps((s) => [
+              ...s.slice(-100),
+              {
+                nodeId: String(ev.nodeId ?? ''),
+                step: typeof ev.step === 'number' ? ev.step : 0,
+                phase,
+                tool: String(ev.tool ?? ''),
+                ...(ev.args && typeof ev.args === 'object' ? { args: ev.args as Record<string, unknown> } : {}),
+                ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : {}),
+                ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : {}),
+                ...(typeof ev.dryRun === 'boolean' ? { dryRun: ev.dryRun } : {}),
+              },
+            ]);
+          } else if (ev.type === 'chat_sent') {
+            setChatMessages((m) => [
+              ...m.slice(-100),
+              { nodeId: String(ev.nodeId ?? ''), text: String(ev.text ?? ''), ts: Date.now() },
+            ]);
           }
-        } else if (ev.type === 'gate') {
-          const meta = ev.meta && typeof ev.meta === 'object' ? (ev.meta as GateMeta) : undefined;
-          setGates((g) => [
-            ...g.filter((x) => x.nodeId !== ev.nodeId),
-            { nodeId: String(ev.nodeId), text: String(ev.text ?? ''), ...(meta ? { meta } : {}) },
-          ]);
-        } else if (ev.type === 'gate_cancelled') {
-          setGates((g) => g.filter((x) => x.nodeId !== ev.nodeId));
-        } else if (ev.type === 'agent_step') {
-          const phaseRaw = String(ev.phase ?? 'calling');
-          const phase: AgentStep['phase'] =
-            phaseRaw === 'rejected' || phaseRaw === 'result' || phaseRaw === 'repeated'
-              ? phaseRaw
-              : 'calling';
-          setAgentSteps((s) => [
-            ...s.slice(-100),
-            {
-              nodeId: String(ev.nodeId ?? ''),
-              step: typeof ev.step === 'number' ? ev.step : 0,
-              phase,
-              tool: String(ev.tool ?? ''),
-              ...(ev.args && typeof ev.args === 'object' ? { args: ev.args as Record<string, unknown> } : {}),
-              ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : {}),
-              ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : {}),
-              ...(typeof ev.dryRun === 'boolean' ? { dryRun: ev.dryRun } : {}),
-            },
-          ]);
-        } else if (ev.type === 'chat_sent') {
-          setChatMessages((m) => [
-            ...m.slice(-100),
-            { nodeId: String(ev.nodeId ?? ''), text: String(ev.text ?? ''), ts: Date.now() },
-          ]);
-        }
-      },
-      () => { if (ctlRef.current === myCtl) setRunning(false); },
-      undefined,
-      flowName,
-      (msg) => { if (ctlRef.current === myCtl) setLastRunError(msg); },
-    );
-    ctlRef.current = myCtl;
+        },
+        () => { if (genRef.current === myGen && ctlRef.current === myCtl) setRunning(false); },
+        undefined,
+        flowName,
+        (msg) => { if (genRef.current === myGen && ctlRef.current === myCtl) setLastRunError(msg); },
+      );
+      ctlRef.current = myCtl;
+    })();
   };
-  const stop = () => { void stopRun(); ctlRef.current?.abort(); ctlRef.current = null; setRunning(false); };
+  const stop = () => {
+    genRef.current += 1;
+    ctlRef.current?.abort();
+    ctlRef.current = null;
+    setRunning(false);
+    void stopRun().catch(() => {});
+  };
   const gate = (nodeId: string, text: string | null) => {
     void gateAction(nodeId, text);
     setGates((g) => g.filter((x) => x.nodeId !== nodeId));
@@ -195,6 +228,6 @@ export function useRunner() {
   const sendChat = async (text: string, nodeId?: string) => {
     await sendChatInput(text, nodeId);
   };
-  return { running, metrics, events, captions, gates, agentSteps, chatMessages, latency, latencyBreakdown, lastRunError, start, stop, gate, sendChat };
+  return { running, metrics, events, captions, gates, agentSteps, chatMessages, collectResults, latency, latencyBreakdown, lastRunError, start, stop, gate, sendChat };
 }
 export type Runner = ReturnType<typeof useRunner>;

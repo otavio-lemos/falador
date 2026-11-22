@@ -8,45 +8,287 @@ export interface Stage {
   label: string;
   accent: string;
   nodeId: string;
+  nodeType: string;
   param: string;
-  kind: 'app' | 'model-asr' | 'model-llm' | 'gate' | 'voice' | 'language';
+  kind:
+    | 'app'
+    | 'model-asr'
+    | 'model-asr-lfm3'
+    | 'model-llm'
+    | 'model-translate'
+    | 'model-decision'
+    | 'approve-mode'
+    | 'voice';
   value: string;
+  options?: string[];
+  secondaryParam?: string;
+  secondaryKind?: 'language-optional' | 'language-required';
+  secondaryValue?: string;
+  secondaryLabel?: string;
 }
 
-const ORDER = ['captura', 'asr', 'llm', 'gate', 'voz', 'idioma'];
+export const DEFAULT_LLM_MODEL = 'LiquidAI--LFM3-1.7B-MLX-4bit';
+export const DEFAULT_DECISION_MODEL = 'd1-2B-MLX-4bit';
 
-export function deriveStages(flow: Flow): Stage[] {
-  const out: Stage[] = [];
+const LANG_OPTION_LABELS: Record<string, string> = {
+  Portuguese: 'Português',
+  English: 'Inglês',
+  Spanish: 'Espanhol',
+  French: 'Francês',
+  German: 'Alemão',
+  Italian: 'Italiano',
+  Dutch: 'Holandês',
+  Polish: 'Polonês',
+  Russian: 'Russo',
+  Chinese: 'Chinês',
+  Japanese: 'Japonês',
+  Korean: 'Coreano',
+  Arabic: 'Árabe',
+  Hindi: 'Hindi',
+  Turkish: 'Turco',
+  Vietnamese: 'Vietnamita',
+};
+
+const AUDIO_LANG_IDS = ['Portuguese', 'English', 'Spanish', 'French', 'German', 'Italian', 'Japanese', 'Korean', 'Chinese'];
+const LFM_TEXT_LANG_IDS = [
+  'Portuguese', 'English', 'Spanish', 'French', 'German', 'Italian', 'Dutch', 'Polish',
+  'Russian', 'Chinese', 'Japanese', 'Korean', 'Arabic', 'Hindi', 'Turkish', 'Vietnamese',
+];
+const GENERAL_LLM_LANG_IDS = [
+  'Portuguese', 'English', 'Spanish', 'French', 'German', 'Italian', 'Dutch',
+  'Russian', 'Chinese', 'Japanese', 'Korean', 'Arabic', 'Hindi',
+];
+
+export function supportedLanguagesForModel(modelId: string, includeDisable = true): { id: string; label: string }[] {
+  const s = norm(modelId || '');
+  let ids: string[];
+  if (/lfm.*audio/i.test(s)) {
+    ids = AUDIO_LANG_IDS;
+  } else if (/lfm3|lfm2\.?5/i.test(s)) {
+    ids = LFM_TEXT_LANG_IDS;
+  } else {
+    ids = GENERAL_LLM_LANG_IDS;
+  }
+  const list = ids.map((id) => ({ id, label: LANG_OPTION_LABELS[id] ?? id }));
+  return includeDisable ? [{ id: '', label: '— (desabilitado)' }, ...list] : list;
+}
+
+function normalizeOptionalLang(raw: unknown): string {
+  const s = String(raw ?? '').trim();
+  return s === '-' || s === '—' ? '' : s;
+}
+
+function topoRank(flow: Flow): Map<string, number> {
+  const rank = new Map<string, number>();
+  const indeg = new Map<string, number>();
+  const adj = new Map<string, string[]>();
+  const ids = new Set(flow.nodes.map((n) => n.id));
   for (const n of flow.nodes) {
-    const p = n.params as Record<string, unknown>;
-    if (n.type === 'capture.ffmpeg') {
-      out.push({ key: 'captura', label: 'App da call', accent: accentOf(n.type), nodeId: n.id, param: 'input', kind: 'app', value: String(p.input ?? '') });
-    } else if (n.type === 'asr.realtime' || n.type === 'asr.lfm3') {
-      out.push({ key: 'asr', label: 'Transcrição', accent: accentOf(n.type), nodeId: n.id, param: 'model', kind: 'model-asr', value: String(p.model ?? '') });
-    } else if (n.type === 'llm.omlx' || n.type === 'agent.tools') {
-      out.push({ key: 'llm', label: n.type === 'agent.tools' ? 'Modelo do Agente' : 'Sugestão / Tradução', accent: accentOf(n.type), nodeId: n.id, param: 'model', kind: 'model-llm', value: String(p.model ?? '') });
-    } else if (n.type === 'decision.llm') {
-      out.push({ key: 'gate', label: 'Revisão', accent: accentOf(n.type), nodeId: n.id, param: 'defaultOption', kind: 'gate', value: String(p.defaultOption ?? 'humano') });
-    } else if (n.type === 'tts.sts') {
-      out.push({ key: 'voz', label: 'Voz', accent: accentOf(n.type), nodeId: n.id, param: 'voice', kind: 'voice', value: String(p.voice ?? 'female') });
-      out.push({ key: 'idioma', label: 'Idioma da fala', accent: accentOf(n.type), nodeId: n.id, param: 'language', kind: 'language', value: String(p.language ?? 'English') });
+    indeg.set(n.id, 0);
+    adj.set(n.id, []);
+  }
+  for (const e of flow.edges) {
+    const u = e.from.split('.')[0];
+    const v = e.to.split('.')[0];
+    if (ids.has(u) && ids.has(v) && u !== v) {
+      adj.get(u)!.push(v);
+      indeg.set(v, (indeg.get(v) ?? 0) + 1);
     }
   }
-  return out.sort((a, b) => ORDER.indexOf(a.key) - ORDER.indexOf(b.key));
+  const q: string[] = [];
+  for (const n of flow.nodes) if ((indeg.get(n.id) ?? 0) === 0) q.push(n.id);
+  let idx = 0;
+  while (q.length) {
+    const u = q.shift()!;
+    rank.set(u, idx++);
+    for (const v of adj.get(u) ?? []) {
+      const next = (indeg.get(v) ?? 1) - 1;
+      indeg.set(v, next);
+      if (next === 0) q.push(v);
+    }
+  }
+  for (const n of flow.nodes) if (!rank.has(n.id)) rank.set(n.id, idx++);
+  return rank;
 }
 
-// sinks de legenda alimentados DIRETO pelo ASR = transcrição do entrevistador;
+export function deriveStages(flow: Flow): Stage[] {
+  const rank = topoRank(flow);
+  const out: Stage[] = [];
+  for (const n of flow.nodes) {
+    if (n.enabled === false) continue;
+    const p = n.params as Record<string, unknown>;
+    if (n.type === 'capture.ffmpeg') {
+      out.push({
+        key: `captura-${n.id}`,
+        label: 'Captura',
+        accent: accentOf(n.type),
+        nodeId: n.id,
+        nodeType: n.type,
+        param: 'input',
+        kind: 'app',
+        value: String(p.input ?? ''),
+      });
+    } else if (n.type === 'asr.realtime') {
+      out.push({
+        key: `asr-${n.id}`,
+        label: 'Transcrição',
+        accent: accentOf(n.type),
+        nodeId: n.id,
+        nodeType: n.type,
+        param: 'model',
+        kind: 'model-asr',
+        value: String(p.model ?? ''),
+      });
+    } else if (n.type === 'asr.lfm3') {
+      out.push({
+        key: `asr-lfm3-${n.id}`,
+        label: 'ASR+Trad.',
+        accent: accentOf(n.type),
+        nodeId: n.id,
+        nodeType: n.type,
+        param: 'model',
+        kind: 'model-asr-lfm3',
+        value: String(p.model ?? 'LiquidAI--LFM3-Audio-2B-MLX-8bit'),
+        secondaryParam: 'targetLanguage',
+        secondaryKind: 'language-optional',
+        secondaryValue: p.targetLanguage !== undefined
+          ? normalizeOptionalLang(p.targetLanguage)
+          : (p.instruction ? 'Portuguese' : ''),
+        secondaryLabel: 'Idioma',
+      });
+    } else if (n.type === 'translate.llm') {
+      out.push({
+        key: `translate-${n.id}`,
+        label: 'Traduzir',
+        accent: accentOf(n.type),
+        nodeId: n.id,
+        nodeType: n.type,
+        param: 'model',
+        kind: 'model-translate',
+        value: p.model !== undefined ? String(p.model) : DEFAULT_LLM_MODEL,
+        secondaryParam: 'targetLanguage',
+        secondaryKind: 'language-optional',
+        secondaryValue: normalizeOptionalLang(p.targetLanguage),
+        secondaryLabel: 'Idioma',
+      });
+    } else if (n.type === 'llm.omlx') {
+      if (p.targetLanguage !== undefined) {
+        out.push({
+          key: `llm-${n.id}`,
+          label: 'Traduzir',
+          accent: accentOf(n.type),
+          nodeId: n.id,
+          nodeType: n.type,
+          param: 'model',
+          kind: 'model-llm',
+          value: String(p.model ?? DEFAULT_LLM_MODEL),
+          secondaryParam: 'targetLanguage',
+          secondaryKind: 'language-optional',
+          secondaryValue: normalizeOptionalLang(p.targetLanguage),
+          secondaryLabel: 'Idioma',
+        });
+      } else {
+        out.push({
+          key: `llm-${n.id}`,
+          label: 'Assistente',
+          accent: accentOf(n.type),
+          nodeId: n.id,
+          nodeType: n.type,
+          param: 'model',
+          kind: 'model-llm',
+          value: String(p.model ?? DEFAULT_LLM_MODEL),
+        });
+      }
+    } else if (n.type === 'agent.tools') {
+      out.push({
+        key: `agent-${n.id}`,
+        label: 'Agente',
+        accent: accentOf(n.type),
+        nodeId: n.id,
+        nodeType: n.type,
+        param: 'model',
+        kind: 'model-llm',
+        value: String(p.model ?? DEFAULT_LLM_MODEL),
+      });
+    } else if (n.type === 'turn.detector') {
+      out.push({
+        key: `turn-${n.id}`,
+        label: 'Turno',
+        accent: accentOf(n.type),
+        nodeId: n.id,
+        nodeType: n.type,
+        param: 'model',
+        kind: 'model-decision',
+        value: String(p.model ?? DEFAULT_DECISION_MODEL),
+      });
+    } else if (n.type === 'decision.llm') {
+      out.push({
+        key: `decision-${n.id}`,
+        label: 'Decisão',
+        accent: accentOf(n.type),
+        nodeId: n.id,
+        nodeType: n.type,
+        param: 'model',
+        kind: 'model-decision',
+        value: String(p.model ?? (p.mode === 'systemone' ? DEFAULT_DECISION_MODEL : DEFAULT_LLM_MODEL)),
+      });
+    } else if (n.type === 'human.approve') {
+      out.push({
+        key: `approve-${n.id}`,
+        label: 'Aprovação',
+        accent: accentOf(n.type),
+        nodeId: n.id,
+        nodeType: n.type,
+        param: 'mode',
+        kind: 'approve-mode',
+        value: String(p.mode ?? 'manual'),
+      });
+    } else if (n.type === 'tts.sts') {
+      out.push({
+        key: `voz-${n.id}`,
+        label: 'Voz TTS',
+        accent: accentOf(n.type),
+        nodeId: n.id,
+        nodeType: n.type,
+        param: 'voice',
+        kind: 'voice',
+        value: String(p.voice ?? 'female'),
+        secondaryParam: 'language',
+        secondaryKind: 'language-required',
+        secondaryValue: String(p.language ?? 'English'),
+        secondaryLabel: 'Idioma',
+      });
+    }
+  }
+  return out.sort((a, b) => {
+    const ra = rank.get(a.nodeId) ?? 999;
+    const rb = rank.get(b.nodeId) ?? 999;
+    if (ra !== rb) return ra - rb;
+    return a.key.localeCompare(b.key);
+  });
+}
+
+// sinks de legenda alimentados DIRETO pelo ASR (ou ASR → Traduzir → Exibir) = transcrição do entrevistador;
 // os demais = sugestão do assistente (o que o dono lê pra falar).
 export function classifySinks(flow: Flow): { transcription: Set<string>; suggestion: Set<string> } {
   const asrIds = new Set(flow.nodes.filter((n) => n.type.startsWith('asr')).map((n) => n.id));
+  const translateIds = new Set(flow.nodes.filter((n) => n.type === 'translate.llm').map((n) => n.id));
+  const directParent = new Map<string, string>();
+  for (const e of flow.edges) {
+    const toId = e.to.split('.')[0];
+    if (!directParent.has(toId)) directParent.set(toId, e.from.split('.')[0]);
+  }
   const transcription = new Set<string>();
   const suggestion = new Set<string>();
   for (const n of flow.nodes) {
     if (n.type !== 'sink.captions') continue;
-    const edge = flow.edges.find((e) => e.to.split('.')[0] === n.id);
-    const src = edge ? edge.from.split('.')[0] : '';
-    if (asrIds.has(src)) transcription.add(n.id);
-    else suggestion.add(n.id);
+    const src = directParent.get(n.id) ?? '';
+    const srcParent = directParent.get(src) ?? '';
+    if (asrIds.has(src) || (translateIds.has(src) && asrIds.has(srcParent))) {
+      transcription.add(n.id);
+    } else {
+      suggestion.add(n.id);
+    }
   }
   return { transcription, suggestion };
 }

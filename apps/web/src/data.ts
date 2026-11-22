@@ -14,7 +14,7 @@ export interface Category {
 export const CATEGORIES: Category[] = [
   { id: 'captura', label: 'Entrada / Captura', emoji: '🎙️', accent: '#22d3ee', nodes: ['capture.ffmpeg', 'input.chat'] },
   { id: 'transcricao', label: 'Transcrição', emoji: '💡', accent: '#14b8a6', nodes: ['asr.realtime', 'asr.lfm3'] },
-  { id: 'pensar', label: 'Pensar', emoji: '🧠', accent: '#8b5cf6', nodes: ['llm.omlx', 'agent.tools'] },
+  { id: 'pensar', label: 'Pensar', emoji: '🧠', accent: '#8b5cf6', nodes: ['llm.omlx', 'translate.llm', 'agent.tools'] },
   { id: 'decidir', label: 'Decidir', emoji: '🔀', accent: '#f59e0b', nodes: ['turn.detector', 'decision.llm', 'human.approve'] },
   { id: 'acoes', label: 'Ações / Conectores', emoji: '⚡', accent: '#f97316', nodes: ['exec.command', 'rag.search', 'tool.mcp', 'tool.workflow', 'tool.web_search', 'tool.crawler'] },
   { id: 'falar', label: 'Falar', emoji: '🗣️', accent: '#d946ef', nodes: ['tts.sts'] },
@@ -34,6 +34,7 @@ export const NODE_META: Record<string, NodeMeta> = {
   'asr.realtime':  { title: 'Transcrição em tempo real', subtitle: 'Voxtral streaming', desc: 'Converte fala em texto enquanto o outro fala' },
   'asr.lfm3':      { title: 'Transcrição + tradução direta', subtitle: 'LFM3-Audio', desc: 'Ouve e já traduz sem etapa extra de texto' },
   'llm.omlx':      { title: 'Assistente de texto', subtitle: 'Sugestão · Tradução · Resposta', desc: 'Recebe texto e gera resposta, tradução ou sugestão' },
+  'translate.llm': { title: 'Traduzir', subtitle: 'Modelo + idioma (opcional)', desc: 'Traduz texto para o idioma escolhido; selecione — para desabilitar' },
   'agent.tools':   { title: 'Agente com Tools', subtitle: 'Loop multi-step · OpenAI tools', desc: 'Chama ferramentas conectadas em múltiplos passos até diagnosticar' },
   'turn.detector': { title: 'Detector de fim de turno', subtitle: 'd1-2B semântico', desc: 'Distingue pausa de fim real de pergunta ou solicitação' },
   'decision.llm':  { title: 'Decisão automática', subtitle: 'Escolhe o próximo passo', desc: 'Roteia o fluxo sem precisar de você' },
@@ -45,7 +46,7 @@ export const NODE_META: Record<string, NodeMeta> = {
   'tool.web_search': { title: 'Pesquisa Web (Tool)', subtitle: 'DuckDuckGo · anti-SSRF', desc: 'Pesquisa externa e leitura de documentação pública com proteção anti-SSRF' },
   'tool.crawler':  { title: 'Crawler / Scraping', subtitle: 'HTML · BFS · anti-SSRF', desc: 'Raspa páginas ou faz crawl em sites com limite e proteção anti-SSRF' },
   'tts.sts':       { title: 'Voz (falar em voz alta)', subtitle: 'EN / PT', desc: 'Converte texto em fala sintetizada' },
-  'sink.captions': { title: 'Legenda na tela', subtitle: 'Texto ao vivo', desc: 'Mostra o texto gerado na interface' },
+  'sink.captions': { title: 'Exibir', subtitle: 'Saída simples na tela', desc: 'Apenas exibe o texto na interface (sem LLM ou tradução)' },
   'sink.playback': { title: 'Tocar no alto-falante', subtitle: 'Áudio sintetizado', desc: 'Toca o áudio no seu dispositivo' },
   'source.tone':   { title: 'Frases de teste', subtitle: 'Gera texto sintético', desc: 'Fonte de dados para testar o fluxo' },
   'pipe.delay':    { title: 'Atraso', subtitle: 'Atrasa mensagens', desc: 'Introduz um delay configurável' },
@@ -58,6 +59,48 @@ export function categoryOf(type: string): Category {
 }
 export function accentOf(type: string): string {
   return categoryOf(type).accent;
+}
+
+export const SHORT_NAMES: Record<string, string> = {
+  'capture.ffmpeg': 'Captura',
+  'input.chat': 'Chat',
+  'asr.realtime': 'Transcrição',
+  'asr.lfm3': 'ASR+Trad.',
+  'llm.omlx': 'Assistente',
+  'translate.llm': 'Traduzir',
+  'agent.tools': 'Agente',
+  'turn.detector': 'Turno',
+  'decision.llm': 'Decisão',
+  'human.approve': 'Aprovação',
+  'exec.command': 'Exec',
+  'rag.search': 'RAG',
+  'tool.mcp': 'MCP',
+  'tool.workflow': 'Workflows',
+  'tool.web_search': 'Web',
+  'tool.crawler': 'Crawler',
+  'tts.sts': 'Voz TTS',
+  'sink.captions': 'Exibir',
+  'sink.playback': 'Áudio',
+};
+
+export function shortNodeName(type: string, id: string, params?: Record<string, unknown>): string {
+  if (type === 'llm.omlx' && params && params.targetLanguage !== undefined) return 'Traduzir';
+  return SHORT_NAMES[type] ?? NODE_META[type]?.title?.split(' ')[0] ?? id;
+}
+
+export function serviceOfNode(type: string): 'web' | 'asr' | 'omlx' | 'tts' {
+  if (type === 'asr.realtime') return 'asr';
+  if (
+    type === 'llm.omlx' ||
+    type === 'translate.llm' ||
+    type === 'agent.tools' ||
+    type === 'turn.detector' ||
+    type === 'decision.llm'
+  ) {
+    return 'omlx';
+  }
+  if (type === 'tts.sts' || type === 'asr.lfm3') return 'tts';
+  return 'web';
 }
 
 export interface ParamDoc {
@@ -113,11 +156,21 @@ export const PARAM_HELP: Record<string, Record<string, ParamDoc>> = {
   },
   'asr.lfm3': {
     url: { help: 'sidecar de tradução (POST /asr-translate)', def: 'http://127.0.0.1:8091' },
+    model: { help: 'modelo multimodal LFM3-Audio', def: 'LiquidAI--LFM3-Audio-2B-MLX-8bit', control: 'model' },
+    targetLanguage: { help: 'idioma de saída (vazio = só transcreve no idioma original)', def: '', control: 'dropdown', options: [{ val: '', label: '— (só transcrever)' }, ...LANGS] },
     instruction: { help: 'instrução enviada ao LFM3-Audio com o áudio', def: 'Transcribe and translate to Brazilian Portuguese…', control: 'textarea' },
     sampleRateHz: { help: 'sample rate do PCM (Hz)', def: '16000', control: 'slider', min: 8000, max: 48000, step: 8000, unit: 'Hz' },
     flushSec: { help: 'janela de tradução (s). Janela que corta a frase faz o modelo transcrever em vez de traduzir — use ≥ duração da fala', def: '30', control: 'slider', min: 3, max: 60, step: 1, unit: 's' },
     timeoutMs: { help: 'timeout de cada tradução (ms)', def: '120000' },
     maxTranslateChars: { help: 'corta a tradução em N caracteres', def: '4000' },
+  },
+  'translate.llm': {
+    baseUrl: { help: 'servidor OpenAI-compat (omlx)', def: 'http://127.0.0.1:8080' },
+    model: { help: 'modelo LLM tradutor (use "-" para passthrough)', def: 'LiquidAI--LFM3-1.7B-MLX-4bit', control: 'model' },
+    targetLanguage: { help: 'idioma de tradução (vazio = desabilitado, apenas repassa)', def: '', control: 'dropdown', options: [{ val: '', label: '— (desabilitado)' }, ...LANGS] },
+    temperature: { help: 'criatividade (0.1 = tradução fiel)', def: '0.1', control: 'slider', min: 0, max: 1, step: 0.1 },
+    maxTokens: { help: 'máximo de tokens gerados', def: '256', control: 'slider', min: 16, max: 2048, step: 16 },
+    enableThinking: { help: 'false OBRIGATÓRIO no LFM3 (senão conteúdo vem vazio)', def: 'false', control: 'toggle' },
   },
   'llm.omlx': {
     baseUrl: { help: 'servidor OpenAI-compat (omlx)', def: 'http://127.0.0.1:8080' },
@@ -268,7 +321,17 @@ export const PARAM_HELP: Record<string, Record<string, ParamDoc>> = {
     tempDir: { help: 'diretório dos WAVs temporários', def: '(tmp do sistema)' },
     maxQueue: { help: 'falas empilhadas além disso são descartadas', def: '4', control: 'slider', min: 1, max: 16, step: 1 },
   },
-  'human.approve': {},
+  'human.approve': {
+    mode: {
+      help: 'manual = aguarda aprovação humana; auto = aprova direto (bypass)',
+      def: 'manual',
+      control: 'dropdown',
+      options: [
+        { val: 'manual', label: 'manual — aprovação humana' },
+        { val: 'auto', label: 'auto — passar direto' },
+      ],
+    },
+  },
   'source.tone': {
     count: { help: 'quantas frases emitir', def: '5', control: 'slider', min: 1, max: 50, step: 1 },
     intervalMs: { help: 'pausa entre frases (ms)', def: '0', control: 'slider', min: 0, max: 5000, step: 100, unit: 'ms' },

@@ -8,8 +8,8 @@ import { TopBar } from './components/TopBar';
 import { BuilderView } from './views/BuilderView';
 import { LiveView } from './views/LiveView';
 import { useRunner } from './useRunner';
-import { fetchCatalog, fetchFlows, fetchFlow, fetchModels, fetchApps, fetchContext, saveFlow, uploadDoc, removeDoc, type Catalog, type Flow, type ContextDoc } from './api';
-import { applyContext, sanitizeFlow } from './live-utils';
+import { fetchCatalog, fetchFlows, fetchFlow, fetchModels, fetchApps, fetchContext, saveFlow, deleteFlow, uploadDoc, removeDoc, type Catalog, type Flow, type ContextDoc, type ServiceStatusMap } from './api';
+import { applyContext, isDecisionModel, sanitizeFlow } from './live-utils';
 
 function scenarioLabel(name: string): string {
   if (name === 'agente-workflows') return 'Agente de Workflows';
@@ -32,6 +32,11 @@ function fileToBase64(file: File): Promise<string> {
 
 export function App() {
   const [view, setView] = useState<'builder' | 'live'>('builder');
+  const [theme, setTheme] = useState<'g100' | 'white'>(() => {
+    try { return localStorage.getItem('falador.theme') === 'white' ? 'white' : 'g100'; } catch { return 'g100'; }
+  });
+  const [micMuted, setMicMuted] = useState(false);
+  const [speakerMuted, setSpeakerMuted] = useState(false);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [flows, setFlows] = useState<{ name: string; description: string }[]>([]);
   const [currentFlow, setCurrentFlow] = useState('');
@@ -44,6 +49,25 @@ export function App() {
   const runner = useRunner();
   const actionsRef = useRef<{ getFlow: () => Flow; save: () => void } | null>(null);
   const seenAgentStepsRef = useRef(0);
+  const lastOmlxUpRef = useRef<boolean | null>(null);
+  const modelsRef = useRef(models);
+  modelsRef.current = models;
+
+  const handleServiceStatus = useCallback((status: ServiceStatusMap) => {
+    const wasUp = lastOmlxUpRef.current;
+    lastOmlxUpRef.current = status.omlx;
+    if (status.omlx && (wasUp === false || (wasUp === null && modelsRef.current.omlx.length === 0))) {
+      fetchModels().then(setModels).catch(() => {});
+    }
+  }, []);
+
+  const toggleTheme = () => {
+    setTheme((cur) => {
+      const next = cur === 'g100' ? 'white' : 'g100';
+      try { localStorage.setItem('falador.theme', next); } catch { /* ignore */ }
+      return next;
+    });
+  };
 
   useEffect(() => {
     fetchCatalog().then(setCatalog).catch(() => setToast('Falha ao carregar catálogo'));
@@ -79,12 +103,46 @@ export function App() {
     }
   }, [runner.agentSteps, refreshFlows]);
 
-  const onTest = () => { const f = actionsRef.current?.getFlow(); if (f) runner.start(f, currentFlow); };
-  const startWithContext = (f: Flow, name?: string) => runner.start(applyContext(sanitizeFlow(f), contextDocs), name ?? currentFlow);
+  const applyAudioMutes = (f: Flow, mic: boolean, spk: boolean): Flow => {
+    if (!mic && !spk) return f;
+    return {
+      ...f,
+      nodes: f.nodes.map((n) => {
+        if (mic && n.type === 'capture.ffmpeg') return { ...n, params: { ...n.params, muted: true } };
+        if (spk && (n.type === 'sink.playback' || n.type === 'tts.sts')) return { ...n, params: { ...n.params, muted: true } };
+        return n;
+      }),
+    };
+  };
+
+  const onTest = () => {
+    const f = actionsRef.current?.getFlow();
+    if (!f) return;
+    if (f.nodes.length === 0) {
+      setToast('Adicione pelo menos um nó antes de testar');
+      return;
+    }
+    runner.start(applyContext(sanitizeFlow(f), contextDocs), currentFlow);
+  };
+  const startWithContext = (f: Flow, name?: string, mic = micMuted, spk = speakerMuted) =>
+    runner.start(applyAudioMutes(applyContext(sanitizeFlow(f), contextDocs), mic, spk), name ?? currentFlow);
+
+  const onToggleMicMute = () => {
+    const next = !micMuted;
+    setMicMuted(next);
+    if (liveFlow && runner.running) startWithContext(liveFlow, currentFlow, next, speakerMuted);
+  };
+  const onToggleSpeakerMute = () => {
+    const next = !speakerMuted;
+    setSpeakerMuted(next);
+    if (liveFlow && runner.running) startWithContext(liveFlow, currentFlow, micMuted, next);
+  };
   const onGoLive = () => {
     const f = actionsRef.current?.getFlow();
     if (!f) return;
-    setLiveFlow(f); startWithContext(f, currentFlow); setView('live');
+    runner.stop();
+    setLiveFlow(f);
+    setView('live');
     fetchApps().then(setApps).catch(() => {});
     fetchModels().then(setModels).catch(() => {});
   };
@@ -100,6 +158,32 @@ export function App() {
     setToast(`Workflow "${name}" criado`);
   };
 
+  const onDuplicateFlow = async () => {
+    const f = actionsRef.current?.getFlow();
+    if (!f || !currentFlow) return;
+    let copyName = `${currentFlow}-copia`;
+    let i = 2;
+    while (flows.some((x) => x.name === copyName)) copyName = `${currentFlow}-copia-${i++}`;
+    await saveFlow(copyName, { ...f });
+    await refreshFlows();
+    setCurrentFlow(copyName);
+    setToast(`Workflow duplicado como "${copyName}"`);
+  };
+
+  const onDeleteFlow = async () => {
+    if (!currentFlow) return;
+    if (!window.confirm(`Remover permanentemente o workflow "${currentFlow}"?`)) return;
+    try {
+      await deleteFlow(currentFlow);
+      const remaining = await fetchFlows();
+      setFlows(remaining);
+      setCurrentFlow(remaining[0]?.name ?? '');
+      setToast(`Workflow "${currentFlow}" removido`);
+    } catch {
+      setToast('Falha ao remover workflow');
+    }
+  };
+
   const onRename = async (newName: string, newDesc: string) => {
     const f = actionsRef.current?.getFlow();
     if (!f) return;
@@ -112,24 +196,44 @@ export function App() {
 
   const onUpdateStage = (nodeId: string, param: string, value: unknown) => {
     if (!liveFlow) return;
-    const next: Flow = { ...liveFlow, nodes: liveFlow.nodes.map((n) => (n.id === nodeId ? { ...n, params: { ...n.params, [param]: value } } : n)) };
-    setLiveFlow(next); startWithContext(next);
+    const next: Flow = {
+      ...liveFlow,
+      nodes: liveFlow.nodes.map((n) => {
+        if (n.id !== nodeId) return n;
+        const nextParams: Record<string, unknown> = { ...n.params, [param]: value };
+        if (n.type === 'decision.llm' && param === 'model') {
+          nextParams.mode = isDecisionModel(String(value)) ? 'systemone' : 'chat';
+        }
+        if (n.type === 'asr.lfm3' && param === 'targetLanguage') {
+          delete nextParams.instruction;
+        }
+        if (n.type === 'llm.omlx' && param === 'targetLanguage') {
+          delete nextParams.template;
+        }
+        return { ...n, params: nextParams };
+      }),
+    };
+    setLiveFlow(next);
+    if (runner.running) startWithContext(next);
   };
-  const onRegenerate = () => { if (liveFlow) startWithContext(liveFlow); };
-  const onExit = () => { runner.stop(); setView('builder'); };
+  const onRegenerate = () => { if (liveFlow && runner.running) startWithContext(liveFlow); };
+  const onExit = () => { runner.stop(); };
   const onSwitchLiveFlow = async (name: string) => {
     try {
       const f = await fetchFlow(name);
-      setCurrentFlow(name); setLiveFlow(f); startWithContext(f, name);
+      setMicMuted(false);
+      setSpeakerMuted(false);
+      setCurrentFlow(name); setLiveFlow(f);
+      if (runner.running) startWithContext(f, name, false, false);
     } catch { setToast('Falha ao carregar o flow'); }
   };
 
   const onOpenWorkflowAgent = async () => {
     try {
       const f = await fetchFlow('agente-workflows');
+      runner.stop();
       setCurrentFlow('agente-workflows');
       setLiveFlow(f);
-      startWithContext(f, 'agente-workflows');
       setView('live');
       fetchApps().then(setApps).catch(() => {});
       fetchModels().then(setModels).catch(() => {});
@@ -161,11 +265,12 @@ export function App() {
   const currentDesc = flows.find((f) => f.name === currentFlow)?.description ?? '';
 
   return (
-    <Theme theme="g100">
-      <div className="app">
+    <Theme theme={theme}>
+      <div className="app" data-carbon-theme={theme}>
         {view === 'builder' && (
           <TopBar
             view={view} latencyMs={runner.latency} running={runner.running}
+            theme={theme} onToggleTheme={toggleTheme}
             flows={flows} currentFlow={currentFlow}
             description={currentDesc}
             models={models}
@@ -174,6 +279,8 @@ export function App() {
             onCloseEdit={() => setEditFlowOpen(false)}
             onSelectFlow={setCurrentFlow} onSave={onSave}
             onRename={onRename} onNewFlow={onNewFlow}
+            onDuplicateFlow={() => void onDuplicateFlow()}
+            onDeleteFlow={() => void onDeleteFlow()}
             onTest={onTest} onGoLive={onGoLive}
             onGoBuilder={() => setView('builder')} onStop={runner.stop}
             onOpenWorkflowAgent={() => void onOpenWorkflowAgent()}
@@ -190,6 +297,7 @@ export function App() {
                   onEditFlow={() => setEditFlowOpen(true)}
                   models={models} apps={apps}
                   onRefreshApps={() => fetchApps().then(setApps).catch(() => {})}
+                  onServiceStatus={handleServiceStatus}
                 />
               </div>
             </ReactFlowProvider>
@@ -197,13 +305,18 @@ export function App() {
           {view === 'live' && liveFlow && (
             <LiveView
               runner={runner} flow={liveFlow} scenarioName={scenarioLabel(currentFlow)}
+              theme={theme} onToggleTheme={toggleTheme}
+              micMuted={micMuted} speakerMuted={speakerMuted}
+              onToggleMicMute={onToggleMicMute} onToggleSpeakerMute={onToggleSpeakerMute}
               models={models} apps={apps}
               contextDocs={contextDocs} onUploadDoc={onUploadDoc} onRemoveDoc={onRemoveDoc}
               onStart={startWithContext}
               flows={flows} currentFlow={currentFlow} onSwitchFlow={onSwitchLiveFlow}
               onUpdateStage={onUpdateStage} onRegenerate={onRegenerate}
               onRefreshApps={() => fetchApps().then(setApps).catch(() => {})}
+              onServiceStatus={handleServiceStatus}
               onNotify={(msg) => setToast(msg)}
+              onGoBuilder={() => setView('builder')}
               onExit={onExit}
             />
           )}

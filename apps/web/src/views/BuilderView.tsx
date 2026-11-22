@@ -1,12 +1,13 @@
 // Tela de CRIAÇÃO do workflow — paleta + faixa de nome/descrição + canvas + editor inline.
 // Carrega/salva flows, adiciona nós (drag/duplo clique), edita params no próprio nó, testa o fluxo.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Tag, TextInput } from '@carbon/react';
-import { Edit, Play } from '@carbon/icons-react';
+import { Checkmark, Close, Play } from '@carbon/icons-react';
 import { useNodesState, useEdgesState, addEdge, type Edge, type Connection } from '@xyflow/react';
 import { Palette } from '../components/Palette';
 import { FlowCanvas } from '../components/FlowCanvas';
-import { fetchFlow, saveFlow, type Catalog, type Flow } from '../api';
+import { LogsPanel } from '../components/LogsPanel';
+import { fetchFlow, saveFlow, type Catalog, type Flow, type ServiceStatusMap } from '../api';
 import { flowToRf, rfToFlow, newNodeId, type FNode } from '../flow-utils';
 import { NODE_META, accentOf } from '../data';
 import type { Runner } from '../useRunner';
@@ -22,10 +23,11 @@ interface Props {
   models: { omlx: string[]; cache: string[] };
   apps: string[];
   onRefreshApps: () => void;
+  onServiceStatus?: (status: ServiceStatusMap) => void;
 }
 
 export function BuilderView({
-  catalog, currentFlow, description, runner, registerActions, onSaved, onEditFlow, models, apps, onRefreshApps,
+  catalog, currentFlow, description, runner, registerActions, onSaved, onEditFlow, models, apps, onRefreshApps, onServiceStatus,
 }: Props) {
   const [nodes, setNodes, onNodesChange] = useNodesState<FNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -67,21 +69,27 @@ export function BuilderView({
     const id = newNodeId(type);
     const outputs = type === 'decision.llm' ? [{ name: 'auto', type: 'tokens_parcial' }] : (cn?.outputs ?? []);
     const defaultParams: Record<string, unknown> =
-      type === 'decision.llm'
-        ? { options: ['auto'] }
-        : type === 'exec.command'
-          ? { transport: 'local', mode: 'readonly', dryRun: true }
-          : type === 'tool.mcp'
-            ? { transport: 'stdio', dryRun: true, allowedTools: [] }
-            : type === 'agent.tools'
-              ? { approvalPolicy: 'always', maxSteps: 5, enableThinking: false }
-              : type === 'tool.workflow'
-                ? { flowsDir: 'apps/tui/flows', agentsMdPath: 'AGENTS.md', dryRun: false, allowDelete: false }
-                : type === 'tool.web_search'
-                  ? { timeoutMs: 8000, maxResults: 5 }
-                  : type === 'tool.crawler'
-                    ? { maxPages: 5, maxDepth: 1, sameOriginOnly: true }
-                    : {};
+      type === 'capture.ffmpeg'
+        ? { backend: 'sck', input: '', chunkMs: 80 }
+        : type === 'decision.llm'
+          ? { options: ['auto'] }
+          : type === 'exec.command'
+            ? { transport: 'local', mode: 'readonly', dryRun: true }
+            : type === 'tool.mcp'
+              ? { transport: 'stdio', dryRun: true, allowedTools: [] }
+              : type === 'agent.tools'
+                ? { approvalPolicy: 'always', maxSteps: 5, enableThinking: false }
+                : type === 'tool.workflow'
+                  ? { flowsDir: 'apps/tui/flows', agentsMdPath: 'AGENTS.md', dryRun: false, allowDelete: false }
+                  : type === 'tool.web_search'
+                    ? { timeoutMs: 8000, maxResults: 5 }
+                    : type === 'tool.crawler'
+                      ? { maxPages: 5, maxDepth: 1, sameOriginOnly: true }
+                      : type === 'translate.llm'
+                        ? { model: 'LiquidAI--LFM3-1.7B-MLX-4bit', targetLanguage: 'Portuguese', enableThinking: false }
+                        : type === 'human.approve'
+                          ? { mode: 'manual' }
+                          : {};
     const node: FNode = {
       id, type: 'falador', position: pos,
       data: {
@@ -103,20 +111,42 @@ export function BuilderView({
     registerActions({ getFlow: buildFlow, save: () => void doSave() });
   }, [buildFlow, doSave, registerActions]);
 
-  // feedback do run no builder: erro real ou último log (ex.: captura aguardando app)
-  const errEv = [...runner.events].reverse().find((e) => e.type === 'node_error' && !String((e as { code?: string }).code ?? '').startsWith('log_')) as { nodeId?: string; message?: string } | undefined;
-  const logEv = [...runner.events].reverse().find((e) => e.type === 'node_error' && String((e as { code?: string }).code ?? '').startsWith('log_')) as { nodeId?: string; message?: string } | undefined;
-  const statusMsg = errEv ? `[${errEv.nodeId}] ${errEv.message}` : logEv ? `[${logEv.nodeId}] ${logEv.message}` : '';
+  // feedback real de execução no builder (erros reais, gates, passos de agente, chat e collect)
+  // — logs informativos/warn ficam exclusivamente no LogsPanel abaixo.
+  const errEv = [...runner.events].reverse().find((e) => {
+    if (e.type === 'flow_invalid') return true;
+    if (e.type !== 'node_error') return false;
+    const code = String((e as { code?: string }).code ?? '');
+    return code !== 'log_info' && code !== 'log_warn';
+  }) as { message?: string; error?: string; nodeId?: string } | undefined;
+  const errMsg = errEv
+    ? `${errEv.nodeId ? `[${errEv.nodeId}] ` : ''}${errEv.message ?? errEv.error ?? 'Erro no teste'}`
+    : (runner.lastRunError ?? '');
   const finalCaptions = runner.captions.filter((c) => c.final);
   const lastCaption = runner.captions.at(-1);
+  const collectEntries = Object.entries(runner.collectResults ?? {});
   const displayDesc = description || meta.description;
   const chatNode = nodes.find((n) => n.data.type === 'input.chat');
   const sendBuilderChat = async () => {
     const t = chatDraft.trim();
     if (!t || !runner.running) return;
     setChatDraft('');
-    try { await runner.sendChat(t, chatNode?.id); } catch { /* erro já aparece no status */ }
+    try { await runner.sendChat(t, chatNode?.id); } catch { /* erro já aparece no banner */ }
   };
+  const showStatusPanel = Boolean(
+    errMsg
+    || (runner.running && chatNode)
+    || runner.gates.length > 0
+    || runner.agentSteps.length > 0
+    || finalCaptions.length > 0
+    || (lastCaption && !lastCaption.final)
+    || collectEntries.length > 0,
+  );
+
+  const flowNodes = useMemo(
+    () => nodes.map((n) => ({ id: n.id, type: n.data.type, params: n.data.params, enabled: n.data.enabled })),
+    [nodes],
+  );
 
   return (
     <div className="builder-wrap">
@@ -135,15 +165,6 @@ export function BuilderView({
                 {displayDesc || 'Sem descrição — clique em "Editar detalhes" para descrever este workflow.'}
               </p>
             </div>
-            <Button
-              kind="tertiary"
-              size="sm"
-              renderIcon={Edit}
-              onClick={onEditFlow}
-              disabled={!currentFlow}
-            >
-              Editar detalhes
-            </Button>
           </div>
           <FlowCanvas
             nodes={nodes} edges={edges}
@@ -155,13 +176,9 @@ export function BuilderView({
           />
         </div>
       </div>
-      {(runner.running || finalCaptions.length > 0 || statusMsg) && (
-        <div className={`builder-status${errEv ? ' builder-status--err' : ''}`}>
-          <div className="builder-status-top">
-            <span className={`live-dot${runner.running ? ' live-dot--on' : ''}`} />
-            <span className="builder-status-state">{runner.running ? 'Rodando' : 'Parado'}</span>
-            {statusMsg && <span className="builder-status-msg">{statusMsg}</span>}
-          </div>
+      {showStatusPanel && (
+        <div className="builder-status">
+          {errMsg && <div className="live2-error">⚠ {errMsg}</div>}
           {runner.running && chatNode && (
             <div className="builder-chat-row">
               <TextInput
@@ -179,7 +196,36 @@ export function BuilderView({
               </Button>
             </div>
           )}
-          {(finalCaptions.length > 0 || (lastCaption && !lastCaption.final)) && (
+          {runner.gates.map((g) => (
+            <div key={g.nodeId} className="cmd-gate-card">
+              <div className="cmd-gate-head">
+                <span className="cmd-gate-title">Aprovação ({g.nodeId})</span>
+                <div className="live2-actions">
+                  <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={() => runner.gate(g.nodeId, g.text)}>
+                    Aprovar
+                  </Button>
+                  <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={() => runner.gate(g.nodeId, null)}>
+                    Rejeitar
+                  </Button>
+                </div>
+              </div>
+              <pre className="builder-output-line">{g.text}</pre>
+            </div>
+          ))}
+          {runner.agentSteps.length > 0 && (
+            <div className="agent-timeline-list">
+              {runner.agentSteps.map((s, idx) => (
+                <div key={`${s.nodeId}-${s.step}-${s.phase}-${idx}`} className="agent-step-row">
+                  <span className="agent-step-num">Passo {s.step}</span>
+                  <code className="agent-step-tool">{s.tool}</code>
+                  <Tag type={s.phase === 'rejected' ? 'magenta' : s.ok === false ? 'red' : s.phase === 'calling' ? 'blue' : 'green'} size="sm">
+                    {s.phase === 'calling' ? 'chamando' : s.phase === 'rejected' ? 'rejeitado' : s.ok === false ? 'erro' : 'ok'}
+                  </Tag>
+                </div>
+              ))}
+            </div>
+          )}
+          {(finalCaptions.length > 0 || (lastCaption && !lastCaption.final) || collectEntries.length > 0) && (
             <div className="builder-output">
               {finalCaptions.map((c, i) => (
                 <div key={i} className="builder-output-line">{c.text}</div>
@@ -187,10 +233,16 @@ export function BuilderView({
               {lastCaption && !lastCaption.final && (
                 <div className="builder-output-line builder-output-line--partial">{lastCaption.text}<span className="live-cursor" /></div>
               )}
+              {collectEntries.map(([nodeId, items]) => (
+                <div key={nodeId} className="builder-output-line">
+                  <strong>[{nodeId}]</strong> {items.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' · ')}
+                </div>
+              ))}
             </div>
           )}
         </div>
       )}
+      <LogsPanel flowNodes={flowNodes} onServiceStatus={onServiceStatus} />
     </div>
   );
 }

@@ -1,43 +1,113 @@
-// Baseline Carbon React (g100) + camada visual do layout do dono.
+// Baseline Carbon Design System (tokens oficiais g100 / white, bordas retas).
 @use '@carbon/react';
 @use '@carbon/react/scss/spacing' as *;
 @use '@carbon/react/scss/type' as *;
 @use '@carbon/react/scss/theme' as *;
 
-// ---- superfícies do mock (near-black) ----
-$bg-app: #0d0d0d;
-$bg-bar: #161616;
-$bg-panel: #141414;
-$bg-card: #1c1c1c;
-$bg-input: #222222;
-$border-1: #2a2a2a;
-$border-2: #3a3a3a;
-$txt-1: #f4f4f4;
-$txt-2: #9a9a9a;
-$blue: #2563eb;
+// ---- tokens oficiais Carbon Design System ----
+$bg-app: var(--cds-background, #161616);
+$bg-bar: var(--cds-layer-01, #262626);
+$bg-panel: var(--cds-layer-01, #262626);
+$bg-card: var(--cds-layer-02, #393939);
+$bg-input: var(--cds-field-01, #262626);
+$border-1: var(--cds-border-subtle-01, #393939);
+$border-2: var(--cds-border-strong-01, #6f6f6f);
+$txt-1: var(--cds-text-primary, #f4f4f4);
+$txt-2: var(--cds-text-secondary, #c6c6c6);
+$blue: var(--cds-interactive, #0f62fe);
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
 body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
 
-.app { display: flex; flex-direction: column; height: 100vh; background: $bg-app; }
+.app { display: flex; flex-direction: column; height: 100vh; background: $bg-app; color: $txt-1; }
+// Bordas 100% retas (padrão executivo Carbon) em todos os containers, tags e botões nas duas telas
+.app .cds--tag,
+.app .cds--btn,
+.app .pal-item,
+.app .pal-chip,
+.app .react-flow__controls,
+.app .react-flow__minimap,
+.app .fnode,
+.app .fnode-head,
+.app .fnode-body,
+.app .fnode-off-tag,
+.app .node-editor,
+.app .builder-status,
+.app .builder-output-line,
+.app .live2-error,
+.app .live2-transcription,
+.app .live2-suggestion,
+.app .ctx-doc,
+.app .chatbox-panel,
+.app .chat-msg,
+.app .live-chat,
+.app .live-chat-bubble,
+.app .live-chat-input,
+.app .live-chat-input-wrap,
+.app .cmd-gate-card,
+.app .agent-timeline-list,
+.app .logs-panel,
+.app .logs-service-badges,
+.app .logs-svc-badge,
+.app .logs-terminal,
+.app .models-modal-badge {
+  border-radius: 0 !important;
+}
 .app-body { flex: 1; min-height: 0; display: flex; position: relative; }
 .view { flex: 1; min-width: 0; display: flex; }
 .view--hidden { display: none; }
 
-// ---- top bar ----
+// ---- top bar (Builder — mesmo layout executivo da tela Workflow) ----
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
-  gap: $spacing-05; height: 64px; flex-shrink: 0;
-  padding: 0 $spacing-05; background: $bg-bar; border-bottom: 1px solid $border-1;
+  gap: $spacing-05; min-height: 84px; flex-shrink: 0;
+  padding: $spacing-03 $spacing-05; background: $bg-bar; border-bottom: 1px solid $border-1;
 }
-.topbar-left { display: flex; align-items: center; gap: $spacing-05; min-width: 0; }
-.topbar-title { @include type-style('productive-heading-03'); color: $txt-1; white-space: nowrap; }
-.topbar-flow { display: flex; align-items: center; gap: $spacing-02; min-width: 0; }
-.topbar-flow-select { width: 260px; flex-shrink: 0; }
-.topbar-center { flex: 1; display: flex; justify-content: center; }
-.latency-pill { font-size: 13px; }
-.topbar-right { display: flex; align-items: center; gap: $spacing-03; flex-shrink: 0; }
+.topbar-left { display: flex; align-items: stretch; gap: $spacing-04; min-width: 0; }
+.topbar-aux-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(110px, auto));
+  gap: $spacing-02;
+  align-items: stretch;
+  .cds--btn {
+    width: 100%;
+    max-width: none;
+    justify-content: space-between;
+  }
+}
+.topbar-right-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(136px, auto));
+  gap: $spacing-02;
+  align-items: stretch;
+  flex-shrink: 0;
+  .cds--btn {
+    width: 100%;
+    max-width: none;
+    justify-content: space-between;
+  }
+}
+
+// Botões Builder | Workflow ocupando exatamente a mesma largura do dropdown abaixo
+.nav-mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: $spacing-02;
+  width: 14rem;
+  .cds--btn {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    min-height: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 $spacing-03;
+    line-height: 1;
+  }
+}
 
 // formulário do modal de edição do workflow
 .edit-flow-form {
@@ -225,39 +295,321 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 .pe-help { @include type-style('helper-text-01'); color: $txt-2; margin-top: $spacing-02; }
 .pe-warn { @include type-style('helper-text-01'); color: #f1c21b; margin-top: $spacing-02; }
 
-// ---- tela de execução (layout do dono) ----
-.live2 { flex: 1; min-width: 0; display: flex; flex-direction: column; height: 100%; }
-.live2-top {
-  display: flex; align-items: center; justify-content: space-between; gap: $spacing-05;
-  height: 64px; flex-shrink: 0; padding: 0 $spacing-05;
-  background: $bg-bar; border-bottom: 1px solid $border-1;
-}
-.live2-mode { display: flex; align-items: center; gap: $spacing-03; }
-.live-dot { width: 10px; height: 10px; border-radius: 50%; background: #525252; }
-.live-dot--on { background: #22c55e; box-shadow: 0 0 8px #22c55e; animation: pulse 1.6s infinite; }
-@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-.live2-mode-label { @include type-style('productive-heading-01'); color: #22c55e; letter-spacing: 0.04em; }
-.live2-scenario { @include type-style('body-01'); color: $txt-2; }
-.live-flow-select { width: 13rem; margin-left: $spacing-03; }
-.live2-top-actions { display: flex; gap: $spacing-03; }
+// ---- tela de execução (layout executivo Carbon) ----
+.live2 { flex: 1; min-width: 0; display: flex; flex-direction: column; height: 100%; background: $bg-app; }
 
-.live2-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 300px; gap: $spacing-05; padding: $spacing-05; overflow-y: auto; }
+.live2-top {
+  display: grid;
+  grid-template-columns: auto minmax(220px, 1fr) auto;
+  align-items: center;
+  gap: $spacing-05;
+  min-height: 84px;
+  flex-shrink: 0;
+  padding: $spacing-03 $spacing-05;
+  background: $bg-bar;
+  border-bottom: 1px solid $border-1;
+}
+
+.live2-left-controls {
+  display: flex;
+  align-items: stretch;
+  gap: $spacing-04;
+}
+
+.live2-workflow-col {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: $spacing-02;
+}
+
+.live2-workflow-head {
+  display: grid;
+  grid-template-columns: 32px 1fr 32px;
+  align-items: center;
+  height: 32px;
+}
+
+.live2-workflow-spacer {
+  display: block;
+  width: 32px;
+}
+
+.live2-workflow-label {
+  @include type-style('productive-heading-01');
+  color: $txt-1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.live2-theme-btn {
+  flex-shrink: 0;
+}
+
+.live-flow-select {
+  width: 14rem;
+}
+
+.live2-aux-col {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: $spacing-02;
+  min-width: 132px;
+}
+
+.docs-trigger-wrap {
+  position: relative;
+  display: flex;
+}
+
+.live2-docs-btn {
+  width: 100%;
+  justify-content: space-between;
+}
+
+.docs-hover-list {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 40;
+  min-width: 240px;
+  max-width: 340px;
+  padding: $spacing-03 $spacing-04;
+  background: $bg-card;
+  border: 1px solid $border-2;
+  border-top: 2px solid $blue;
+  border-radius: 0;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+
+.docs-trigger-wrap:hover .docs-hover-list,
+.docs-trigger-wrap:focus-within .docs-hover-list {
+  display: block;
+}
+
+.docs-hover-title {
+  @include type-style('label-01');
+  color: $txt-2;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: $spacing-02;
+}
+
+.docs-hover-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-01;
+}
+
+.docs-hover-list li {
+  @include type-style('body-compact-01');
+  color: $txt-1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.docs-hover-empty {
+  @include type-style('helper-text-01');
+  color: $txt-2;
+}
+
+.live2-audio-mutes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: $spacing-02;
+  width: 132px;
+  .cds--btn {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    justify-content: center;
+    padding: 0;
+  }
+}
+
+// Mini-mapa executivo no centro do cabeçalho
+.live2-minimap-slot {
+  min-width: 0;
+  height: 70px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: $bg-app;
+  border: 1px solid $border-1;
+  padding: $spacing-01 $spacing-02;
+  overflow: hidden;
+}
+
+.wf-minimap {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wf-minimap--empty {
+  @include type-style('helper-text-01');
+  color: $txt-2;
+}
+
+.wf-minimap-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
+}
+
+.wf-mm-node {
+  transition: transform 180ms ease;
+}
+
+.wf-mm-node--active {
+  transform: scale(1.16);
+}
+
+// Grade 2x2 de botões no canto direito (Exportar | Retomar / Limpar | Encerrar)
+.live2-top-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(116px, auto));
+  gap: $spacing-02;
+  align-items: stretch;
+}
+
+.live2-top-actions .cds--btn {
+  width: 100%;
+  max-width: none;
+  justify-content: space-between;
+}
+
+// Faixa de etapas logo abaixo do cabeçalho (100% da largura, sem sidebar)
+.live2-stages-bar {
+  flex-shrink: 0;
+  padding: $spacing-03 $spacing-05;
+  background: $bg-app;
+  border-bottom: 1px solid $border-1;
+}
+
+.live2-stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $spacing-04;
+  width: 100%;
+}
+
+.stage-dd {
+  flex: 1 1 190px;
+  min-width: 170px;
+  border-top: 3px solid var(--accent);
+  padding-top: $spacing-02;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-02;
+}
+
+.stage-dd--dual {
+  flex: 1.5 1 280px;
+  min-width: 260px;
+}
+
+.stage-dd-label {
+  @include type-style('label-01');
+  color: $txt-2;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stage-dd-ctrl {
+  display: flex;
+  align-items: center;
+  gap: $spacing-01;
+  min-width: 0;
+}
+
+.stage-dd-ctrl--dual {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: $spacing-02;
+}
+
+.stage-dd-ctrl .cds--dropdown__wrapper,
+.stage-dd-ctrl .cds--dropdown {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+// Métricas de consumo por etapa (quadrado Carbon separado por |)
+.stage-metrics-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-02;
+  height: 28px;
+  padding: 0 $spacing-03;
+  background: $bg-bar;
+  border: 1px solid $border-1;
+  border-radius: 0;
+  color: $txt-1;
+  @include type-style('code-01');
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.stage-metric-item {
+  display: inline-flex;
+  align-items: center;
+  gap: $spacing-01;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  svg { color: $txt-2; flex-shrink: 0; }
+}
+
+.stage-metric-sep {
+  color: $border-2;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.live2-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: $spacing-05;
+  padding: $spacing-04 $spacing-05;
+  overflow-y: auto;
+}
+
+.docs-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-04;
+  padding-top: $spacing-02;
+}
+
 .live2-main { display: flex; flex-direction: column; gap: $spacing-03; min-width: 0; }
-.live2-error { @include type-style('body-01'); color: #ff8389; background: rgba(218, 30, 40, 0.12); border: 1px solid #da1e28; border-radius: 6px; padding: $spacing-03 $spacing-04; }
+.live2-error { @include type-style('body-01'); color: var(--cds-support-error, #ff8389); background: rgba(218, 30, 40, 0.12); border: 1px solid var(--cds-support-error, #da1e28); border-radius: 0; padding: $spacing-03 $spacing-04; }
 .live2-label { @include type-style('helper-text-01'); color: $txt-2; text-transform: uppercase; letter-spacing: 0.05em; }
 .live2-transcription {
-  background: $bg-panel; border: 1px solid $border-1; border-radius: 8px;
+  background: $bg-panel; border: 1px solid $border-1; border-radius: 0;
   padding: $spacing-04; @include type-style('body-02'); color: $txt-1; line-height: 1.5; min-height: 56px;
 }
 
-// dropdown por etapa — borda superior na cor da categoria, linha única
-.live2-stages { display: flex; flex-wrap: nowrap; gap: $spacing-04; }
-.stage-dd { flex: 1 1 0; min-width: 0; border-top: 3px solid var(--accent); padding-top: $spacing-02; }
-.stage-dd-label { @include type-style('helper-text-01'); color: $txt-2; display: block; margin-bottom: $spacing-02; white-space: nowrap; }
-.stage-dd .cds--dropdown { width: 100%; }
-
 .live2-suggestion {
-  background: rgba(34, 197, 94, 0.06); border: 2px solid #22c55e; border-radius: 8px;
+  background: rgba(34, 197, 94, 0.06); border: 2px solid #22c55e; border-radius: 0;
   padding: $spacing-05; min-height: 88px;
 }
 .live2-suggestion-text { @include type-style('productive-heading-04'); color: #4ade80; line-height: 1.5; }
@@ -265,12 +617,10 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 .live2-actions { display: flex; align-items: center; gap: $spacing-03; }
 .approve-btn { background: #16a34a !important; }
 .approve-btn:hover { background: #15803d !important; }
-.live2-hint { @include type-style('helper-text-01'); color: #6f6f6f; margin: 0; }
+.live2-hint { @include type-style('helper-text-01'); color: $txt-2; margin: 0; }
 
-// sidebar contexto & cheatsheet
-.live2-side { background: $bg-panel; border: 1px solid $border-1; border-radius: 8px; padding: $spacing-05; align-self: start; display: flex; flex-direction: column; gap: $spacing-05; }
-.live2-side-title { @include type-style('productive-heading-01'); color: $txt-1; text-transform: uppercase; letter-spacing: 0.04em; }
-.ctx-doc { display: flex; gap: $spacing-03; align-items: flex-start; padding: $spacing-03; background: $bg-card; border: 1px solid $border-1; border-radius: 6px; color: $txt-2; }
+// cards de docs (agora no modal Docs)
+.ctx-doc { display: flex; gap: $spacing-03; align-items: flex-start; padding: $spacing-03; background: $bg-card; border: 1px solid $border-1; border-radius: 0; color: $txt-2; }
 .ctx-doc-name { @include type-style('body-01'); color: $txt-1; }
 .ctx-doc-sub { @include type-style('helper-text-01'); color: #6f6f6f; }
 .ctx-doc-sub--ok { color: #4ade80; display: flex; align-items: center; gap: 4px; }
@@ -301,7 +651,7 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   gap: $spacing-03;
   background: $bg-panel;
   border: 1px solid $border-1;
-  border-radius: 8px;
+  border-radius: 0;
   padding: $spacing-04;
 }
 .chatbox-history {
@@ -355,7 +705,7 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   gap: $spacing-03;
   background: $bg-panel;
   border: 1px solid $border-1;
-  border-radius: 8px;
+  border-radius: 0;
   padding: $spacing-04;
 }
 .live-chat-log {
@@ -378,7 +728,7 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   gap: 2px;
   max-width: 78%;
   padding: $spacing-03 $spacing-04;
-  border-radius: 10px;
+  border-radius: 0;
   font-family: 'IBM Plex Sans', system-ui, sans-serif;
   font-size: 14px;
   line-height: 1.5;
@@ -387,14 +737,14 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   align-self: flex-end;
   background: #333333;        // cinza mais claro que o painel
   color: $txt-1;
-  border-bottom-right-radius: 2px;
+  border-radius: 0;
 }
 .live-chat-bubble--agent {
   align-self: flex-start;
   background: rgba(34, 197, 94, 0.14);   // verde (mesmo tom da sugestão)
   border: 1px solid #22c55e;
   color: #4ade80;
-  border-bottom-left-radius: 2px;
+  border-radius: 0;
 }
 .live-chat-ts {
   font-family: 'IBM Plex Sans', system-ui, sans-serif;
@@ -416,27 +766,87 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   gap: $spacing-03;
   background: #2b2b2b;         // caixa de escrita em cinza mais claro
   border: 1px solid $border-2;
-  border-radius: 8px;
+  border-radius: 0;
   padding: $spacing-03;
   .cds--form-item { flex: 1; }
   .cds--text-area { background-color: #2b2b2b; }
 }
 .live-chat-gate-actions { flex-wrap: wrap; }
 
-// ---- logs dos serviços residentes (terminal pequeno no rodapé do Live) ----
+// ---- logs dos serviços residentes (altura fixa controlada SOMENTE pelo usuário) ----
 .logs-panel {
-  margin: 0 $spacing-05 $spacing-05;
+  flex-shrink: 0;
+  height: var(--logs-h, 180px);
+  display: flex;
+  flex-direction: column;
+  margin: 0 $spacing-05 $spacing-04;
   background: $bg-panel;
   border: 1px solid $border-1;
-  border-radius: 8px;
-  padding: $spacing-03 $spacing-04;
+  border-radius: 0;
+  overflow: hidden;
 }
-.logs-panel-head {
+.logs-panel--collapsed {
+  height: auto;
+}
+.logs-resizer {
+  height: 8px;
+  flex-shrink: 0;
+  cursor: ns-resize;
   display: flex;
   align-items: center;
+  justify-content: center;
+  background: $bg-bar;
+  border-bottom: 1px solid $border-1;
+  &:hover,
+  &:focus-visible {
+    background: $bg-card;
+    outline: none;
+  }
+}
+.logs-resizer-grip {
+  width: 40px;
+  height: 2px;
+  background: $border-2;
+}
+.logs-panel-head {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: $spacing-03;
-  margin-bottom: $spacing-02;
-  .cds--dropdown__wrapper { min-width: 200px; }
+  padding: $spacing-02 $spacing-04;
+  border-bottom: 1px solid $border-1;
+}
+.logs-service-badges {
+  display: flex;
+  align-items: center;
+  gap: $spacing-02;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.logs-svc-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 $spacing-03;
+  border-radius: 0;
+  @include type-style('label-01');
+  font-weight: 600;
+  color: #ffffff;
+  white-space: nowrap;
+  user-select: none;
+}
+.logs-svc-badge--up {
+  background: var(--cds-support-success, #198038);
+  color: #ffffff;
+}
+.logs-svc-badge--down {
+  background: var(--cds-support-error, #da1e28);
+  color: #ffffff;
+}
+.logs-panel-services {
+  min-width: 240px;
+  .cds--multi-select__wrapper { width: 100%; }
 }
 .logs-panel-title {
   @include type-style('label-01');
@@ -444,19 +854,105 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   display: flex;
   align-items: center;
   gap: $spacing-02;
+  white-space: nowrap;
 }
-.logs-panel-hint {
+.logs-panel-count {
   @include type-style('label-01');
   color: $txt-2;
   margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.logs-panel-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(220px, 1fr);
+  gap: $spacing-03;
+  padding: $spacing-02 $spacing-04 $spacing-03;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.logs-panel-empty {
+  @include type-style('helper-text-01');
+  color: $txt-2;
+  margin: $spacing-02 0;
+}
+.logs-block {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid $border-1;
+  background: $bg-app;
+}
+.logs-block-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: $spacing-02;
+  padding: 2px $spacing-03;
+  background: $bg-bar;
+  border-bottom: 1px solid $border-1;
+}
+.logs-block-title {
+  @include type-style('label-01');
+  color: $txt-1;
+  font-weight: 600;
+}
+.logs-block-path {
+  @include type-style('code-01');
+  color: $txt-2;
+}
+.logs-block-count {
+  @include type-style('label-01');
+  color: $txt-2;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.logs-color-swatches {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: $spacing-02;
+}
+.logs-color-swatch {
+  position: relative;
+  display: inline-block;
+  width: 10px;
+  height: 14px;
+  border-radius: 0;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  flex-shrink: 0;
+  cursor: help;
+}
+.logs-color-tip {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 60;
+  padding: 4px $spacing-03;
+  background: $bg-card;
+  color: $txt-1;
+  border: 1px solid $border-2;
+  border-radius: 0;
+  @include type-style('label-01');
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+.logs-color-swatch:hover .logs-color-tip,
+.logs-color-swatch:focus-visible .logs-color-tip {
+  display: block;
 }
 .logs-terminal {
+  flex: 1;
+  min-height: 0;
   margin: 0;
-  max-height: 170px;
   overflow: auto;
   background: #0b0e13;
   color: #c6d0dc;
-  border-radius: 6px;
+  border-radius: 0;
   padding: $spacing-03;
   font-family: 'IBM Plex Mono', 'Menlo', monospace;
   font-size: 11px;
@@ -479,7 +975,7 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 .cmd-gate-card {
   background: rgba(249, 115, 22, 0.07);
   border: 2px solid #f97316;
-  border-radius: 8px;
+  border-radius: 0;
   padding: $spacing-05;
   display: flex;
   flex-direction: column;
@@ -509,7 +1005,7 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   background: $bg-panel;
   border: 1px solid $border-1;
   border-left: 3px solid #0ea5e9;
-  border-radius: 6px;
+  border-radius: 0;
   padding: $spacing-03 $spacing-04;
   max-height: 220px;
   overflow-y: auto;

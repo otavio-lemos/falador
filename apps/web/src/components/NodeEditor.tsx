@@ -29,8 +29,9 @@ function modelsForNode(nodeType: string, models: { omlx: string[]; cache: string
   const all = [...models.omlx, ...models.cache.filter((m) => !models.omlx.includes(m))];
   if (nodeType === 'asr.realtime' || nodeType === 'asr.lfm3') return all.filter(isAsrModel);
   if (nodeType === 'tts.sts') return all.filter((m) => isTtsModel(m) || isStsModel(m));
-  if (nodeType === 'decision.llm' || nodeType === 'turn.detector') return all.filter(isDecisionModel);
-  if (nodeType === 'llm.omlx' || nodeType === 'agent.tools') return all.filter(isTextModel);
+  if (nodeType === 'decision.llm') return [...all.filter(isDecisionModel), ...all.filter(isTextModel)];
+  if (nodeType === 'turn.detector') return all.filter(isDecisionModel);
+  if (nodeType === 'llm.omlx' || nodeType === 'translate.llm' || nodeType === 'agent.tools') return all.filter(isTextModel);
   return all;
 }
 
@@ -59,11 +60,7 @@ export function NodeEditor({ nodeId, data, onChange, onClose, metrics, events, m
           <TabPanel>
             <div className="node-editor-fields">
               {data.paramNames.length === 0 && (
-                <p className="node-editor-empty">
-                  {data.type === 'human.approve'
-                    ? 'Gate humano: durante o run, segura a sugestão até você Aprovar / Editar / Rejeitar. Sem parâmetros ajustáveis.'
-                    : 'Este nó não tem parâmetros ajustáveis.'}
-                </p>
+                <p className="node-editor-empty">Este nó não tem parâmetros ajustáveis.</p>
               )}
               {data.paramNames.map((name) => (
                 <ParamField
@@ -147,8 +144,9 @@ function ParamField({
             if (selectedItem) onChange(selectedItem.id);
           }}
           onInputChange={(txt) => {
-            // aceita digitação livre (paths longos do HF cache)
-            if (txt && !items.some((i) => i.id === txt)) onChange(txt);
+            // aceita digitação livre (paths longos do HF cache), mas ignora quando o ComboBox
+            // apenas refletiu o label curto de um item selecionado
+            if (txt && !items.some((i) => i.id === txt || i.label === txt)) onChange(txt);
           }}
         />
         {nodeModels.length === 0 && (
