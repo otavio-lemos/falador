@@ -1,0 +1,25 @@
+# REGRA OBRIGATÓRIA - REGISTRADA DEFINITIVAMENTE
+
+## NUNCA prosseguir sem web search. ABSOLUTAMENTE NUNCA.
+
+### Regra:
+1. **Primeira obrigação:** Sempre consultar web search antes de QUALQUER ação
+2. **Nunca usar conhecimento interno** - sempre pesquisar
+3. **Se web search indisponível (SSL, down, etc):** PARAR e não prosseguir
+4. **Registrar o erro/indisponibilidade** e aguardar instrução
+
+### Endpoint SearXNG configurado:
+- URL: https://core.searxng.orb.local/
+- Status: SSL auto-assinado (precisa confiar certificado no OS)
+- Comando para confiar: `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain /path/to/ca.crt`
+
+### Validações locais (fallback apenas para validação, NÃO para decisões):
+- Playwright 6/6
+- falador-graph 41/41
+- web-server 15/15
+- 4 workflows --validate
+- Build web
+
+---
+**REGISTRO DEFINITIVO - NÃO REMOVER - COMMIT NO GIT**
+Data: 2026-11-24
