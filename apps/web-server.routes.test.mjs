@@ -4,6 +4,7 @@
 // para um diretório temporário sem interferir nos fluxos reais do repo.
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -247,4 +248,114 @@ test('rota GET /api/mics responde 200 com mics array', async () => {
   const body = await res.json();
   assert.ok(Array.isArray(body.mics));
   assert.match(res.headers.get('cache-control') ?? 'no-store', /no-store/);
+});
+
+test('auditoria: eventos audit chegam no SSE e o export (webhook) carrega sessionBuffer.audit', async () => {
+  // Mock do omlx: executor (update_plan + final) e validador independente (achieved)
+  const VALID_VALIDATION = '{"achieved":true,"confidence":0.9,"gaps":[],"nextActions":[]}';
+  const execQ = [
+    { choices: [{ message: { role: 'assistant', content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'update_plan', arguments: JSON.stringify({ items: [{ id: '1', description: 'Checar disco', verification: 'df -h', status: 'verified', evidence: '45%' }] }) } }] } }] },
+    { choices: [{ message: { role: 'assistant', content: 'OBJETIVO CONCLUÍDO' } }] },
+  ];
+  const llm = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      res.setHeader('content-type', 'application/json');
+      if (body.model !== 'exec-model') {
+        res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: VALID_VALIDATION } }] }));
+        return;
+      }
+      res.end(JSON.stringify(execQ.shift() ?? { choices: [{ message: { role: 'assistant', content: '(esgotada)' } }] }));
+    });
+  });
+  await new Promise((r) => llm.listen(0, '127.0.0.1', r));
+  const llmUrl = `http://127.0.0.1:${llm.address().port}`;
+
+  let webhookPayload = null;
+  const hook = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => { webhookPayload = JSON.parse(Buffer.concat(chunks).toString('utf8')); res.end('{}'); });
+  });
+  await new Promise((r) => hook.listen(0, '127.0.0.1', r));
+  const hookUrl = `http://127.0.0.1:${hook.address().port}`;
+
+  const flow = {
+    version: 1,
+    stopWhenSourcesDone: false,
+    nodes: [
+      { id: 'input', type: 'input.chat', params: {} },
+      { id: 'agente', type: 'agent.tools', params: { baseUrl: llmUrl, model: 'exec-model', validatorModel: 'val-model', approvalPolicy: 'always', maxSteps: 4 } },
+      { id: 'out', type: 'sink.captions', params: { mode: 'callback', outputMode: 'write' } },
+    ],
+    edges: [
+      { from: 'input.out', to: 'agente.in' },
+      { from: 'agente.out', to: 'out.in' },
+    ],
+  };
+
+  const audits = [];
+  let chatSent = false;
+  let gateSent = false;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 15000);
+  try {
+    const res = await api('/api/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ flow, flowName: 'audit-test' }),
+      signal: ctl.signal,
+    });
+    assert.equal(res.status, 200);
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    let done = false;
+    while (!done) {
+      const { value, done: rDone } = await reader.read();
+      if (rDone) break;
+      buf += dec.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const block = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const dataLine = block.split('\n').find((l) => l.startsWith('data: '));
+        if (!dataLine) continue;
+        let ev;
+        try { ev = JSON.parse(dataLine.slice(6)); } catch { continue; }
+        if (ev.type === 'audit') audits.push(ev);
+        if (ev.type === 'metrics' && !chatSent) {
+          chatSent = true;
+          await post('/api/run/chat', { text: 'objetivo: checar disco', nodeId: 'input' });
+        }
+        if (ev.type === 'gate' && ev.meta?.tool === 'goal.confirm' && !gateSent) {
+          gateSent = true;
+          await post('/api/gate', { nodeId: 'agente', text: '' });
+        }
+        if (ev.type === 'audit' && ev.op === 'agent_final') done = true;
+      }
+    }
+    clearTimeout(timer);
+    const ops = audits.map((a) => a.op);
+    assert.ok(ops.includes('plan'), `audit plan no SSE (ops: ${ops.join(',')})`);
+    assert.ok(ops.includes('goal_validation'), 'audit goal_validation no SSE');
+    assert.ok(ops.includes('agent_final'), 'audit agent_final no SSE');
+    assert.ok(audits.every((a) => typeof a.runId === 'string' && typeof a.seq === 'number'));
+
+    const exp = await post('/api/session/export', { saveMarkdown: false, webhookUrl: hookUrl });
+    assert.equal(exp.status, 200);
+    await new Promise((r) => setTimeout(r, 200));
+    assert.ok(webhookPayload, 'webhook recebeu o payload');
+    assert.ok(Array.isArray(webhookPayload.audit), 'export carrega sessionBuffer.audit');
+    const expOps = webhookPayload.audit.map((a) => a.op);
+    assert.ok(expOps.includes('plan') && expOps.includes('goal_validation') && expOps.includes('agent_final'));
+  } finally {
+    clearTimeout(timer);
+    ctl.abort();
+    await post('/api/stop', {});
+    await new Promise((r) => llm.close(r));
+    await new Promise((r) => hook.close(r));
+  }
 });

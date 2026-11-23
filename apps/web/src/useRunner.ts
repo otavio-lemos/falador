@@ -87,6 +87,43 @@ export interface Gate {
   meta?: GateMeta;
 }
 
+// ADR-012: espelho do contrato AuditEvent do runner (packages/falador-nodes/src/audit.ts)
+export interface PlanItem {
+  id: string;
+  description: string;
+  verification: string;
+  status: 'pending' | 'verified' | 'failed';
+  evidence?: string;
+}
+
+export interface AuditEvent {
+  runId: string;
+  seq: number;
+  ts: number;
+  op: 'plan' | 'tool_call' | 'gate' | 'goal_validation' | 'agent_final';
+  nodeId: string;
+  step?: number;
+  tool?: string;
+  args?: Record<string, unknown>;
+  risk?: 'seguro' | 'sensivel';
+  gate?: 'approved' | 'rejected' | 'edited' | 'not_required' | 'missing_gate' | 'pending';
+  ok?: boolean;
+  exitCode?: number | null;
+  durationMs?: number;
+  dryRun?: boolean;
+  host?: string;
+  transport?: string;
+  outputPreview?: string;
+  errorType?: string;
+  rag?: { query: string; hits: number; chunkIds?: string[] };
+  plan?: PlanItem[];
+  validation?: { achieved: boolean; confidence: number; gaps: string[]; nextActions: string[] };
+  goal?: string;
+  text?: string;
+  goalAchieved?: boolean;
+  maxStepsReached?: boolean;
+}
+
 function computeBreakdown(trace: TraceMeta): LatencyBreakdown {
   const out: LatencyBreakdown = {};
   if (typeof trace.tAsrFinalMs === 'number' && typeof trace.tAsrFirstMs === 'number') {
@@ -123,6 +160,7 @@ export function useRunner() {
   const [latencyBreakdown, setLatencyBreakdown] = useState<LatencyBreakdown | null>(null);
   const [lastRunError, setLastRunError] = useState<string | null>(null);
   const [collectResults, setCollectResults] = useState<Record<string, unknown[]>>({});
+  const [audit, setAudit] = useState<AuditEvent[]>([]);
   const ctlRef = useRef<AbortController | null>(null);
   const genRef = useRef(0);
 
@@ -160,6 +198,7 @@ export function useRunner() {
     setCollectResults({});
     setLatency(null);
     setLatencyBreakdown(null);
+    setAudit([]);
   };
 
   const start = (flow: Flow, flowName?: string) => {
@@ -306,6 +345,8 @@ export function useRunner() {
               ...m.slice(-100),
               { nodeId: String(ev.nodeId ?? ''), text: String(ev.text ?? ''), ts: Date.now() },
             ]);
+          } else if (ev.type === 'audit') {
+            setAudit((a) => [...a.slice(-999), ev as unknown as AuditEvent]);
           }
         },
         () => { if (genRef.current === myGen && ctlRef.current === myCtl) setRunning(false); },
@@ -337,6 +378,6 @@ export function useRunner() {
   const sendChat = async (text: string, nodeId?: string) => {
     await sendChatInput(text, nodeId);
   };
-  return { running, metrics, events, captions, gates, agentSteps, executions, thoughts, chatMessages, collectResults, latency, latencyBreakdown, lastRunError, start, stop, reset, gate, sendChat };
+  return { running, metrics, events, captions, gates, agentSteps, executions, thoughts, chatMessages, collectResults, latency, latencyBreakdown, lastRunError, audit, start, stop, reset, gate, sendChat };
 }
 export type Runner = ReturnType<typeof useRunner>;

@@ -61,6 +61,7 @@ import {
 } from '../live-utils';
 import { WorkflowMiniMap } from '../components/WorkflowMiniMap';
 import { LogsPanel } from '../components/LogsPanel';
+import { AuditPanel } from '../components/AuditPanel';
 
 const WEBHOOK_STORAGE_KEY = 'falador.webhookUrl';
 const THOUGHTS_STORAGE_KEY = 'falador.showThoughts';
@@ -300,6 +301,7 @@ export function LiveView({
   const [exportOpen, setExportOpen] = useState(false);
   const [execOpen, setExecOpen] = useState(false);
   const [execTab, setExecTab] = useState(0);
+  const [footerTab, setFooterTab] = useState(0);
   const [exporting, setExporting] = useState(false);
   const [exportResult, setExportResult] = useState<string | null>(null);
   const [webhookUrl, setWebhookUrl] = useState(() => {
@@ -1174,18 +1176,31 @@ export function LiveView({
         </div>
       </Modal>
 
-      <LogsPanel
-        flowNodes={flow.nodes}
-        onServiceStatus={onServiceStatus}
-        resetSignal={resetSignal}
-        thoughtsOn={showThoughts}
-        onToggleThoughts={(next) => {
-          setShowThoughts(next);
-          try { localStorage.setItem(THOUGHTS_STORAGE_KEY, String(next)); } catch { /* ignore */ }
-        }}
-        hasAgent={hasAgent}
-        onOpenConsole={openConsolePopup}
-      />
+      <Tabs selectedIndex={footerTab} onChange={({ selectedIndex }) => setFooterTab(selectedIndex ?? 0)}>
+        <TabList aria-label="Painéis inferiores">
+          <Tab>Logs</Tab>
+          <Tab>Auditoria{runner.audit.length > 0 ? ` (${runner.audit.length})` : ''}</Tab>
+        </TabList>
+        <TabPanels>
+          <TabPanel>
+            <LogsPanel
+              flowNodes={flow.nodes}
+              onServiceStatus={onServiceStatus}
+              resetSignal={resetSignal}
+              thoughtsOn={showThoughts}
+              onToggleThoughts={(next) => {
+                setShowThoughts(next);
+                try { localStorage.setItem(THOUGHTS_STORAGE_KEY, String(next)); } catch { /* ignore */ }
+              }}
+              hasAgent={hasAgent}
+              onOpenConsole={openConsolePopup}
+            />
+          </TabPanel>
+          <TabPanel>
+            <AuditPanel audit={runner.audit} />
+          </TabPanel>
+        </TabPanels>
+      </Tabs>
 
       <Modal
         open={exportOpen}

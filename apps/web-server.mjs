@@ -118,6 +118,7 @@ function createEmptySession(flowName = 'sessao') {
     execucoes: [], // { id, ts, nodeId, step, tool, host, transport, command, output, exitCode, durationMs, dryRun, ok, truncated, timedOut? }
     topics: [],
     traces: [],
+    audit: [], // ADR-012: trilha de auditoria estruturada { runId, seq, ts, op, nodeId, ... }
   };
 }
 
@@ -328,6 +329,25 @@ function formatSessionMarkdown(session, latencySummary) {
   }
   lines.push('');
 
+  if (Array.isArray(session.audit) && session.audit.length > 0) {
+    lines.push('## Auditoria (trilha estruturada)');
+    lines.push('');
+    for (const a of session.audit) {
+      const when = new Date(a.ts).toISOString();
+      const parts = [`[${when}]`, `#${a.seq}`, a.op];
+      if (a.tool) parts.push(`\`${a.tool}\``);
+      if (a.risk) parts.push(`risco=${a.risk}`);
+      if (a.gate) parts.push(`gate=${a.gate}`);
+      if (typeof a.ok === 'boolean') parts.push(a.ok ? 'ok' : 'FALHOU');
+      if (typeof a.exitCode === 'number') parts.push(`exit=${a.exitCode}`);
+      if (typeof a.durationMs === 'number') parts.push(`${a.durationMs}ms`);
+      if (a.op === 'goal_validation' && a.validation) parts.push(`achieved=${a.validation.achieved} conf=${a.validation.confidence}`);
+      if (a.op === 'agent_final') parts.push(`goalAchieved=${a.goalAchieved === true}`);
+      lines.push(`- ${parts.join(' · ')}`);
+    }
+    lines.push('');
+  }
+
   if (Array.isArray(session.agentSteps) && session.agentSteps.length > 0) {
     lines.push('## Passos do Agente (Tools)');
     lines.push('');
@@ -522,6 +542,10 @@ function startRun(flow, runSeconds, flowName) {
           sessionBuffer.traces.push(ev.trace);
           if (sessionBuffer.traces.length > 500) sessionBuffer.traces.shift();
         }
+      }
+      if (ev.type === 'audit') {
+        sessionBuffer.audit.push(ev);
+        if (sessionBuffer.audit.length > 1000) sessionBuffer.audit.shift();
       }
       if (ev.type === 'agent_step') {
         sessionBuffer.agentSteps.push({
