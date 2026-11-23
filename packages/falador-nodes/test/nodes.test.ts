@@ -28,6 +28,22 @@ import {
 } from '../src/index.ts';
 import type { NodeTypeDef } from '../../falador-graph/src/index.ts';
 
+// Carrega credenciais do omlx a partir de .env.falador (mesma convenção do faladorctl),
+// se a variável ainda não estiver no ambiente. Sem isso, nós que chamam o omlx
+// (:8080) recebem 401 "API key required".
+if (!process.env.FALADOR_OMLX_API_KEY) {
+  const candidates = [
+    process.env.FALADOR_ENV_FILE,
+    '/Users/otaviolemos/ml/falador/.env.falador',
+  ].filter(Boolean) as string[];
+  for (const p of candidates) {
+    try {
+      process.loadEnvFile(p);
+      if (process.env.FALADOR_OMLX_API_KEY) break;
+    } catch {}
+  }
+}
+
 function reg() {
   return registerFaladorNodes(createRegistry())
     .register(sourceTone)
