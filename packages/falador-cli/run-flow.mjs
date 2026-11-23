@@ -8,6 +8,8 @@
 // Stdout é 100% NDJSON (logs do server ficam no stderr do spawn da TUI).
 import { createRegistry, runGraph, sourceTone, pipeDelay, pipeParcs, sinkCollect } from '../falador-graph/src/index.ts';
 import { registerFaladorNodes } from '../falador-nodes/src/index.ts';
+import { appendFileSync, mkdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 
 function buildRegistry() {
   return registerFaladorNodes(createRegistry())
@@ -133,6 +135,13 @@ async function main() {
         __onAgentStep: (ev) => line({ type: 'agent_step', ...ev }),
       };
     }
+    // ADR-012: trilha de auditoria estruturada do agente (plan/tool_call/goal_validation/agent_final)
+    if (n.type === 'agent.tools' && !(flow.bindings[n.id]?.__onAudit)) {
+      flow.bindings[n.id] = {
+        ...(flow.bindings[n.id] ?? {}),
+        __onAudit: (ev) => audit(ev),
+      };
+    }
     if ((n.type === 'llm.omlx' || n.type === 'translate.llm' || n.type === 'agent.tools' || n.type === 'decision.llm') && !(flow.bindings[n.id]?.__onThought)) {
       flow.bindings[n.id] = {
         ...(flow.bindings[n.id] ?? {}),
@@ -178,7 +187,17 @@ async function main() {
         __gate: {
           request: (text, meta) =>
             new Promise((resolve) => {
-              const res = (t) => { pendingGates.delete(res); resolve(typeof t === 'string' ? t : null); };
+              const res = (t) => {
+                pendingGates.delete(res);
+                audit({
+                  op: 'gate',
+                  nodeId: n.id,
+                  gate: t === null ? 'rejected' : 'approved',
+                  tool: typeof meta?.tool === 'string' ? meta.tool : undefined,
+                  text: typeof t === 'string' ? t.slice(0, 2000) : undefined,
+                });
+                resolve(typeof t === 'string' ? t : null);
+              };
               pendingGates.add(res);
               gates.set(n.id, res);
               const ev = { type: 'gate', nodeId: n.id, text };
@@ -186,10 +205,18 @@ async function main() {
                 ev.meta = meta;
               }
               line(ev);
+              audit({
+                op: 'gate',
+                nodeId: n.id,
+                gate: 'pending',
+                tool: typeof meta?.tool === 'string' ? meta.tool : undefined,
+                text: String(text).slice(0, 2000),
+              });
             }),
           cancel: (reason) => {
             gates.delete(n.id);
             line({ type: 'gate_cancelled', nodeId: n.id, reason: reason ?? 'interrupted' });
+            audit({ op: 'gate', nodeId: n.id, gate: 'rejected', errorType: reason ?? 'interrupted' });
           },
         },
       };
@@ -262,6 +289,32 @@ async function main() {
   });
 
   const line = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
+
+  // ADR-012: trilha de auditoria ÚNICA por run — NDJSON no stdout + JSONL append-only.
+  // O runId é o do motor (run_started). Falha de escrita NUNCA derruba o run (warn 1× no stderr).
+  let auditSeq = 0;
+  let auditFile = null;
+  let auditWarned = false;
+  const audit = (ev) => {
+    const rec = { runId: rg?.runId ?? 'run', seq: ++auditSeq, ts: Date.now(), ...ev };
+    line({ type: 'audit', ...rec });
+    if (!auditFile) return;
+    try {
+      appendFileSync(auditFile, JSON.stringify(rec) + '\n');
+    } catch (e) {
+      if (!auditWarned) {
+        auditWarned = true;
+        process.stderr.write(`[audit] falha ao gravar ${auditFile}: ${e?.message ?? e}\n`);
+      }
+    }
+  };
+  const initAuditFile = () => {
+    const dir = process.env.FALADOR_AUDIT_DIR || resolve('logs/audit');
+    try {
+      mkdirSync(dir, { recursive: true });
+    } catch { /* o warn sai na primeira tentativa de escrita */ }
+    auditFile = join(dir, `${rg.runId}.jsonl`);
+  };
   // --run-seconds N: fonte contínua (mic/BlackHole) não "esgota" — o host pede stop programático
   const runSecondsArg = args.find((a) => a === '--run-seconds');
   const runSeconds = runSecondsArg ? Number(args[args.indexOf('--run-seconds') + 1]) : 0;
@@ -271,6 +324,7 @@ async function main() {
     line({ type: 'flow_invalid', error: String(err?.message ?? err) });
     process.exit(1);
   }
+  initAuditFile();
   // fase 3: métricas por nó AO VIVO (1 Hz) — o snapshot final também vai no summary.
   const metricsTimer = setInterval(() => line({ type: 'metrics', snapshot: rg.snapshot() }), 1000);
   metricsTimer.unref?.();
