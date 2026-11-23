@@ -62,7 +62,9 @@
     {
       "id": "gate_leitura",
       "type": "human.approve",
-      "params": {}
+      "params": {
+        "mode": "manual"
+      }
     },
     {
       "id": "exec_leitura",
@@ -99,7 +101,9 @@
     {
       "id": "gate_sensivel",
       "type": "human.approve",
-      "params": {}
+      "params": {
+        "mode": "manual"
+      }
     },
     {
       "id": "exec_sensivel",

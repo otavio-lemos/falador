@@ -30,7 +30,8 @@
         "mode": "callback",
         "showParcials": true,
         "outputMode": "write",
-        "language": "English"
+        "language": "English",
+        "isDefault": true
       }
     },
     {
@@ -64,12 +65,12 @@
           "humano"
         ],
         "defaultOption": "humano",
-        "instructions": "Um assistente sugere uma resposta para o usuário falar numa entrevista técnica. Decida se a sugestão está PRONTA para ser falada sem revisão humana: 'auto' se é objetiva, técnica e curta; 'humano' se o usuário provavelmente vai querer editar.",
+        "instructions": "Um assistente sugere uma resposta para o usuário falar numa entrevista técnica. Decida se a sugestão está PRONTA para ser falada sem revisão humana: 'auto' se é objetiva, técnica, curta (2-3 frases) e sem informações sensíveis; 'humano' se contém opinião, informação pessoal, ambígua ou se o usuário deve revisar antes de falar.",
         "mode": "systemone",
         "model": "d1-2B-MLX-4bit",
         "criteria": {
-          "auto": "Routine, factual or technical question the assistant can answer directly",
-          "humano": "Sensitive, personal or ambiguous — the user must speak for themselves"
+          "auto": "Routine, factual or technical question; short (2-3 sentences); objective; no sensitive content",
+          "humano": "Contains opinions, personal info, ambiguity, or requires user judgment before speaking"
         }
       }
     },
@@ -80,14 +81,15 @@
         "mode": "callback",
         "showParcials": true,
         "outputMode": "write",
-        "language": "English",
-        "isDefault": true
+        "language": "English"
       }
     },
     {
       "id": "revisao",
       "type": "human.approve",
-      "params": {}
+      "params": {
+        "mode": "manual"
+      }
     },
     {
       "id": "aprovada",
@@ -96,7 +98,8 @@
         "mode": "callback",
         "showParcials": true,
         "outputMode": "write",
-        "language": "English"
+        "language": "English",
+        "isDefault": true
       }
     }
   ],
