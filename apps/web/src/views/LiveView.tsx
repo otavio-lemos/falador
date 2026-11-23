@@ -1217,6 +1217,7 @@ export function LiveView({
               }}
               hasAgent={hasAgent}
               onOpenConsole={openConsolePopup}
+              audit={runner.audit}
             />
           </TabPanel>
           <TabPanel>

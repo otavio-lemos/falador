@@ -1044,3 +1044,29 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   white-space: nowrap;
 }
 .agent-step-dur { @include type-style('helper-text-01'); color: $txt-2; white-space: nowrap; }
+
+.logs-block--audit {
+  .logs-block-head {
+    background: $bg-bar;
+    border-bottom: 1px solid $border-1;
+  }
+  .logs-block-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: $spacing-03;
+    background: $bg-app;
+  }
+}
+
+.logs-block-title--audit {
+  @include type-style('label-01');
+  color: $txt-1;
+  font-weight: 600;
+}
+
+.audit-empty {
+  @include type-style('helper-text-01');
+  color: $txt-2;
+  margin: $spacing-02 0;
+}
