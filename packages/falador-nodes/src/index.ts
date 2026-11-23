@@ -76,6 +76,7 @@ export {
 } from './tool-crawler.ts';
 export { inheritTrace, type TraceMeta } from './trace.ts';
 export { goalValidator } from './goal-validator.ts';
+export { parsePlanItems, preview, type AuditEvent, type PlanItem, type GoalValidationResult } from './audit.ts';
 export { postJsonBytes, postSse, payloadText, omlxAuthHeaders } from './sse.ts';
 
 /** Registra todos os nós reais no registry dado. */
