@@ -86,9 +86,11 @@ interface LogsPanelProps {
   thoughtsOn?: boolean;
   onToggleThoughts?: (next: boolean) => void;
   resetSignal?: number;
+  hasAgent?: boolean;
+  onOpenConsole?: () => void;
 }
 
-export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onToggleThoughts, resetSignal = 0 }: LogsPanelProps) {
+export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onToggleThoughts, resetSignal = 0, hasAgent = false, onOpenConsole }: LogsPanelProps) {
   const logsRefs = useRef<Record<string, HTMLPreElement | null>>({});
   const clearEpochRef = useRef(0);
   const onServiceStatusRef = useRef(onServiceStatus);
@@ -354,6 +356,17 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onTo
         >
           Limpar logs
         </Button>
+        {hasAgent && (
+          <Button
+            kind="tertiary"
+            size="sm"
+            renderIcon={Terminal}
+            onClick={onOpenConsole}
+            title="Abrir Console do Agente (popup)"
+          >
+            Console
+          </Button>
+        )}
         {onToggleThoughts && (
           <Button
             kind={thoughtsOn ? 'primary' : 'tertiary'}

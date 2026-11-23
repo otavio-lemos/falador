@@ -14,9 +14,9 @@ export interface Category {
 export const CATEGORIES: Category[] = [
   { id: 'input', label: 'Input', emoji: '🎙️', accent: '#22d3ee', nodes: ['capture.ffmpeg'] },
   { id: 'transcricao', label: 'Transcription', emoji: '💡', accent: '#14b8a6', nodes: ['asr.realtime', 'asr.lfm3'] },
-  { id: 'pensar', label: 'Reasoning', emoji: '🧠', accent: '#8b5cf6', nodes: ['llm.omlx', 'translate.llm', 'agent.tools'] },
+  { id: 'pensar', label: 'Reasoning', emoji: '🧠', accent: '#8b5cf6', nodes: ['llm.omlx', 'translate.llm'] },
   { id: 'decidir', label: 'Routing', emoji: '🔀', accent: '#f59e0b', nodes: ['turn.detector', 'decision.llm', 'human.approve'] },
-  { id: 'acoes', label: 'Actions / Connectors', emoji: '⚡', accent: '#f97316', nodes: ['exec.command', 'rag.search', 'tool.mcp', 'tool.workflow', 'tool.web_search', 'tool.crawler'] },
+  { id: 'acoes', label: 'Actions / Connectors', emoji: '⚡', accent: '#f97316', nodes: ['exec.command', 'rag.search', 'tool.mcp', 'tool.workflow', 'tool.web_search', 'tool.crawler', 'agent.tools'] },
   { id: 'output', label: 'Output', emoji: '🗣️', accent: '#22c55e', nodes: ['sink.captions'] },
   { id: 'teste', label: 'Testing', emoji: '🔧', accent: '#9ca3af', nodes: ['source.tone', 'pipe.delay', 'pipe.parcs', 'sink.collect'], collapsible: true },
 ];

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "stopWhenSourcesDone": false,
-  "description": "Assistente Especialista em TI / Ops: nó único Input (padrão Chat, alternável para Aplicações via SCK ou Microfone via ASR Voxtral) sugere comando de diagnóstico, d1-2B classifica risco (leitura_segura/sensível/bloqueado), rotas sensíveis exigem aprovação humana, execução em dryRun=true por padrão com análise final do diagnóstico.",
+  "description": "Assistente Especialista em Implantação/Configuração/Suporte/Análise de TI: agente Qwen3-Coder-30B-A3B com loop infinito até atingir objetivo. Conecta via SSH (direto ou via bastion/jump host), usa ferramentas (exec, mcp, web_search, crawler, workflow, rag), executa comandos com aprovação humana OBRIGATÓRIA a cada passo, auditoria completa, console dedicado em popup exibindo tudo que digita/recebe, output do console realimenta o agente. Input via Chat (padrão) ou voz via ASR.",
   "nodes": [
     {
       "id": "input",
@@ -10,7 +10,7 @@
         "input": "",
         "chunkMs": 80,
         "backend": "chat",
-        "placeholder": "Descreva o problema do servidor ou pedido de diagnóstico (Enter para enviar)...",
+        "placeholder": "Descreva o objetivo: deploy, configuração, troubleshooting, análise... (Enter para enviar)",
         "isDefault": true
       }
     },
@@ -24,125 +24,244 @@
       }
     },
     {
-      "id": "planejador",
-      "type": "llm.omlx",
-      "params": {
-        "enableThinking": false,
-        "historyMax": 4,
-        "historyCharBudget": 4000,
-        "useContext": true,
-        "contextTopK": 3,
-        "contextMaxChars": 2400,
-        "system": "Você é um engenheiro SRE/Ops. Consulte a documentação relevante e sugira UM ÚNICO comando de diagnóstico seguro (sem encadeamento &&, ; ou |). Responda APENAS em JSON válido no formato {\"command\":\"...\",\"host\":\"local\",\"reason\":\"...\"}.",
-        "template": [
-          "Formule um único comando de diagnóstico para a solicitação abaixo. Responda SOMENTE com o JSON {\"command\",\"host\",\"reason\"}."
-        ]
-      }
-    },
-    {
-      "id": "risco",
-      "type": "decision.llm",
-      "params": {
-        "mode": "systemone",
-        "model": "d1-2B-MLX-4bit",
-        "options": [
-          "leitura_segura",
-          "sensivel",
-          "bloqueado"
-        ],
-        "defaultOption": "bloqueado",
-        "instructions": "Classifique o risco do comando sugerido em leitura_segura, sensivel ou bloqueado.",
-        "criteria": {
-          "leitura_segura": "Pure read-only diagnostic command (uptime, df, ps, logs, status) with no state changes",
-          "sensivel": "Operational command that inspects sensitive services or requires careful review",
-          "bloqueado": "Destructive, mutating, shell chaining, or unsafe command that must be blocked"
-        }
-      }
-    },
-    {
-      "id": "gate_leitura",
-      "type": "human.approve",
-      "params": {
-        "mode": "manual"
-      }
-    },
-    {
-      "id": "exec_leitura",
-      "type": "exec.command",
-      "params": {
-        "transport": "local",
-        "mode": "readonly",
-        "dryRun": true,
-        "timeoutMs": 15000,
-        "maxOutputBytes": 32768
-      }
-    },
-    {
-      "id": "analista",
-      "type": "llm.omlx",
-      "params": {
-        "enableThinking": false,
-        "historyMax": 0,
-        "useContext": false,
-        "system": "Você é um analista SRE. Leia o relatório de saída do comando e devolva um diagnóstico curto e objetivo em português (2-4 frases), destacando a provável causa raiz e o próximo passo recomendado."
-      }
-    },
-    {
-      "id": "diagnostico",
+      "id": "console_output",
       "type": "sink.captions",
       "params": {
         "mode": "callback",
-        "showParcials": true,
         "outputMode": "write",
         "language": "Portuguese",
-        "isDefault": true
+        "isDefault": true,
+        "showParcials": true
       }
     },
     {
-      "id": "gate_sensivel",
-      "type": "human.approve",
+      "id": "agente",
+      "type": "agent.tools",
       "params": {
-        "mode": "manual"
+        "baseUrl": "http://127.0.0.1:8080",
+        "model": "mlx-community--Qwen3-Coder-30B-A3B-Instruct-4bit",
+        "enableThinking": false,
+        "maxSteps": 50,
+        "approvalPolicy": "always",
+        "historyMax": 20,
+        "historyCharBudget": 8000,
+        "maxToolOutputChars": 16000,
+        "temperature": 0.1,
+        "maxTokens": 2048,
+        "system": "Você é um Especialista Sênior em Implantação, Configuração, Suporte e Análise de Infraestrutura de TI. Seu objetivo: atingir a meta descrita pelo usuário executando passos concretos em servidores reais.\n\nREGRAS OBRIGATÓRIAS:\n1. LOOP INFINITO: continue executando passos até o objetivo ser 100% atingido. Não pare no primeiro comando.\n2. APROVAÇÃO HUMANA OBRIGATÓRIA: toda ação (exec.command, tool.mcp, tool.workflow, etc.) DEVE ser aprovada pelo humano via gate. O sistema NÃO executa sem aprovação.\n3. SSH COM BASTION/JUMP HOST: use exec.command com transport=ssh. Para servidores atrás de bastion, configure host=IP_DO_DESTINO e o sistema roteia via bastion automaticamente (ProxyJump).\n4. CONSOLE DEDICADO: tudo que você digita nos comandos, todo output recebido, todo erro - TUDO aparece no Console dedicado (popup). O humano vê tudo em tempo real.\n5. OUTPUT REALIMENTA O LOOP: o stdout/stderr de cada comando executado volta automaticamente como input para seu próximo passo. Use essa informação para decidir o próximo comando.\n6. AUDITORIA COMPLETA: toda ação gera log em logs/exec-audit.jsonl com timestamp, comando, host, usuário, aprovação, resultado.\n7. FERRAMENTAS DISPONÍVEIS:\n   - exec.command: executa comandos (local ou SSH com bastion)\n   - tool.mcp: conecta a servidores MCP externos\n   - tool.web_search: busca documentação oficial\n   - tool.crawler: raspa docs técnicas\n   - tool.workflow: gerencia workflows\n   - rag.search: consulta runbooks locais\n8. SEMPRE EXPLIQUE: antes de cada comando, explique POR QUÊ e O QUE ESPERA. O humano aprova baseando-se na sua explicação.\n9. FALHOU? TENTE OUTRO CAMINHO: se comando falha, analise erro, ajuste, peça nova aprovação, tente novamente.\n10. OBJETIVO ATINGIDO = você declara \"OBJETIVO CONCLUÍDO\" e para.\n\nEXEMPLO DE FLUXO:\n- Usuário: \"Deploy da app X no server Y via bastion Z\"\n- Você: planeja passos, pede aprovação para SSH no bastion\n- Humano aprova → executa → output volta para você\n- Você: analisa, pede aprovação para próximo comando\n- ... loop até deploy concluído\n- Você: \"OBJETIVO CONCLUÍDO\"\n\nResponda SEMPRE em português. Seja preciso, técnico e transparente."
       }
     },
     {
-      "id": "exec_sensivel",
+      "id": "web_search",
+      "type": "tool.web_search",
+      "params": {
+        "endpoint": "https://api.duckduckgo.com/",
+        "timeoutMs": 10000,
+        "maxResults": 10,
+        "maxChars": 8000
+      }
+    },
+    {
+      "id": "crawler",
+      "type": "tool.crawler",
+      "params": {
+        "maxPages": 10,
+        "maxDepth": 2,
+        "sameOriginOnly": true,
+        "allowedDomains": [
+          "kubernetes.io",
+          "docs.docker.com",
+          "github.com",
+          "gitlab.com",
+          "docs.ansible.com",
+          "www.terraform.io",
+          "helm.sh",
+          "docs.aws.amazon.com",
+          "cloud.google.com",
+          "learn.microsoft.com"
+        ],
+        "timeoutMs": 15000,
+        "maxCharsPerPage": 8000,
+        "maxTotalChars": 32000,
+        "userAgent": "Falador-TI-Specialist/1.0"
+      }
+    },
+    {
+      "id": "tool_mcp",
+      "type": "tool.mcp",
+      "params": {
+        "serverName": "external",
+        "transport": "stdio",
+        "command": "npx",
+        "args": [
+          "-y",
+          "@modelcontextprotocol/server-github"
+        ],
+        "envAllowlist": [
+          "GITHUB_TOKEN"
+        ],
+        "allowedTools": [
+          "search_repositories",
+          "get_file_contents",
+          "create_issue"
+        ],
+        "dryRun": true,
+        "timeoutMs": 30000,
+        "auditLogPath": "logs/exec-audit.jsonl"
+      }
+    },
+    {
+      "id": "tool_workflow",
+      "type": "tool.workflow",
+      "params": {
+        "flowsDir": "apps/tui/flows",
+        "agentsMdPath": "AGENTS.md",
+        "dryRun": false,
+        "allowDelete": false,
+        "auditLogPath": "logs/exec-audit.jsonl"
+      }
+    },
+    {
+      "id": "rag_search",
+      "type": "rag.search",
+      "params": {
+        "toolName": "search_runbooks",
+        "topK": 5,
+        "tags": [
+          "runbook",
+          "deployment",
+          "troubleshooting"
+        ],
+        "maxChars": 4000,
+        "docsPath": "context/docs.json"
+      }
+    },
+    {
+      "id": "final_output",
+      "type": "sink.captions",
+      "params": {
+        "mode": "callback",
+        "outputMode": "write",
+        "language": "Portuguese",
+        "isDefault": true,
+        "showParcials": true
+      }
+    },
+    {
+      "id": "exec_ssh",
       "type": "exec.command",
       "params": {
-        "transport": "local",
+        "transport": "ssh",
         "mode": "allowlist",
         "dryRun": true,
         "allowedPrefixes": [
+          "ls",
+          "cd",
+          "cat",
+          "grep",
+          "tail",
+          "head",
+          "less",
+          "more",
+          "wc",
+          "find",
           "systemctl status",
+          "systemctl start",
+          "systemctl stop",
+          "systemctl restart",
+          "systemctl enable",
+          "systemctl disable",
+          "systemctl is-active",
+          "systemctl is-enabled",
           "journalctl",
+          "dmesg",
+          "df -h",
+          "du -sh",
+          "free -h",
+          "top",
+          "htop",
+          "ps aux",
+          "netstat -tulpn",
+          "ss -tulpn",
+          "lsof -i",
+          "ip a",
+          "ip route",
           "docker ps",
+          "docker images",
           "docker logs",
+          "docker exec",
+          "docker stats",
+          "docker-compose ps",
+          "docker-compose logs",
+          "docker-compose up",
+          "docker-compose down",
           "kubectl get",
           "kubectl describe",
-          "kubectl logs"
+          "kubectl logs",
+          "kubectl exec",
+          "kubectl apply",
+          "helm list",
+          "helm status",
+          "helm install",
+          "helm upgrade",
+          "helm rollback",
+          "git status",
+          "git log",
+          "git diff",
+          "git pull",
+          "git fetch",
+          "git checkout",
+          "npm run",
+          "npm install",
+          "npm build",
+          "npm test",
+          "make",
+          "cmake",
+          "go build",
+          "go test",
+          "cargo build",
+          "cargo test",
+          "python -m pip install",
+          "python -m pytest",
+          "python manage.py",
+          "ansible-playbook",
+          "ansible",
+          "terraform plan",
+          "terraform apply",
+          "ssh",
+          "scp",
+          "rsync",
+          "tar",
+          "gzip",
+          "gunzip",
+          "unzip",
+          "chmod",
+          "chown",
+          "chgrp",
+          "mkdir",
+          "rm",
+          "cp",
+          "mv",
+          "ln",
+          "vim",
+          "nano",
+          "cat",
+          "echo",
+          "tee",
+          "sed",
+          "awk",
+          "cut",
+          "sort",
+          "uniq"
         ],
-        "timeoutMs": 15000,
-        "maxOutputBytes": 32768
-      }
-    },
-    {
-      "id": "saida_sensivel",
-      "type": "sink.captions",
-      "params": {
-        "mode": "callback",
-        "showParcials": true,
-        "outputMode": "write",
-        "language": "Portuguese"
-      }
-    },
-    {
-      "id": "alerta",
-      "type": "sink.captions",
-      "params": {
-        "mode": "callback",
-        "showParcials": true,
-        "outputMode": "write",
-        "language": "Portuguese"
+        "allowedHosts": [],
+        "defaultHost": "",
+        "sshUser": "",
+        "sshPort": 22,
+        "timeoutMs": 60000,
+        "maxOutputBytes": 65536,
+        "toolName": "exec_ssh",
+        "auditLogPath": "logs/exec-audit.jsonl"
       }
     }
   ],
@@ -156,69 +275,57 @@
     },
     {
       "from": "asr.out",
-      "to": "planejador.parcs",
-      "capacity": 16,
+      "to": "console_output.in",
+      "capacity": 64,
       "overflow": "drop_oldest"
     },
     {
       "from": "input.out_text",
-      "to": "planejador.in",
+      "to": "agente.in",
+      "capacity": 16,
+      "overflow": "block"
+    },
+    {
+      "from": "exec_ssh.tool",
+      "to": "agente.tools",
       "capacity": 8,
       "overflow": "block"
     },
     {
-      "from": "planejador.out",
-      "to": "risco.in",
+      "from": "web_search.tool",
+      "to": "agente.tools",
       "capacity": 8,
       "overflow": "block"
     },
     {
-      "from": "risco.leitura_segura",
-      "to": "gate_leitura.in",
+      "from": "crawler.tool",
+      "to": "agente.tools",
       "capacity": 8,
       "overflow": "block"
     },
     {
-      "from": "gate_leitura.out",
-      "to": "exec_leitura.in",
+      "from": "tool_mcp.tool",
+      "to": "agente.tools",
       "capacity": 8,
       "overflow": "block"
     },
     {
-      "from": "exec_leitura.out",
-      "to": "analista.in",
+      "from": "tool_workflow.tool",
+      "to": "agente.tools",
       "capacity": 8,
       "overflow": "block"
     },
     {
-      "from": "analista.out",
-      "to": "diagnostico.in",
+      "from": "rag_search.tool",
+      "to": "agente.tools",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "agente.out",
+      "to": "final_output.in",
       "capacity": 16,
       "overflow": "drop_oldest"
-    },
-    {
-      "from": "risco.sensivel",
-      "to": "gate_sensivel.in",
-      "capacity": 8,
-      "overflow": "block"
-    },
-    {
-      "from": "gate_sensivel.out",
-      "to": "exec_sensivel.in",
-      "capacity": 8,
-      "overflow": "block"
-    },
-    {
-      "from": "exec_sensivel.out",
-      "to": "saida_sensivel.phrase",
-      "capacity": 8,
-      "overflow": "block"
-    },
-    {
-      "from": "risco.bloqueado",
-      "to": "alerta.in",
-      "capacity": 8,
-      "overflow": "block"
     }
   ]
 }

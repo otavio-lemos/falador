@@ -346,6 +346,53 @@ export function LiveView({
   const hasExec = execNodes.length > 0;
   const execActive = execNodes.some((n) => n.params.dryRun === false);
   const hasAgent = flow.nodes.some((n) => n.type === 'agent.tools');
+  const openConsolePopup = () => {
+    const consoleWindow = window.open('', 'falador-console', 'width=900,height=700,scrollbars=yes,resizable=yes');
+    if (consoleWindow) {
+      consoleWindow.document.title = 'Falador - Console do Agente';
+      consoleWindow.document.body.innerHTML = `
+        <style>
+          body { font-family: 'IBM Plex Mono', monospace; background: #161616; color: #f4f4f4; margin: 0; padding: 16px; }
+          .header { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #393939; margin-bottom: 16px; }
+          .title { font-family: 'IBM Plex Sans', sans-serif; font-weight: 600; }
+          .log-entry { padding: 4px 0; border-bottom: 1px solid #2a2a2a; font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+          .log-entry .ts { color: #8d8d8d; font-size: 11px; margin-right: 8px; }
+          .log-entry .node { color: #f59e0b; font-weight: 600; margin-right: 8px; }
+          .log-entry .type { color: #22d3ee; font-size: 11px; margin-right: 8px; text-transform: uppercase; }
+          .log-entry .text { color: #f4f4f4; }
+          .log-entry.stderr .text { color: #ff8389; }
+          .log-entry.command .text { color: #4ade80; }
+          .log-entry.output .text { color: #f4f4f4; }
+        </style>
+        <div class="header">
+          <span class="title">Falador - Console do Agente (${new Date().toLocaleTimeString()})</span>
+          <button onclick="window.close()" style="background:#da1e28;border:none;color:white;padding:4px 12px;border-radius:0;cursor:pointer;">Fechar</button>
+        </div>
+        <div id="logs"></div>
+        <script>
+          const logsDiv = document.getElementById('logs');
+          function addLog(entry) {
+            const div = document.createElement('div');
+            div.className = 'log-entry ' + (entry.type || '');
+            div.innerHTML = '<span class="ts">[' + entry.ts + ']</span><span class="node">' + (entry.node || '') + '</span><span class="type">' + (entry.type || '') + '</span><span class="text">' + entry.text + '</span>';
+            logsDiv.appendChild(div);
+            logsDiv.scrollTop = logsDiv.scrollHeight;
+          }
+          window.addLog = addLog;
+          // Load existing logs from parent
+          if (window.opener && window.opener.runner) {
+            const events = window.opener.runner.events || [];
+            events.forEach(e => {
+              if (e.type === 'node_error' && e.nodeId) {
+                addLog({ ts: new Date().toLocaleTimeString(), node: e.nodeId, type: e.code, text: e.message || '' });
+              }
+            });
+          }
+        </script>
+      `;
+      consoleWindow.document.close();
+    }
+  };
   const isAssisted = flow.nodes.some(
     (n) => n.type === 'decision.llm' || n.type === 'human.approve' || n.type === 'exec.command' || n.type === 'agent.tools',
   );
@@ -1134,6 +1181,8 @@ export function LiveView({
           setShowThoughts(next);
           try { localStorage.setItem(THOUGHTS_STORAGE_KEY, String(next)); } catch { /* ignore */ }
         }}
+        hasAgent={hasAgent}
+        onOpenConsole={openConsolePopup}
       />
 
       <Modal
