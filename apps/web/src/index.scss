@@ -503,7 +503,6 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   flex-wrap: nowrap;
   gap: $spacing-03;
   width: 100%;
-  overflow-x: auto;
 }
 
 .stage-dd {
@@ -514,6 +513,7 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   display: flex;
   flex-direction: column;
   gap: $spacing-02;
+  overflow: visible;
 }
 
 .stage-dd--dual {

@@ -39,7 +39,7 @@ import {
   Moon,
   Microphone,
   MicrophoneOff,
-  UserSpeaker,
+  VolumeUp,
 } from '@carbon/icons-react';
 import type { Runner, Gate, AgentStep, Caption } from '../useRunner';
 import { exportSession, type Flow, type ContextDoc, type ServiceStatusMap } from '../api';
@@ -734,7 +734,7 @@ export function LiveView({
     } else if (m.kind === 'agent') {
       tagType = 'green'; accent = 'var(--cds-support-success-inverse)'; icon = <Bot size={18} />;
     } else if (m.kind === 'audio') {
-      tagType = 'blue'; accent = 'var(--cds-interactive)'; icon = <UserSpeaker size={18} />;
+      tagType = 'blue'; accent = 'var(--cds-interactive)'; icon = <VolumeUp size={18} />;
     } else if (m.kind === 'thought') {
       tagType = 'purple'; accent = 'var(--cds-support-purple, var(--cds-interactive))'; icon = <Router size={18} />;
     }
@@ -855,7 +855,7 @@ export function LiveView({
                 kind={outputMode === 'write' ? 'danger--tertiary' : 'tertiary'}
                 size="sm"
                 hasIconOnly
-                renderIcon={UserSpeaker}
+                renderIcon={VolumeUp}
                 aria-pressed={outputMode === 'speak'}
                 iconDescription={!hasOutput ? 'Workflow sem saída (Output)' : (outputMode === 'speak' ? 'Só escrever' : 'Falar')}
                 tooltipPosition="bottom"
