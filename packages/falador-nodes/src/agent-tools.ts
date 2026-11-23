@@ -364,6 +364,7 @@ export const agentTools: NodeTypeDef = {
     let userGoal = '';
     let plan: PlanItem[] | null = null;
     const evidence: string[] = [];
+    let completed = false;
 
     function emitAudit(ev: Omit<AuditEvent, 'ts' | 'nodeId'>): void {
       if (typeof onAudit !== 'function') return;
@@ -375,7 +376,8 @@ export const agentTools: NodeTypeDef = {
     }
 
     function pushEvidence(entry: string): void {
-      evidence.push(entry);
+      const capped = entry.length > 4000 ? entry.slice(0, 4000) + '\n[…evidência cortada…]' : entry;
+      evidence.push(capped);
       let total = evidence.reduce((s, e) => s + e.length, 0);
       while (evidence.length > 1 && total > EVIDENCE_CHAR_BUDGET) {
         total -= evidence.shift()!.length;
@@ -393,6 +395,11 @@ export const agentTools: NodeTypeDef = {
 
     function resetHistory(): void {
       history.length = 0;
+      // ADR-012: nova sessão lógica também limpa objetivo/plano/evidência
+      userGoal = '';
+      plan = null;
+      evidence.length = 0;
+      completed = false;
       ctx.metrics.counter('agent.tools.historyResets', 1);
     }
 
@@ -459,6 +466,15 @@ export const agentTools: NodeTypeDef = {
         if (port === 'parcs' && !pl.final) return;
         const userText = pl.text.trim();
         if (!userText) return;
+
+        // ADR-012: novo turno após conclusão = nova sessão lógica (limpa objetivo/plano/evidência)
+        // O histórico é governado por historyMax/historyCharBudget (não é limpo aqui — ver A7).
+        if (completed) {
+          userGoal = '';
+          plan = null;
+          evidence.length = 0;
+          completed = false;
+        }
 
         // Objetivo da sessão = primeira mensagem do usuário (ADR-012)
         if (!userGoal) userGoal = userText;
@@ -528,7 +544,6 @@ export const agentTools: NodeTypeDef = {
         const tTurnStart = Date.now();
         const thoughtTurn = ++thoughtSeq;
         let prevStepSignatures = new Set<string>();
-        let completed = false;
 
         try {
           for (let step = 1; step <= maxSteps; step++) {
@@ -582,7 +597,17 @@ export const agentTools: NodeTypeDef = {
               const finalText = typeof assistantMsg.content === 'string' ? assistantMsg.content : '';
 
               // ADR-012: conclusão validada — quem executa NÃO declara a própria vitória.
-              const needsValidation = Boolean(userGoal) && (Boolean(validatorModel) || plan !== null);
+              // Plano com itens pendentes SEMPRE bloqueia a conclusão (independente de validador).
+              const pendingItems = (plan ?? []).filter((p) => p.status !== 'verified');
+              if (pendingItems.length > 0) {
+                messages.push({
+                  role: 'user',
+                  content: `O plano ainda tem itens PENDENTES (não verificados). Não declare conclusão antes de verificar cada um com evidência real:\n${pendingItems.map((p) => `- [${p.status}] ${p.id}: ${p.description} (verificação: ${p.verification})`).join('\n')}\nExecute as verificações, atualize o plano com update_plan e só então conclua.`,
+                });
+                continue;
+              }
+
+              const needsValidation = Boolean(userGoal) && Boolean(validatorModel);
               if (!needsValidation) {
                 ctx.metrics.timer('agent.tools.totalMs', Date.now() - tTurnStart);
                 await ctx.emit(
@@ -596,20 +621,10 @@ export const agentTools: NodeTypeDef = {
                 return;
               }
 
-              // 1. Plano com itens não-verificados ⇒ devolve pendências e continua o loop
-              const pendingItems = (plan ?? []).filter((p) => p.status !== 'verified');
-              if (pendingItems.length > 0) {
-                messages.push({
-                  role: 'user',
-                  content: `O plano ainda tem itens PENDENTES (não verificados). Não declare conclusão antes de verificar cada um com evidência real:\n${pendingItems.map((p) => `- [${p.status}] ${p.id}: ${p.description} (verificação: ${p.verification})`).join('\n')}\nExecute as verificações, atualize o plano com update_plan e só então conclua.`,
-                });
-                continue;
-              }
-
               // 2. Avaliador INDEPENDENTE (outro modelo) julga objetivo + evidência + plano
               const validation = await validateGoal({
                 baseUrl,
-                model: validatorModel ?? DEFAULT_MODEL,
+                model: validatorModel as string,
                 goal: userGoal,
                 evidence,
                 plan: plan ?? undefined,

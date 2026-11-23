@@ -82,7 +82,7 @@ export class RunningGraph {
   ) {
     this.flow = flow;
     this.opts = opts;
-    this.runId = opts.runId ?? `run-${Date.now()}`;
+    this.runId = opts.runId ?? `run-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     this.clock = opts.clock ?? realClock;
     this.procWindow = opts.procWindow ?? 256;
     for (const id of flow.topoOrder) {

@@ -452,3 +452,31 @@ test('interrupt durante o gate final não pendura o run', async () => {
     assert.equal(h.received.filter((m) => m.meta?.goalAchieved === true).length, 0);
   } finally { await llm.close(); }
 });
+test('multi-turn: segundo turno após conclusão não contamina goal/plano/evidência do primeiro', async () => {
+  const llm = await mockLlm({
+    executor: [
+      toolCallResp('update_plan', { items: [PLAN_VERIFIED] }), finalResp('CONCLUÍDO 1'),
+      toolCallResp('update_plan', { items: [{ ...PLAN_VERIFIED, id: '2', description: 'Checar memória', verification: 'free -h' }] }), finalResp('CONCLUÍDO 2'),
+    ],
+    validator: [VALID_VALIDATION, VALID_VALIDATION],
+  });
+  const gate = makeGate(['', '']);
+  const h = await harness({ llm, gate, agentParams: { validatorModel: 'val-model' } });
+  try {
+    await h.src.emit('objetivo A: verificar disco');
+    await waitFor(() => h.audits.some((a) => a.op === 'agent_final' && a.goalAchieved === true));
+    const firstGv = h.audits.find((a) => a.op === 'goal_validation');
+    assert.ok(firstGv?.goal?.includes('objetivo A'), `goal do 1º turno deve ser A, veio: ${firstGv?.goal}`);
+
+    const auditsBefore = h.audits.length;
+    await h.src.emit('objetivo B: checar memória');
+    await waitFor(() => h.audits.length > auditsBefore && h.audits.some((a, i) => i >= auditsBefore && a.op === 'goal_validation'));
+    const secondGv = h.audits.slice(auditsBefore).find((a) => a.op === 'goal_validation');
+    assert.ok(secondGv, 'segundo turno gerou goal_validation');
+    assert.ok(secondGv?.goal?.includes('objetivo B'), `goal do 2º turno deve ser B, veio: ${secondGv?.goal}`);
+    const secondValBody = llm.bodies.find((b, i) => i > 0 && b.model === 'val-model' && (b.messages as Array<{ role: string; content: string }>).some((m) => m.role === 'user' && m.content.includes('objetivo B')));
+    assert.ok(secondValBody, 'chamada de validação do segundo turno existe');
+    const uc = (secondValBody?.messages as Array<{ role: string; content: string }>).find((m) => m.role === 'user')?.content ?? '';
+    assert.ok(!uc.includes('Checar disco'), 'evidência do turno A não vaza para o turno B');
+  } finally { await h.stop(); await llm.close(); }
+});
