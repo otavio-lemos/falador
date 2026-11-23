@@ -4,8 +4,10 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { Button, MultiSelect } from '@carbon/react';
 import { ChevronDown, ChevronUp, Close, Terminal, TrashCan } from '@carbon/icons-react';
+import type { AuditEvent } from '../useRunner';
 import { clearLogs, fetchLogs, fetchServiceStatus, type ServiceStatusMap } from '../api';
 import { accentOf, serviceOfNode, shortNodeName } from '../data';
+import { AuditPanel } from '../components/AuditPanel';
 
 interface ServiceColorTag {
   color: string;
@@ -13,7 +15,7 @@ interface ServiceColorTag {
 }
 
 interface LogServiceMeta {
-  id: keyof ServiceStatusMap;
+  id: string;
   shortLabel: string;
   label: string;
   colors: ServiceColorTag[];
@@ -72,6 +74,8 @@ const LOG_COLLAPSED_KEY = 'falador.logsCollapsed';
 const MIN_LOGS_H = 110;
 const MAX_LOGS_H = 520;
 const DEFAULT_LOGS_H = 180;
+const AUDIT_SERVICE_ID = 'audit';
+const AUDIT_COLOR = '#0284c7';
 
 interface FlowNodeRef {
   id: string;
@@ -88,9 +92,10 @@ interface LogsPanelProps {
   resetSignal?: number;
   hasAgent?: boolean;
   onOpenConsole?: () => void;
+  audit?: AuditEvent[];
 }
 
-export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onToggleThoughts, resetSignal = 0, hasAgent = false, onOpenConsole }: LogsPanelProps) {
+export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onToggleThoughts, resetSignal = 0, hasAgent = false, onOpenConsole, audit = [] }: LogsPanelProps) {
   const logsRefs = useRef<Record<string, HTMLPreElement | null>>({});
   const clearEpochRef = useRef(0);
   const onServiceStatusRef = useRef(onServiceStatus);
@@ -100,14 +105,16 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onTo
   const [logServices, setLogServices] = useState<string[]>(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(LOG_SERVICES_KEY) ?? 'null');
-      if (Array.isArray(saved)) return saved.filter((s) => BASE_SERVICES.some((x) => x.id === s));
+      if (Array.isArray(saved)) {
+        return saved.filter((s) => BASE_SERVICES.some((x) => x.id === s) || s === AUDIT_SERVICE_ID);
+      }
     } catch { /* ignore */ }
     return ['web'];
   });
 
   const servicesMeta = useMemo<LogServiceMeta[]>(() => {
     const activeNodes = (flowNodes ?? []).filter((n) => n.enabled !== false);
-    return BASE_SERVICES.map((base) => {
+    const base: LogServiceMeta[] = BASE_SERVICES.map((base) => {
       const matched = activeNodes.filter((n) => serviceOfNode(n.type) === base.id);
       if (matched.length === 0) {
         return {
@@ -139,6 +146,13 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onTo
         colors,
       };
     });
+    const audit: LogServiceMeta = {
+      id: AUDIT_SERVICE_ID,
+      shortLabel: 'Auditoria',
+      label: 'Auditoria',
+      colors: [{ color: AUDIT_COLOR, label: 'Audit' }],
+    };
+    return [...base, audit];
   }, [flowNodes]);
   const [logsByService, setLogsByService] = useState<Record<string, string[]>>({});
   const [logsHeight, setLogsHeight] = useState<number>(() => {
@@ -200,7 +214,7 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onTo
 
   const handleClearLogs = async () => {
     if (logServices.length === 0 || clearing) return;
-    const targets = [...logServices];
+    const targets = logServices.filter((s) => s !== AUDIT_SERVICE_ID);
     clearEpochRef.current += 1;
     setClearing(true);
     setLogsByService((prev) => {
@@ -266,6 +280,7 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onTo
       try {
         const entries = await Promise.all(
           logServices.map(async (svc) => {
+            if (svc === AUDIT_SERVICE_ID) return [svc, [] as string[]] as const;
             try {
               const r = await fetchLogs(svc, 250);
               return [svc, r.lines] as const;
@@ -379,7 +394,7 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onTo
         )}
         <div className="logs-service-badges" role="status" aria-label="Status dos serviços">
           {servicesMeta.map((meta) => {
-            const up = serviceStatus ? serviceStatus[meta.id] : false;
+            const up = serviceStatus ? serviceStatus[meta.id as keyof ServiceStatusMap] : false;
             return (
               <span
                 key={meta.id}
@@ -409,6 +424,34 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onTo
           {logServices.map((svc) => {
             const meta = servicesMeta.find((s) => s.id === svc);
             const lines = logsByService[svc] ?? [];
+            if (svc === AUDIT_SERVICE_ID) {
+              return (
+                <div key={svc} className="logs-block logs-block--audit">
+                  <div className="logs-block-head">
+                    <span className="logs-block-title logs-block-title--audit">Auditoria</span>
+                    <code className="logs-block-path">sessions/audit.jsonl</code>
+                    {meta && meta.colors.length > 0 && (
+                      <span className="logs-color-swatches" aria-label="Audit">
+                        {meta.colors.map((c, idx) => (
+                          <span
+                            key={idx}
+                            className="logs-color-swatch"
+                            style={{ background: c.color }}
+                            tabIndex={0}
+                            aria-label={c.label}
+                          >
+                            <span className="logs-color-tip" role="tooltip">{c.label}</span>
+                          </span>
+                        ))}
+                      </span>
+                    )}
+                  </div>
+                  <div className="logs-block-body">
+                    <AuditPanel audit={audit} />
+                  </div>
+                </div>
+              );
+            }
             return (
               <div key={svc} className="logs-block">
                 <div className="logs-block-head">

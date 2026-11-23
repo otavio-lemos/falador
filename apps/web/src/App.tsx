@@ -222,7 +222,7 @@ export function App() {
       setToast('Adicione pelo menos um nó antes de testar');
       return;
     }
-    runner.start(applyContext(sanitizeFlow(f), contextDocs), currentFlow);
+    runner.start(applyContext(sanitizeFlow(f), contextDocs), currentFlow, true);
   };
   const startWithContext = (f: Flow, name?: string) =>
     runner.start(applyContext(sanitizeFlow(f), contextDocs), name ?? currentFlow);

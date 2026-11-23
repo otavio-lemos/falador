@@ -275,7 +275,7 @@ export function BuilderView({
           )}
         </div>
       )}
-      <LogsPanel flowNodes={flowNodes} onServiceStatus={onServiceStatus} />
+      <LogsPanel flowNodes={flowNodes} onServiceStatus={onServiceStatus} audit={runner.audit} />
     </div>
   );
 }

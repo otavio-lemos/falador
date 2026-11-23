@@ -637,6 +637,9 @@ export function LiveView({
           {hasExec && (
             <Tag type={execActive ? 'red' : 'blue'} size="sm">{execActive ? 'EXEC ATIVO' : 'DRY-RUN'}</Tag>
           )}
+          {runner.testMode && (
+            <Tag type="magenta" size="sm">TESTE</Tag>
+          )}
         </div>
       </div>
       {gateInfo.reason && <p className="cmd-gate-reason">{gateInfo.reason}</p>}
@@ -835,8 +838,13 @@ export function LiveView({
   };
 
   return (
-    <div className="live2">
-      <header className="live2-top">
+      <div className="live2">
+        {runner.testMode && (
+          <div className="live2-test-banner" style={{ background: '#da1e28', color: '#fff', padding: '6px 12px', fontWeight: 600, textAlign: 'center' }}>
+            ⚠ MODO TESTE — dryRun forçado, nenhum comando real será executado
+          </div>
+        )}
+        <header className="live2-top">
         <div className="live2-left-controls">
           <div className="live2-workflow-col">
             <div className="nav-mode-tabs" role="tablist" aria-label="Modo da interface">
@@ -1076,6 +1084,21 @@ export function LiveView({
                     </div>
                   </section>
                 )}
+                {runner.testMode && !runner.running && (
+                  <section className="live-test-checklist" aria-label="Resultado do teste">
+                    <strong>Resultado do teste</strong>
+                    <ul>
+                      {flow.nodes.map((n) => {
+                        const hadError = runner.events.some((e) => e.type === 'node_error' && e.nodeId === n.id);
+                        return (
+                          <li key={n.id}>
+                            {hadError ? '✗' : '✓'} {n.id} ({n.type})
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </section>
+                )}
                 {inputMode === 'chat' && (
                   <div className="live-chat-input">
                     <TextInput
@@ -1194,6 +1217,7 @@ export function LiveView({
               }}
               hasAgent={hasAgent}
               onOpenConsole={openConsolePopup}
+              audit={runner.audit}
             />
           </TabPanel>
           <TabPanel>

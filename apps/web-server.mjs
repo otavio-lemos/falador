@@ -483,19 +483,20 @@ function broadcast(event, data) {
   for (const res of currentRun.clients) res.write(payload);
 }
 
-function startRun(flow, runSeconds, flowName) {
+function startRun(flow, runSeconds, flowName, testMode) {
   if (currentRun) return { error: 'run já em andamento (POST /api/stop antes)' };
   const tmp = join(FLOWS_DIR, '.web-run.tmp.json');
   writeFileSync(tmp, JSON.stringify(flow));
   const args = [CLI, tmp];
   if (runSeconds) args.push('--run-seconds', String(runSeconds));
+  if (testMode) args.push('--test-mode');
   const child = spawn('node', args, { stdio: ['pipe', 'pipe', 'pipe'] });
   const clients = new Set();
   const transcriptionSinks = classifyFlowTranscriptionSinks(flow);
   sessionBuffer = createEmptySession(flowName || flow?.name || 'sessao');
   let resolveExit;
   const exitPromise = new Promise((r) => { resolveExit = r; });
-  const runEntry = { child, clients, stopRequested: false, exitPromise };
+  const runEntry = { child, clients, stopRequested: false, exitPromise, testMode: !!testMode, runId: null };
   currentRun = runEntry;
   let clientStopTimer = null;
   const sses = (res) => {
@@ -597,11 +598,20 @@ function startRun(flow, runSeconds, flowName) {
       // undici keep-alive: o child do runner pode não sair sozinho no fim do run
       // (lição §4) — emitido run_stopped/summary, encerra o child e libera o next run.
       if (ev.type === 'summary' || ev.type === 'run_stopped') {
+        if (ev.type === 'summary' && currentRun && currentRun.testMode) {
+          try {
+            const dir = join(ROOT, 'logs', 'test-runs');
+            mkdirSync(dir, { recursive: true });
+            const rid = currentRun.runId || `run-${Date.now()}`;
+            writeFileSync(join(dir, `${rid}.json`), JSON.stringify({ runId: rid, flow: flowName || flow?.name, testMode: true, summary: ev.summary, results: ev.results, ts: Date.now() }, null, 2));
+          } catch (e) { appendWebLog(`[test-runs] falha ao gravar: ${String(e?.message ?? e)}`); }
+        }
         setTimeout(() => {
           try { if (child.exitCode === null) child.kill('SIGKILL'); } catch { /* race de exit */ }
         }, 300);
       }
       if (ev.type === 'run_started') {
+        if (currentRun) currentRun.runId = ev.runId ?? currentRun.runId;
         appendWebLog(`[runner] run_started flow=${flowName || flow?.name || 'sessao'} runId=${ev.runId ?? ''}`.trim());
       } else if (ev.type === 'node_error') {
         appendWebLog(`[runner] node_error [${ev.nodeId ?? '?'}] (${ev.code ?? 'error'}): ${String(ev.message ?? '').slice(0, 500)}`);
@@ -838,7 +848,7 @@ async function handleApi(req, res, pathname) {
       appendWebLog('[api/run] 400 flow obrigatório');
       return json(res, 400, { error: 'flow obrigatório' }), true;
     }
-    const r = startRun(body.flow, body.runSeconds ?? 0, body.flowName);
+    const r = startRun(body.flow, body.runSeconds ?? 0, body.flowName, body.testMode === true);
     if (r.error) {
       appendWebLog(`[api/run] 409 ${r.error}`);
       return json(res, 409, r), true;

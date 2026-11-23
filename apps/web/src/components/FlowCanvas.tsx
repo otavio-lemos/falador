@@ -57,19 +57,27 @@ export function FlowCanvas(p: Props) {
   // arestas coloridas pelo tipo real da porta de saída
   const edges = useMemo(() => p.edges.map((e) => {
     const src = p.nodes.find((n) => n.id === e.source);
+    const tgt = p.nodes.find((n) => n.id === e.target);
     const isBranch = src?.data.type === 'decision.llm';
+    const isToolToAgent = src?.data.type?.startsWith('tool.') || src?.data.type === 'exec.command' || src?.data.type === 'rag.search';
+    const isAgentOut = src?.data.type === 'agent.tools' && tgt?.data.type === 'sink.captions';
     const srcPort = src?.data.outputs.find((o) => o.name === e.sourceHandle);
     const portType = srcPort?.type ?? (isBranch ? 'tokens_parcial' : '');
     const color = edgeColor(portType);
+    const isObservation = isToolToAgent && tgt?.data.type === 'agent.tools';
     return {
       ...e,
       type: 'smoothstep',
-      label: isBranch ? String(e.sourceHandle ?? '') : undefined,
-      labelStyle: { fill: '#f4f4f4', fontSize: 11, fontWeight: 600 },
+      label: isBranch ? String(e.sourceHandle ?? '') : (isObservation ? 'observação' : (isAgentOut ? 'saída' : undefined)),
+      labelStyle: { fill: '#f4f4f4', fontSize: 10, fontWeight: 600 },
       labelBgStyle: { fill: '#161616', stroke: '#3a3a3a', strokeWidth: 1 },
       labelBgPadding: [6, 3] as [number, number],
       labelBgBorderRadius: 4,
-      style: { stroke: color, strokeWidth: 2 },
+      style: {
+        stroke: color,
+        strokeWidth: isObservation ? 2.5 : 2,
+        strokeDasharray: isObservation ? '6 3' : undefined,
+      },
       markerEnd: { type: MarkerType.ArrowClosed, color, width: 16, height: 16 },
     };
   }), [p.edges, p.nodes]);

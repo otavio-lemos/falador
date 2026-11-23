@@ -220,11 +220,12 @@ export function openRun(
   // onError é opcional para não quebrar chamadas existentes: recebe a mensagem
   // do host (ex.: 409 "run já em andamento") antes de onEnd(-1).
   onError?: (msg: string) => void,
+  testMode?: boolean,
 ): AbortController {
   const ctl = new AbortController();
   fetch('/api/run', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ flow, ...(flowName ? { flowName } : {}) }), signal: ctl.signal,
+    body: JSON.stringify({ flow, ...(flowName ? { flowName } : {}), ...(testMode ? { testMode: true } : {}) }), signal: ctl.signal,
   }).then(async (r) => {
     if (!r.ok) {
       let msg = `falha ao iniciar run (HTTP ${r.status})`;

@@ -316,8 +316,19 @@ async function main() {
     auditFile = join(dir, `${rg.runId}.jsonl`);
   };
   // --run-seconds N: fonte contínua (mic/BlackHole) não "esgota" — o host pede stop programático
+  const testMode = args.includes('--test-mode');
+  // Modo teste: força dryRun em exec.command/tool.mcp (overlay, não persiste no flow.json)
+  if (testMode) {
+    for (const n of flow.nodes ?? []) {
+      if (n.type === 'exec.command' || n.type === 'tool.mcp') {
+        n.params = { ...(n.params ?? {}), dryRun: true };
+      }
+    }
+    flow.testMode = true;
+  }
   const runSecondsArg = args.find((a) => a === '--run-seconds');
   const runSeconds = runSecondsArg ? Number(args[args.indexOf('--run-seconds') + 1]) : 0;
+  if (testMode) line({ type: 'test_mode', enabled: true });
   try {
     rg = await runGraph(flow, registry);
   } catch (err) {
@@ -348,7 +359,7 @@ async function main() {
       .filter((p) => p !== undefined)
       .map((p) => (p instanceof Uint8Array ? `<bytes:${p.byteLength}>` : truncate(p)));
   }
-  line({ type: 'summary', summary: { stopped: summary?.stopped ?? true, metrics: rg.snapshot() }, results });
+  line({ type: 'summary', summary: { stopped: summary?.stopped ?? true, metrics: rg.snapshot(), testMode }, results });
   // O run acabou: não há mais o que ler do host. Encerrar o stdin deixa o event
   // loop esvaziar e o processo sair naturalmente (process.exit truncaria o stdout).
   try {
