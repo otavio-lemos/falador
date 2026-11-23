@@ -229,5 +229,20 @@ export function validateFlow(raw: FlowSpec, registry: Map<string, NodeTypeDef>):
     throw new GraphError('CYCLE', 'edges', `ciclo envolvendo: ${cyclic.join(' -> ')}`);
   }
 
+  // V10: tool.mcp deve ter allowedTools não-vazio (fronteira de segurança MCP)
+  for (const n of nodes.values()) {
+    if (n.def.type === 'tool.mcp') {
+      const allowedTools = n.params.allowedTools;
+      if (!Array.isArray(allowedTools) || allowedTools.length === 0) {
+        throw new GraphError('MCP_MISSING_ALLOWED_TOOLS', `nodes[${n.id}].params.allowedTools`, 'tool.mcp requer allowedTools não-vazio');
+      }
+      for (const t of allowedTools) {
+        if (typeof t !== 'string' || t.trim().length === 0) {
+          throw new GraphError('MCP_INVALID_ALLOWED_TOOL', `nodes[${n.id}].params.allowedTools`, 'allowedTools deve conter apenas strings não-vazias');
+        }
+      }
+    }
+  }
+
   return { nodes, topoOrder, edges };
 }

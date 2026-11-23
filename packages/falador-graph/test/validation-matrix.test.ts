@@ -372,6 +372,40 @@ test('outputsFor: portas dinâmicas entram na validação e no in-degree', () =>
   );
 });
 
+test('V10 — tool.mcp exige allowedTools não-vazio; SSH com allowedHosts vazio continua válido', () => {
+  const noop = () => ({ async start() {}, async onInput() {}, async stop() {} });
+  const mcpDef: NodeTypeDef = {
+    type: 'tool.mcp', sourceOnly: true, paramNames: ['allowedTools'],
+    inputs: [], outputs: [{ name: 'tool', type: 'tool', required: false }], create: noop,
+  };
+  const execDef: NodeTypeDef = {
+    type: 'exec.command', sourceOnly: true, paramNames: ['transport', 'allowedHosts'],
+    inputs: [], outputs: [{ name: 'tool', type: 'tool', required: false }], create: noop,
+  };
+  const m = registryToMap(reg().register(mcpDef).register(execDef));
+  const withTool = (id: string, type: string, params: Record<string, unknown>): FlowSpec => {
+    const f = okFlow();
+    f.nodes.push({ id, type, params }, { id: 'tsink', type: 'test.toolsink' });
+    f.edges.push({ from: `${id}.tool`, to: 'tsink.tool' });
+    return f;
+  };
+
+  // allowedTools vazio ⇒ MCP_MISSING_ALLOWED_TOOLS
+  assert.throws(
+    () => validateFlow(withTool('mcp', 'tool.mcp', { allowedTools: [] }), m),
+    (err: unknown) => err instanceof GraphError && err.code === 'MCP_MISSING_ALLOWED_TOOLS',
+  );
+  // allowedTools com não-string ⇒ MCP_INVALID_ALLOWED_TOOL
+  assert.throws(
+    () => validateFlow(withTool('mcp', 'tool.mcp', { allowedTools: ['ok', 42] }), m),
+    (err: unknown) => err instanceof GraphError && err.code === 'MCP_INVALID_ALLOWED_TOOL',
+  );
+  // allowedTools válido ⇒ passa
+  validateFlow(withTool('mcp', 'tool.mcp', { allowedTools: ['get_file_contents'] }), m);
+  // SSH com allowedHosts vazio ⇒ Válido (host escolhido no Run; V9 do plano antigo foi rejeitada)
+  validateFlow(withTool('ssh', 'exec.command', { transport: 'ssh', allowedHosts: [] }), m);
+});
+
 test('mensagem do GraphError é autoexplicativa (código + caminho + motivo)', () => {
   const f = okFlow();
   f.nodes[0].params = { count: 1.5 };

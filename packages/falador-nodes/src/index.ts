@@ -18,6 +18,7 @@ import { inputChat } from './input-chat.ts';
 import { toolWorkflow } from './tool-workflow.ts';
 import { toolWebSearch } from './tool-web-search.ts';
 import { toolCrawler } from './tool-crawler.ts';
+import { goalValidator } from './goal-validator.ts';
 
 export { llmOmlx, type ContextProvider } from './llm-omlx.ts';
 export { translateLlm } from './translate-llm.ts';
@@ -74,6 +75,7 @@ export {
   type ExtractedPageData,
 } from './tool-crawler.ts';
 export { inheritTrace, type TraceMeta } from './trace.ts';
+export { goalValidator } from './goal-validator.ts';
 export { postJsonBytes, postSse, payloadText, omlxAuthHeaders } from './sse.ts';
 
 /** Registra todos os nós reais no registry dado. */
@@ -97,5 +99,6 @@ export function registerFaladorNodes(registry: Registry): Registry {
     .register(inputChat)
     .register(toolWorkflow)
     .register(toolWebSearch)
-    .register(toolCrawler);
+    .register(toolCrawler)
+    .register(goalValidator);
 }

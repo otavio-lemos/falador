@@ -97,7 +97,7 @@ test('--catalog: uma linha JSON, catálogo completo e saídas dinâmicas marcada
   assert.equal(lines.length, 1, '--catalog deve emitir exatamente uma linha');
   const cat = JSON.parse(lines[0]);
   assert.equal(cat.type, 'catalog');
-  assert.equal(cat.nodes.length, 23, `esperado 23 nós, veio ${cat.nodes.length}`);
+  assert.equal(cat.nodes.length, 24, `esperado 24 nós, veio ${cat.nodes.length}`);
   for (const n of cat.nodes) {
     assert.equal(typeof n.type, 'string');
     assert.ok(Array.isArray(n.inputs) && Array.isArray(n.outputs), `${n.type} sem portas`);
