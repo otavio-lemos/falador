@@ -41,6 +41,7 @@ import {
   MicrophoneOff,
   VolumeUp,
   VolumeMute,
+  VoiceActivate,
 } from '@carbon/icons-react';
 import type { Runner, Gate, AgentStep, Caption } from '../useRunner';
 import { exportSession, type Flow, type ContextDoc, type ServiceStatusMap } from '../api';
@@ -856,7 +857,7 @@ export function LiveView({
                 kind={outputMode === 'write' ? 'danger--tertiary' : 'tertiary'}
                 size="sm"
                 hasIconOnly
-                renderIcon={outputMode === 'write' ? VolumeMute : VolumeUp}
+                renderIcon={outputMode === 'write' ? VolumeMute : VoiceActivate}
                 aria-pressed={outputMode === 'speak'}
                 iconDescription={!hasOutput ? 'Workflow sem saída (Output)' : (outputMode === 'speak' ? 'Só escrever' : 'Falar')}
                 tooltipPosition="bottom"
