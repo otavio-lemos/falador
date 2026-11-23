@@ -1339,4 +1339,96 @@ describe('agent.tools — ADR-008 Fase 4', () => {
       await srv.close();
     }
   });
+
+  // A11 — loop multi-round-trip (≥4 idas e voltas): cada resultado de tool alimenta a próxima decisão do agente
+  test('A11: loop 4 round-trips (status → logs → fix → verify → sintetiza) — ida e volta real 4x', async () => {
+    const llmRequests: Array<Record<string, unknown>> = [];
+    const srv = await httpServer((_req, body, res) => {
+      const parsed = JSON.parse(body) as Record<string, unknown>;
+      llmRequests.push(parsed);
+      const n = llmRequests.length;
+      if (n === 1) {
+        jsonResponse(res, { choices: [{ message: { role: 'assistant', content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'check_status', arguments: JSON.stringify({ svc: 'api' }) } }] } }] });
+        return;
+      }
+      if (n === 2) {
+        jsonResponse(res, { choices: [{ message: { role: 'assistant', content: null, tool_calls: [{ id: 'c2', type: 'function', function: { name: 'read_logs', arguments: JSON.stringify({ svc: 'api', lines: 50 }) } }] } }] });
+        return;
+      }
+      if (n === 3) {
+        jsonResponse(res, { choices: [{ message: { role: 'assistant', content: null, tool_calls: [{ id: 'c3', type: 'function', function: { name: 'apply_fix', arguments: JSON.stringify({ svc: 'api', patch: 'timeout=30s' }) } }] } }] });
+        return;
+      }
+      if (n === 4) {
+        jsonResponse(res, { choices: [{ message: { role: 'assistant', content: null, tool_calls: [{ id: 'c4', type: 'function', function: { name: 'verify', arguments: JSON.stringify({ svc: 'api' }) } }] } }] });
+        return;
+      }
+      jsonResponse(res, { choices: [{ message: { role: 'assistant', content: 'API recuperada: timeout ajustado e verificado (4 round-trips de diagnóstico).' } }] });
+    });
+
+    const invoked: string[] = [];
+    const toolOutputs: Record<string, string> = {
+      check_status: 'api.service: failed (exit=2, upstream timeout)',
+      read_logs: 'ERROR upstream timed out on :9090 (3 occurrences)',
+      apply_fix: 'patch applied: timeout=30s, service restarted',
+      verify: 'api.service: active (running), healthcheck 200 OK',
+    };
+    const provider: ToolProvider = {
+      listTools: (): ToolDef[] => [
+        { name: 'check_status', description: 'status', parameters: { type: 'object' }, readonly: true, sourceNodeId: 'ops' },
+        { name: 'read_logs', description: 'logs', parameters: { type: 'object' }, readonly: true, sourceNodeId: 'ops' },
+        { name: 'apply_fix', description: 'fix', parameters: { type: 'object' }, readonly: false, sourceNodeId: 'ops' },
+        { name: 'verify', description: 'verify', parameters: { type: 'object' }, readonly: true, sourceNodeId: 'ops' },
+      ],
+      invoke: async (name) => {
+        invoked.push(name);
+        return { ok: true, output: toolOutputs[name] ?? 'ok', durationMs: 7 };
+      },
+    };
+
+    const collected: Envelope[] = [];
+    const src = makeManualSource();
+    const reg = makeReg([src.def, mockToolNode('mock.ops', provider), agentTools, sinkCollect(collected)]);
+    const flow: FlowSpec = {
+      version: 1,
+      nodes: [
+        { id: 'src', type: 'test.source' },
+        { id: 'ops', type: 'mock.ops' },
+        { id: 'agente', type: 'agent.tools', params: { baseUrl: srv.url, approvalPolicy: 'never', maxSteps: 10 } },
+        { id: 'out', type: 'test.collect' },
+      ],
+      edges: [
+        { from: 'src.phrase', to: 'agente.in' },
+        { from: 'ops.tool', to: 'agente.tools' },
+        { from: 'agente.out', to: 'out.in' },
+      ],
+    };
+
+    const run = await runGraph(flow, reg);
+    try {
+      await src.emitPhrase('A API caiu, diagnostique e corrija');
+      await waitFor(() => collected.length === 1);
+
+      assert.equal(invoked.length, 4);
+      assert.deepEqual(invoked, ['check_status', 'read_logs', 'apply_fix', 'verify']);
+      assert.equal(llmRequests.length, 5);
+
+      const req2Msgs = llmRequests[1].messages as Array<{ role: string; content: string }>;
+      assert.ok(req2Msgs.some((m) => m.role === 'tool' && m.content.includes('failed (exit=2')));
+      const req3Msgs = llmRequests[2].messages as Array<{ role: string; content: string }>;
+      assert.ok(req3Msgs.some((m) => m.role === 'tool' && m.content.includes('timed out on :9090')));
+      const req4Msgs = llmRequests[3].messages as Array<{ role: string; content: string }>;
+      assert.ok(req4Msgs.some((m) => m.role === 'tool' && m.content.includes('patch applied')));
+      const req5Msgs = llmRequests[4].messages as Array<{ role: string; content: string }>;
+      assert.ok(req5Msgs.some((m) => m.role === 'tool' && m.content.includes('healthcheck 200 OK')));
+
+      assert.deepEqual(collected[0].payload, {
+        text: 'API recuperada: timeout ajustado e verificado (4 round-trips de diagnóstico).',
+        final: true,
+      });
+    } finally {
+      await run.stop('test_done');
+      await srv.close();
+    }
+  });
 });

@@ -148,6 +148,7 @@ function computeBreakdown(trace: TraceMeta): LatencyBreakdown {
 
 export function useRunner() {
   const [running, setRunning] = useState(false);
+  const [testMode, setTestMode] = useState(false);
   const [metrics, setMetrics] = useState<RunSnapshot>({});
   const [events, setEvents] = useState<RunnerEvent[]>([]);
   const [captions, setCaptions] = useState<Caption[]>([]);
@@ -201,7 +202,7 @@ export function useRunner() {
     setAudit([]);
   };
 
-  const start = (flow: Flow, flowName?: string) => {
+  const start = (flow: Flow, flowName?: string, testMode?: boolean) => {
     // Run único no host: serializa stopRun() + guarda de geração antes de abrir outro,
     // evitando 409 e impedindo que um stop atrasado mate o run recém-aberto.
     const myGen = ++genRef.current;
@@ -210,6 +211,7 @@ export function useRunner() {
 
     clearState();
     setRunning(true);
+    setTestMode(!!testMode);
 
     void (async () => {
       try { await stopRun(); } catch { /* host pode estar offline; openRun reportará */ }
@@ -353,6 +355,7 @@ export function useRunner() {
         undefined,
         flowName,
         (msg) => { if (genRef.current === myGen && ctlRef.current === myCtl) setLastRunError(msg); },
+        !!testMode,
       );
       ctlRef.current = myCtl;
     })();
@@ -378,6 +381,6 @@ export function useRunner() {
   const sendChat = async (text: string, nodeId?: string) => {
     await sendChatInput(text, nodeId);
   };
-  return { running, metrics, events, captions, gates, agentSteps, executions, thoughts, chatMessages, collectResults, latency, latencyBreakdown, lastRunError, audit, start, stop, reset, gate, sendChat };
+  return { running, testMode, metrics, events, captions, gates, agentSteps, executions, thoughts, chatMessages, collectResults, latency, latencyBreakdown, lastRunError, audit, start, stop, reset, gate, sendChat };
 }
 export type Runner = ReturnType<typeof useRunner>;

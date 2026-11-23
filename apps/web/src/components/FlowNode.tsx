@@ -44,6 +44,27 @@ export const FlowNode = memo(({ data, selected }: NodeProps<FNode>) => {
       <div className="fnode-body">
         <div className="fnode-sub">{data.subtitle}</div>
         <div className="fnode-type-id">{data.type}</div>
+        {data.type === 'agent.tools' && (
+          <div className="fnode-meta">
+            <Tag type={data.params?.dryRun === false ? 'red' : 'blue'} size="sm">
+              {data.params?.dryRun === false ? 'EXEC ATIVO' : 'DRY-RUN'}
+            </Tag>
+            {typeof data.params?.maxSteps === 'number' && (
+              <span className="fnode-latency">max {data.params.maxSteps} passos</span>
+            )}
+            {Boolean(data.params?.approvalPolicy) && (
+              <Tag type="magenta" size="sm">aprovação: {String(data.params.approvalPolicy)}</Tag>
+            )}
+          </div>
+        )}
+        {data.type === 'exec.command' && (
+          <div className="fnode-meta">
+            <Tag type={data.params?.dryRun === false ? 'red' : 'blue'} size="sm">
+              {data.params?.dryRun === false ? 'EXEC ATIVO' : 'DRY-RUN'}
+            </Tag>
+            <Tag type="cool-gray" size="sm">{String(data.params?.transport ?? 'local')}</Tag>
+          </div>
+        )}
         {(isStreaming || latency != null || data.metrics) && (
           <div className="fnode-meta">
             {isStreaming && (
