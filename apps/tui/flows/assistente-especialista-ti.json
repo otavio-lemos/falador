@@ -1,7 +1,7 @@
 {
   "version": 1,
   "stopWhenSourcesDone": false,
-  "description": "Ops / Revisão de Servidor assistida (ADR-007/ADR-009): nó único Input (padrão Chat, alternável para Aplicações via SCK ou Microfone via ASR Voxtral) alimenta um planejador que sugere um comando de diagnóstico, o d1-2B classifica risco (leitura_segura/sensivel/bloqueado), rotas sensíveis exigem aprovação humana e a execução permanece em dryRun=true por padrão com análise final do diagnóstico.",
+  "description": "Assistente Especialista em TI / Ops: nó único Input (padrão Chat, alternável para Aplicações via SCK ou Microfone via ASR Voxtral) sugere comando de diagnóstico, d1-2B classifica risco (leitura_segura/sensível/bloqueado), rotas sensíveis exigem aprovação humana, execução em dryRun=true por padrão com análise final do diagnóstico.",
   "nodes": [
     {
       "id": "input",
