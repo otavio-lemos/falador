@@ -500,9 +500,10 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 
 .live2-stages {
   display: flex;
-  flex-wrap: wrap;
-  gap: $spacing-04;
+  flex-wrap: nowrap;
+  gap: $spacing-03;
   width: 100%;
+  overflow-x: auto;
 }
 
 .stage-dd {
