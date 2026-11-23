@@ -127,11 +127,8 @@ EOF
 | Flow | O que é |
 |---|---|
 | `assistente-entrevista.json` | **Default (ADR-005/006):** captura SCK (`drop_oldest`, `ttlMs: 1500`) → Voxtral streaming → transcrição → `turn.detector` (`d1`,systemone, fronteira de turno) → assistente LLM → votação `d1` auto/humano → sugestão na tela (auto) ou card editável (humano). Sem TTS = sem eco |
-| `legendas-traducao-pt.json` | Tradução simultânea EN → PT em tempo real (~1,1 s): captura SCK → Voxtral streaming → LLM tradutor → legendas PT |
-| `transcricao-ao-vivo.json` | Transcrição pura em tempo real (captura SCK → Voxtral streaming → legendas, menor latência) |
-| `tradutor-voz-en.json` | Pipeline completo de interpretação por voz: STT → `translate.llm` (PT→EN) → Legenda + TTS EN → Alto-falante |
+| `traducao-transcricao.json` | **Tradução / Transcrição unificada (2026-11-23):** captura SCK → Voxtral streaming → `translate.llm` (passthrough se idioma desabilitado) → Output (`write` legenda / `speak` TTS). Idioma de destino + modo write/speak ajustáveis em runtime |
 | `revisao-servidor-ops.json` | **Ops / SRE com risco e HITL (ADR-007, chat-only):** pedido digitado → planejador LLM (`useContext: true`, RAG BM25) → triagem `d1` (`leitura_segura` / `sensivel` / `bloqueado`) → `human.approve` → `exec.command` (`dryRun: true`) → analista LLM → diagnóstico |
-| `agente-suporte-ops.json` | **Agente de Suporte multi-step (ADR-008, chat-only):** `input.chat` → `agent.tools` (loop `tool_calls`, `approvalPolicy: "always"`) conectado via porta `tool` a `exec.command` (`dryRun: true`) e `rag.search` (BM25) → diagnóstico. Substitui o antigo `chat-agente-suporte.json` |
 | `agente-workflows.json` | **Agente Especialista em Workflows (chat-only):** `input.chat` → `agent.tools` com `tool.workflow` (valida/salva workflows e auto-atualiza o AGENTS.md) + `tool.web_search` (anti-SSRF) → legendas. Botão «Agente Workflows» na TopBar |
 | `test/demo-engine` / `test/demo-live` | fixtures de smoke (sintético / integração omlx+sidecar) — em `flows/test/`, fora do dropdown |
 
@@ -141,7 +138,7 @@ EOF
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
-node packages/falador-cli/run-flow.mjs apps/tui/flows/legendas-traducao-pt.json --run-seconds 30
+node packages/falador-cli/run-flow.mjs apps/tui/flows/traducao-transcricao.json --run-seconds 30
 node packages/falador-cli/run-flow.mjs --catalog            # catálogo JSON (23 nós)
 ```
 
