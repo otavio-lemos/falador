@@ -871,9 +871,6 @@ export function LiveView({
         </div>
 
         <div className="live2-top-actions">
-          <Button kind="tertiary" size="sm" renderIcon={Terminal} disabled={runner.executions.length === 0} onClick={() => setExecOpen(true)}>
-            Execuções{runner.executions.length > 0 ? ` (${runner.executions.length})` : ''}
-          </Button>
           <Button kind="tertiary" size="sm" renderIcon={Download} onClick={() => { setExportResult(null); setExportOpen(true); }}>
             Exportar
           </Button>

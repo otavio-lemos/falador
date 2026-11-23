@@ -165,7 +165,7 @@ test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed 
   expect(head!.height).toBeLessThanOrEqual(42);
 });
 
-test('unified Input and Output stages use instance selectors, sync with topbar, and preserve Execuções', async ({ page }) => {
+test('unified Input and Output stages use instance selectors and sync with topbar', async ({ page }) => {
   await page.evaluate(() => {
     localStorage.setItem('falador.inputMode', 'apps');
     localStorage.setItem('falador.outputMode', 'write');
@@ -173,7 +173,6 @@ test('unified Input and Output stages use instance selectors, sync with topbar, 
   await page.reload();
 
   await page.getByRole('button', { name: 'Workflow' }).click();
-  await expect(page.getByRole('button', { name: /Execuções/ })).toBeVisible();
   // mini-mapa mostra o mesmo nome do componente no workflow
   await expect(page.locator('.wf-minimap text', { hasText: /^Output 3$/ })).toBeVisible();
 
