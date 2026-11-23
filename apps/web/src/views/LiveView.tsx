@@ -1074,33 +1074,35 @@ export function LiveView({
                     </div>
                   </section>
                 )}
-                <div className="live-chat-input">
-                  <TextInput
-                    id="live-chat-input"
-                    labelText="Mensagem"
-                    hideLabel
-                    size="sm"
-                    placeholder={runner.running ? chatPlaceholder : 'Inicie a sessão para conversar...'}
-                    value={chatInput}
-                    disabled={!runner.running || sendingChat || !chatNode}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        void handleSendChat();
-                      }
-                    }}
-                  />
-                  <Button
-                    kind="primary"
-                    size="sm"
-                    renderIcon={Play}
-                    disabled={!runner.running || sendingChat || !chatInput.trim() || !chatNode}
-                    onClick={() => void handleSendChat()}
-                  >
-                    Enviar
-                  </Button>
-                </div>
+                {inputMode === 'chat' && (
+                  <div className="live-chat-input">
+                    <TextInput
+                      id="live-chat-input"
+                      labelText="Mensagem"
+                      hideLabel
+                      size="sm"
+                      placeholder={runner.running ? chatPlaceholder : 'Inicie a sessão para conversar...'}
+                      value={chatInput}
+                      disabled={!runner.running || sendingChat || !chatNode}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          void handleSendChat();
+                        }
+                      }}
+                    />
+                    <Button
+                      kind="primary"
+                      size="sm"
+                      renderIcon={Play}
+                      disabled={!runner.running || sendingChat || !chatInput.trim() || !chatNode}
+                      onClick={() => void handleSendChat()}
+                    >
+                      Enviar
+                    </Button>
+                  </div>
+                )}
               </div>
             </>
         </main>
