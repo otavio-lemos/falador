@@ -30,38 +30,38 @@ const BASE_SERVICES: BaseServiceConfig[] = [
   {
     id: 'web',
     port: 8787,
-    fallbackLabel: 'Input · Aprovação · Output',
+    fallbackLabel: 'Input · Approval · Output',
     fallbackColors: [
       { color: '#22d3ee', label: 'Input' },
-      { color: '#f59e0b', label: 'Aprovação' },
-      { color: '#f97316', label: 'Exec / RAG / MCP' },
+      { color: '#f59e0b', label: 'Approval' },
+      { color: '#f97316', label: 'Command / RAG / MCP' },
       { color: '#22c55e', label: 'Output' },
     ],
   },
   {
     id: 'asr',
     port: 8090,
-    fallbackLabel: 'Transcrição',
+    fallbackLabel: 'Transcription',
     fallbackColors: [
-      { color: '#14b8a6', label: 'Transcrição' },
+      { color: '#14b8a6', label: 'Transcription' },
     ],
   },
   {
     id: 'omlx',
     port: 8080,
-    fallbackLabel: 'Assistente · Traduzir · Agente · Decisão',
+    fallbackLabel: 'LLM · Translate · Agent · Decision',
     fallbackColors: [
-      { color: '#8b5cf6', label: 'Assistente / Traduzir / Agente' },
-      { color: '#f59e0b', label: 'Decisão / Turno' },
+      { color: '#8b5cf6', label: 'LLM / Translate / Agent' },
+      { color: '#f59e0b', label: 'Decision / Turn Detection' },
     ],
   },
   {
     id: 'tts',
     port: 8091,
-    fallbackLabel: 'Voz TTS · ASR+Trad.',
+    fallbackLabel: 'TTS · Speech Translation',
     fallbackColors: [
-      { color: '#d946ef', label: 'Voz TTS' },
-      { color: '#14b8a6', label: 'ASR+Trad.' },
+      { color: '#d946ef', label: 'TTS' },
+      { color: '#14b8a6', label: 'Speech Translation' },
     ],
   },
 ];

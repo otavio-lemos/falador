@@ -48,7 +48,7 @@ export function Palette({ onAdd }: { onAdd: (type: string) => void }) {
         })}
         <div className="pal-cat pal-cat--teste" style={{ ['--accent' as string]: '#9ca3af' }}>
           <button className="pal-cat-head pal-teste-toggle" onClick={() => setTestOpen((v) => !v)}>
-            <span className="pal-emoji">🔧</span>Teste ({CATEGORIES.find((c) => c.id === 'teste')!.nodes.length})
+            <span className="pal-emoji">🔧</span>Testing ({CATEGORIES.find((c) => c.id === 'teste')!.nodes.length})
             {testOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
           </button>
           {testOpen && (

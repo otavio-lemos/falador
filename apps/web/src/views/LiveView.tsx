@@ -574,7 +574,7 @@ export function LiveView({
   const commandGateCard = gate && gateInfo.isCommand ? (
     <div className="cmd-gate-card">
       <div className="cmd-gate-head">
-        <span className="cmd-gate-title"><Terminal size={16} /> Aprovação de Comando ({gate.nodeId})</span>
+        <span className="cmd-gate-title"><Terminal size={16} /> Approval of Command ({gate.nodeId})</span>
         <div className="cmd-gate-badges">
           {gateInfo.tool && (
             <Tag type="teal" size="sm">Tool: {gateInfo.tool}</Tag>
@@ -721,9 +721,9 @@ export function LiveView({
 
   const renderConversationEntry = (m: ConversationEntry) => {
     const role = m.kind === 'user' ? 'Você'
-      : m.kind === 'stt' ? 'Transcrição'
-        : m.kind === 'agent' ? 'Agente'
-          : m.kind === 'audio' ? 'Voz'
+      : m.kind === 'stt' ? 'Transcription'
+        : m.kind === 'agent' ? 'Agent'
+          : m.kind === 'audio' ? 'Playback'
             : 'Orquestrador';
     const tag = m.tag ?? m.subtitle;
     let tagType: 'gray' | 'cyan' | 'green' | 'blue' | 'purple' = 'gray';

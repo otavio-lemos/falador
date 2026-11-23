@@ -26,7 +26,7 @@ test('builder loads a real workflow and canvas', async ({ page }) => {
   await expect(page.locator('.palette .pal-item-id', { hasText: 'sink.playback' })).toHaveCount(0);
   await expect(page.locator('.palette .pal-item-id', { hasText: 'tts.sts' })).toHaveCount(0);
   await expect(page.locator('.fnode-title-main', { hasText: /^Input 1$/ })).toBeVisible();
-  await expect(page.locator('.fnode-title-main', { hasText: /^Transcrição 1$/ })).toBeVisible();
+  await expect(page.locator('.fnode-title-main', { hasText: /^Transcription 1$/ })).toBeVisible();
   await expect(page.locator('.fnode-title-main', { hasText: /^Output 3$/ })).toBeVisible();
   // nós reais do canvas (rótulo visível é o id curto do nó)
   await expect(page.getByText('capture.ffmpeg').first()).toBeVisible();
@@ -69,7 +69,8 @@ test('new workflow action is exposed in the flow menu', async ({ page }) => {
 });
 
 test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed accordions', async ({ page }) => {
-  await page.route('**/api/flows/agente-suporte-ops', async (route) => {
+  // Use existing chat-only flow 'agente-workflows' and inject ASR + TTS + playback nodes for the test
+  await page.route('**/api/flows/agente-workflows', async (route) => {
     const response = await route.fetch();
     const payload = await response.json();
     if (!payload.flow.nodes.some((n: any) => n.id === 'asr')) {
@@ -93,7 +94,7 @@ test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed 
     { type: 'caption', nodeId: 'asr', kind: 'stt', text: 'fala transcrita ao vivo', final: true },
     { type: 'thought', nodeId: 'agente', thoughtId: 'agente:1:1', text: 'Analisar a intenção antes de responder.', final: true },
     { type: 'agent_step', nodeId: 'agente', step: 1, phase: 'result', tool: 'search_docs', args: { query: 'pedido' }, ok: true, durationMs: 6 },
-    { type: 'caption', nodeId: 'diagnostico', text: 'Opa, tudo bem? Como posso ajudar?', final: true },
+    { type: 'caption', nodeId: 'resposta', text: 'Opa, tudo bem? Como posso ajudar?', final: true },
     { type: 'node_error', nodeId: 'voz', code: 'log_info', message: 'fala: "Opa, tudo bem?" (42 KB)' },
     { type: 'node_error', nodeId: 'alto', code: 'log_info', message: 'playback ok (1,2s)' },
     { type: 'gate', nodeId: 'agente', text: 'Sugestão que precisa de revisão humana.' },
@@ -108,14 +109,14 @@ test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed 
 
   await page.getByRole('button', { name: 'Workflow' }).click();
   await page.getByRole('combobox', { name: 'Workflow' }).click();
-  await page.getByRole('option', { name: 'agente-suporte-ops' }).click();
+  await page.getByRole('option', { name: 'agente-workflows' }).click();
   await page.getByRole('button', { name: 'Iniciar', exact: true }).click();
 
   await expect(page.locator('.live-chat-entry--user')).toContainText('opa blz?');
   await expect(page.locator('.live-chat-entry--stt')).toContainText('fala transcrita ao vivo');
-  await expect(page.locator('.live-chat-entry--stt')).toContainText('Transcrição');
+  await expect(page.locator('.live-chat-entry--stt')).toContainText('Transcription');
   await expect(page.locator('.live-chat-entry--agent')).toContainText('Opa, tudo bem? Como posso ajudar?');
-  await expect(page.locator('.live-chat-entry--agent')).toContainText('Agente');
+  await expect(page.locator('.live-chat-entry--agent')).toContainText('Agent');
   await expect(page.locator('[data-node-id="voz"]')).toContainText('TTS');
   await expect(page.locator('[data-node-id="voz"]')).toContainText('fala: "Opa, tudo bem?" (42 KB)');
   await expect(page.locator('[data-node-id="alto"]')).toContainText('Playback');

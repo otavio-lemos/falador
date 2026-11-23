@@ -175,7 +175,7 @@ export function deriveStages(flow: Flow): Stage[] {
     } else if (n.type === 'asr.realtime') {
       out.push({
         key: `asr-${n.id}`,
-        label: 'Transcrição',
+        label: 'Transcription',
         accent: accentOf(n.type),
         nodeId: n.id,
         nodeType: n.type,
@@ -186,7 +186,7 @@ export function deriveStages(flow: Flow): Stage[] {
     } else if (n.type === 'asr.lfm3') {
       out.push({
         key: `asr-lfm3-${n.id}`,
-        label: 'ASR+Trad.',
+        label: 'Speech Translation',
         accent: accentOf(n.type),
         nodeId: n.id,
         nodeType: n.type,
@@ -203,7 +203,7 @@ export function deriveStages(flow: Flow): Stage[] {
     } else if (n.type === 'translate.llm') {
       out.push({
         key: `translate-${n.id}`,
-        label: 'Traduzir',
+        label: 'Translate',
         accent: accentOf(n.type),
         nodeId: n.id,
         nodeType: n.type,
@@ -219,7 +219,7 @@ export function deriveStages(flow: Flow): Stage[] {
       if (p.targetLanguage !== undefined) {
         out.push({
           key: `llm-${n.id}`,
-          label: 'Traduzir',
+          label: 'Translate',
           accent: accentOf(n.type),
           nodeId: n.id,
           nodeType: n.type,
@@ -234,7 +234,7 @@ export function deriveStages(flow: Flow): Stage[] {
       } else {
         out.push({
           key: `llm-${n.id}`,
-          label: 'Assistente',
+          label: 'LLM',
           accent: accentOf(n.type),
           nodeId: n.id,
           nodeType: n.type,
@@ -246,7 +246,7 @@ export function deriveStages(flow: Flow): Stage[] {
     } else if (n.type === 'agent.tools') {
       out.push({
         key: `agent-${n.id}`,
-        label: 'Agente',
+        label: 'Agent',
         accent: accentOf(n.type),
         nodeId: n.id,
         nodeType: n.type,
@@ -257,7 +257,7 @@ export function deriveStages(flow: Flow): Stage[] {
     } else if (n.type === 'turn.detector') {
       out.push({
         key: `turn-${n.id}`,
-        label: 'Turno',
+        label: 'Turn Detector',
         accent: accentOf(n.type),
         nodeId: n.id,
         nodeType: n.type,
@@ -268,7 +268,7 @@ export function deriveStages(flow: Flow): Stage[] {
     } else if (n.type === 'decision.llm') {
       out.push({
         key: `decision-${n.id}`,
-        label: 'Decisão',
+        label: 'Decision',
         accent: accentOf(n.type),
         nodeId: n.id,
         nodeType: n.type,
@@ -279,7 +279,7 @@ export function deriveStages(flow: Flow): Stage[] {
     } else if (n.type === 'human.approve') {
       out.push({
         key: `approve-${n.id}`,
-        label: 'Aprovação',
+        label: 'Approval',
         accent: accentOf(n.type),
         nodeId: n.id,
         nodeType: n.type,
@@ -290,7 +290,7 @@ export function deriveStages(flow: Flow): Stage[] {
     } else if (n.type === 'tts.sts') {
       out.push({
         key: `voz-${n.id}`,
-        label: 'Voz TTS',
+        label: 'TTS',
         accent: accentOf(n.type),
         nodeId: n.id,
         nodeType: n.type,

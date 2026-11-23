@@ -13,12 +13,12 @@ export interface Category {
 
 export const CATEGORIES: Category[] = [
   { id: 'input', label: 'Input', emoji: '🎙️', accent: '#22d3ee', nodes: ['capture.ffmpeg'] },
-  { id: 'transcricao', label: 'Transcrição', emoji: '💡', accent: '#14b8a6', nodes: ['asr.realtime', 'asr.lfm3'] },
-  { id: 'pensar', label: 'Pensar', emoji: '🧠', accent: '#8b5cf6', nodes: ['llm.omlx', 'translate.llm', 'agent.tools'] },
-  { id: 'decidir', label: 'Decidir', emoji: '🔀', accent: '#f59e0b', nodes: ['turn.detector', 'decision.llm', 'human.approve'] },
-  { id: 'acoes', label: 'Ações / Conectores', emoji: '⚡', accent: '#f97316', nodes: ['exec.command', 'rag.search', 'tool.mcp', 'tool.workflow', 'tool.web_search', 'tool.crawler'] },
+  { id: 'transcricao', label: 'Transcription', emoji: '💡', accent: '#14b8a6', nodes: ['asr.realtime', 'asr.lfm3'] },
+  { id: 'pensar', label: 'Reasoning', emoji: '🧠', accent: '#8b5cf6', nodes: ['llm.omlx', 'translate.llm', 'agent.tools'] },
+  { id: 'decidir', label: 'Routing', emoji: '🔀', accent: '#f59e0b', nodes: ['turn.detector', 'decision.llm', 'human.approve'] },
+  { id: 'acoes', label: 'Actions / Connectors', emoji: '⚡', accent: '#f97316', nodes: ['exec.command', 'rag.search', 'tool.mcp', 'tool.workflow', 'tool.web_search', 'tool.crawler'] },
   { id: 'output', label: 'Output', emoji: '🗣️', accent: '#22c55e', nodes: ['sink.captions'] },
-  { id: 'teste', label: 'Teste', emoji: '🔧', accent: '#9ca3af', nodes: ['source.tone', 'pipe.delay', 'pipe.parcs', 'sink.collect'], collapsible: true },
+  { id: 'teste', label: 'Testing', emoji: '🔧', accent: '#9ca3af', nodes: ['source.tone', 'pipe.delay', 'pipe.parcs', 'sink.collect'], collapsible: true },
 ];
 
 export interface NodeMeta {
@@ -29,28 +29,28 @@ export interface NodeMeta {
 
 export const NODE_META: Record<string, NodeMeta> = {
   'capture.ffmpeg': { title: 'Input', subtitle: 'Aplicações · Microfone · Chat', desc: 'Única entrada: Aplicações, Microfone ou Chat' },
-  'input.chat':    { title: 'Chat / Prompt de texto', subtitle: 'Entrada escrita interativa', desc: 'Campo de prompt para escrever e ligar em nós de texto' },
-  'asr.realtime':  { title: 'Transcrição em tempo real', subtitle: 'Voxtral streaming', desc: 'Converte fala em texto enquanto o outro fala' },
-  'asr.lfm3':      { title: 'Transcrição + tradução direta', subtitle: 'LFM3-Audio', desc: 'Ouve e já traduz sem etapa extra de texto' },
-  'llm.omlx':      { title: 'Assistente de texto', subtitle: 'Sugestão · Tradução · Resposta', desc: 'Recebe texto e gera resposta, tradução ou sugestão' },
-  'translate.llm': { title: 'Traduzir', subtitle: 'Modelo + idioma (opcional)', desc: 'Traduz texto para o idioma escolhido; selecione — para desabilitar' },
-  'agent.tools':   { title: 'Agente com Tools', subtitle: 'Loop multi-step · OpenAI tools', desc: 'Chama ferramentas conectadas em múltiplos passos até diagnosticar' },
-  'turn.detector': { title: 'Detector de fim de turno', subtitle: 'd1-2B semântico', desc: 'Distingue pausa de fim real de pergunta ou solicitação' },
-  'decision.llm':  { title: 'Decisão automática', subtitle: 'Escolhe o próximo passo', desc: 'Roteia o fluxo sem precisar de você' },
-  'human.approve': { title: 'Aprovação manual', subtitle: 'Revisar antes de continuar', desc: 'Pausa para você editar ou aprovar' },
-  'exec.command':  { title: 'Executar comando', subtitle: 'Local · SSH (guardrails)', desc: 'Executa comandos aprovados com validação e audit log' },
-  'rag.search':    { title: 'Busca RAG (Tool)', subtitle: 'BM25 local · Runbooks', desc: 'Expõe documentos e runbooks locais como ferramenta sob demanda' },
-  'tool.mcp':      { title: 'Conector MCP', subtitle: 'stdio · Streamable HTTP', desc: 'Conecta servidores MCP externos com allowlist e dry-run' },
-  'tool.workflow': { title: 'Gerenciar Workflows (Tool)', subtitle: 'flows/*.json · AGENTS.md', desc: 'Lista, lê, valida, salva workflows e atualiza o AGENTS.md' },
-  'tool.web_search': { title: 'Pesquisa Web (Tool)', subtitle: 'DuckDuckGo · anti-SSRF', desc: 'Pesquisa externa e leitura de documentação pública com proteção anti-SSRF' },
-  'tool.crawler':  { title: 'Crawler / Scraping', subtitle: 'HTML · BFS · anti-SSRF', desc: 'Raspa páginas ou faz crawl em sites com limite e proteção anti-SSRF' },
-  'tts.sts':       { title: 'Voz (falar em voz alta)', subtitle: 'EN / PT', desc: 'Converte texto em fala sintetizada' },
+  'input.chat':    { title: 'Chat Input', subtitle: 'Entrada escrita interativa', desc: 'Campo de prompt para escrever e ligar em nós de texto' },
+  'asr.realtime':  { title: 'Speech to Text (STT)', subtitle: 'Voxtral streaming', desc: 'Converte fala em texto enquanto o outro fala' },
+  'asr.lfm3':      { title: 'Speech Translation (S2ST)', subtitle: 'LFM3-Audio', desc: 'Ouve e já traduz sem etapa extra de texto' },
+  'llm.omlx':      { title: 'LLM', subtitle: 'Sugestão · Tradução · Resposta', desc: 'Recebe texto e gera resposta, tradução ou sugestão' },
+  'translate.llm': { title: 'Translate', subtitle: 'Modelo + idioma (opcional)', desc: 'Traduz texto para o idioma escolhido; selecione — para desabilitar' },
+  'agent.tools':   { title: 'Tool-calling Agent', subtitle: 'Loop multi-step · OpenAI tools', desc: 'Chama ferramentas conectadas em múltiplos passos até diagnosticar' },
+  'turn.detector': { title: 'Turn Detection', subtitle: 'd1-2B semântico', desc: 'Distingue pausa de fim real de pergunta ou solicitação' },
+  'decision.llm':  { title: 'Decision / Router', subtitle: 'Escolhe o próximo passo', desc: 'Roteia o fluxo sem precisar de você' },
+  'human.approve': { title: 'Human Approval (HITL)', subtitle: 'Revisar antes de continuar', desc: 'Pausa para você editar ou aprovar' },
+  'exec.command':  { title: 'Execute Command', subtitle: 'Local · SSH (guardrails)', desc: 'Executa comandos aprovados com validação e audit log' },
+  'rag.search':    { title: 'RAG Search', subtitle: 'BM25 local · Runbooks', desc: 'Expõe documentos e runbooks locais como ferramenta sob demanda' },
+  'tool.mcp':      { title: 'MCP Connector', subtitle: 'stdio · Streamable HTTP', desc: 'Conecta servidores MCP externos com allowlist e dry-run' },
+  'tool.workflow': { title: 'Workflow Tools', subtitle: 'flows/*.json · AGENTS.md', desc: 'Lista, lê, valida, salva workflows e atualiza o AGENTS.md' },
+  'tool.web_search': { title: 'Web Search', subtitle: 'DuckDuckGo · anti-SSRF', desc: 'Pesquisa externa e leitura de documentação pública com proteção anti-SSRF' },
+  'tool.crawler':  { title: 'Crawler', subtitle: 'HTML · BFS · anti-SSRF', desc: 'Raspa páginas ou faz crawl em sites com limite e proteção anti-SSRF' },
+  'tts.sts':       { title: 'Text to Speech', subtitle: 'EN / PT', desc: 'Converte texto em fala sintetizada' },
   'sink.captions': { title: 'Output', subtitle: 'Escrever · Falar', desc: 'Única saída: texto na tela (Escrever) ou texto + voz (Falar)' },
-  'sink.playback': { title: 'Tocar no alto-falante', subtitle: 'Áudio sintetizado', desc: 'Toca o áudio no seu dispositivo' },
-  'source.tone':   { title: 'Frases de teste', subtitle: 'Gera texto sintético', desc: 'Fonte de dados para testar o fluxo' },
-  'pipe.delay':    { title: 'Atraso', subtitle: 'Atrasa mensagens', desc: 'Introduz um delay configurável' },
-  'pipe.parcs':    { title: 'Parciais', subtitle: 'Quebra em streaming', desc: 'Converte texto completo em parciais' },
-  'sink.collect':  { title: 'Coleta resultado', subtitle: 'Junta a saída (teste)', desc: 'Acumula tudo para verificar o resultado' },
+  'sink.playback': { title: 'Audio Playback', subtitle: 'Áudio sintetizado', desc: 'Toca o áudio no seu dispositivo' },
+  'source.tone':   { title: 'Test Source', subtitle: 'Gera texto sintético', desc: 'Fonte de dados para testar o fluxo' },
+  'pipe.delay':    { title: 'Delay', subtitle: 'Atrasa mensagens', desc: 'Introduz um delay configurável' },
+  'pipe.parcs':    { title: 'Partials', subtitle: 'Quebra em streaming', desc: 'Converte texto completo em parciais' },
+  'sink.collect':  { title: 'Collector', subtitle: 'Junta a saída (teste)', desc: 'Acumula tudo para verificar o resultado' },
 };
 
 export function categoryOf(type: string): Category {
@@ -65,27 +65,31 @@ export function accentOf(type: string): string {
 export const SHORT_NAMES: Record<string, string> = {
   'capture.ffmpeg': 'Input',
   'input.chat': 'Chat',
-  'asr.realtime': 'Transcrição',
-  'asr.lfm3': 'ASR+Trad.',
-  'llm.omlx': 'Assistente',
-  'translate.llm': 'Traduzir',
-  'agent.tools': 'Agente',
-  'turn.detector': 'Turno',
-  'decision.llm': 'Decisão',
-  'human.approve': 'Aprovação',
-  'exec.command': 'Exec',
+  'asr.realtime': 'Transcription',
+  'asr.lfm3': 'Speech Translation',
+  'llm.omlx': 'LLM',
+  'translate.llm': 'Translate',
+  'agent.tools': 'Agent',
+  'turn.detector': 'Turn Detector',
+  'decision.llm': 'Decision',
+  'human.approve': 'Approval',
+  'exec.command': 'Command',
   'rag.search': 'RAG',
   'tool.mcp': 'MCP',
   'tool.workflow': 'Workflows',
   'tool.web_search': 'Web',
   'tool.crawler': 'Crawler',
-  'tts.sts': 'Voz TTS',
+  'tts.sts': 'TTS',
   'sink.captions': 'Output',
-  'sink.playback': 'Áudio',
+  'sink.playback': 'Playback',
+  'source.tone': 'Test Source',
+  'pipe.delay': 'Delay',
+  'pipe.parcs': 'Partials',
+  'sink.collect': 'Collector',
 };
 
 export function shortNodeName(type: string, id: string, params?: Record<string, unknown>): string {
-  if (type === 'llm.omlx' && params && params.targetLanguage !== undefined) return 'Traduzir';
+  if (type === 'llm.omlx' && params && params.targetLanguage !== undefined) return 'Translate';
   return SHORT_NAMES[type] ?? NODE_META[type]?.title?.split(' ')[0] ?? id;
 }
 

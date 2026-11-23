@@ -232,7 +232,7 @@ export function BuilderView({
           {runner.gates.map((g) => (
             <div key={g.nodeId} className="cmd-gate-card">
               <div className="cmd-gate-head">
-                <span className="cmd-gate-title">Aprovação ({g.nodeId})</span>
+                <span className="cmd-gate-title">Approval ({g.nodeId})</span>
                 <div className="live2-actions">
                   <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={() => runner.gate(g.nodeId, g.text)}>
                     Aprovar
