@@ -54,6 +54,7 @@ function scenarioLabel(name: string): string {
   if (name === 'agente-workflows') return 'Agente de Workflows';
   if (name.includes('entrevista') || name.startsWith('cenario2')) return 'Entrevista Técnica';
   if (name.includes('ops') || name.includes('servidor')) return 'Ops / Revisão de Servidor';
+  if (name.includes('traducao') || name.includes('transcricao') || name.includes('tradutor')) return 'Tradução / Transcrição';
   if (name.includes('legendas') || name.startsWith('cenario1')) return 'Legendas ao vivo';
   if (name.includes('transcricao')) return 'Transcrição ao vivo';
   if (name.includes('tradutor-voz')) return 'Tradutor de voz';

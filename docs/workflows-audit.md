@@ -93,6 +93,18 @@ transcricao-ao-vivo.json    valid=true  nodes=3  edges=2
 - A validação `validateFlow` com os novos params e porta de saída de `capture.ffmpeg` (`backend: "chat"`, `placeholder`, `out_text`) depende da integração com as branches de engine (`packages/falador-nodes`) e UI (`apps/web`). Neste worktree foi verificada a integridade estrutural/JSON e de invariantes dos 7 arquivos.
 - Não rodei E2E com modelo/áudio/microfone/chat reais ou verificação no browser após a migração para nó único Input.
 
+## Consolidação (2026-11-23)
+
+Os três fluxos da família tradução/transcrição foram **unificados em um único workflow**:
+
+- `tradutor-voz-en.json` (STT → `translate.llm` → sink `speak`)
+- `legendas-traducao-pt.json` (STT → `translate.llm` → sink `write`)
+- `transcricao-ao-vivo.json` (STT → sink `write`, sem tradução)
+
+**Motivo:** eram o mesmo grafo (`input → asr → translate.llm → sink`) com apenas `targetLanguage` e `outputMode` como variáveis. O nó `translate.llm` já suporta **passthrough** (idioma desabilitado → repassa sem LLM) e a UI já expõe seletor de idioma + toggle write/speak por runtime. Unificado em **`traducao-transcricao.json`** (4 nós / 4 edges / válido).
+
+**Removidos (redundantes):** `tradutor-voz-en.json`, `legendas-traducao-pt.json`, `transcricao-ao-vivo.json`.
+
 ## Sources
 
 [1] https://huggingface.co/blog/build-small-hackathon/local-interview-copilot — Local interview copilot architecture

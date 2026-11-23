@@ -1,7 +1,7 @@
 {
   "version": 1,
   "stopWhenSourcesDone": false,
-  "description": "Transcrição pura em tempo real (sem tradução ou LLM) com nó único Input (Aplicações via SCK, Microfone ou Chat): máxima velocidade e menor latência para acompanhar reuniões, palestras ou entrevistas no idioma original.",
+  "description": "Tradução e/ou transcrição simultânea em tempo real: um único Input (Aplicações via SCK, Microfone ou Chat), ASR Voxtral → translate.llm (passthrough se idioma desabilitado) → Output (Escrever legenda ou Falar TTS). Idioma de destino e modo de saída (write/speak) são ajustáveis em runtime.",
   "nodes": [
     {
       "id": "input",
@@ -10,7 +10,7 @@
         "input": "",
         "chunkMs": 80,
         "backend": "sck",
-        "placeholder": "Digite uma mensagem para exibir na transcrição (Enter para enviar)...",
+        "placeholder": "Digite o texto ou fale aqui… (Enter para enviar)...",
         "isDefault": true
       }
     },
@@ -24,14 +24,23 @@
       }
     },
     {
+      "id": "tradutor",
+      "type": "translate.llm",
+      "params": {
+        "model": "LiquidAI--LFM3-1.7B-MLX-4bit",
+        "targetLanguage": "Portuguese",
+        "enableThinking": false
+      }
+    },
+    {
       "id": "legenda",
       "type": "sink.captions",
       "params": {
         "mode": "callback",
         "showParcials": true,
         "outputMode": "write",
-        "language": "Portuguese",
-        "isDefault": true
+        "isDefault": true,
+        "language": "Portuguese"
       }
     }
   ],
@@ -45,12 +54,18 @@
     },
     {
       "from": "input.out_text",
-      "to": "legenda.phrase",
+      "to": "tradutor.in",
       "capacity": 16,
       "overflow": "drop_oldest"
     },
     {
       "from": "asr.out",
+      "to": "tradutor.parcs",
+      "capacity": 16,
+      "overflow": "drop_oldest"
+    },
+    {
+      "from": "tradutor.out",
       "to": "legenda.in",
       "capacity": 16,
       "overflow": "drop_oldest"
