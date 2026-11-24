@@ -1079,3 +1079,20 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   color: $txt-2;
   margin: $spacing-02 0;
 }
+
+.live-plan-panel {
+  flex-shrink: 0;
+  background: $bg-panel;
+  border: 1px solid $border-1;
+  overflow-x: auto;
+}
+
+.live-chat-step-actions {
+  margin-top: $spacing-02;
+  display: flex;
+  gap: $spacing-02;
+}
+
+.live-goal-validation {
+  margin-top: $spacing-02;
+}

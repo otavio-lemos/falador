@@ -22,6 +22,12 @@ import {
   AccordionItem,
   Tag,
   CodeSnippet,
+  StructuredListWrapper,
+  StructuredListHead,
+  StructuredListBody,
+  StructuredListRow,
+  StructuredListCell,
+  preview__IconIndicator as IconIndicator,
 } from '@carbon/react';
 import type { AuditEvent, PlanItem } from '../useRunner';
 
@@ -259,6 +265,60 @@ function LatencyTable({ data }: { data: AuditEvent[] }) {
   );
 }
 
+function ValidationList({ data }: { data: AuditEvent[] }) {
+  if (data.length === 0) return <Empty label="Nenhuma validação de objetivo registrada." />;
+  return (
+    <StructuredListWrapper isCondensed aria-label="Validações de objetivo">
+      <StructuredListHead>
+        <StructuredListRow head>
+          <StructuredListCell head>Hora</StructuredListCell>
+          <StructuredListCell head>Tipo</StructuredListCell>
+          <StructuredListCell head>Status</StructuredListCell>
+          <StructuredListCell head>Confiança</StructuredListCell>
+          <StructuredListCell head>Lacunas / Detalhes</StructuredListCell>
+          <StructuredListCell head>Próximas ações</StructuredListCell>
+        </StructuredListRow>
+      </StructuredListHead>
+      <StructuredListBody>
+        {data.map((v) => {
+          if (v.op === 'goal_validation') {
+            const achieved = Boolean(v.validation?.achieved);
+            const confidence = v.validation ? `${Math.round(v.validation.confidence * 100)}%` : '—';
+            const gaps = v.validation?.gaps?.length ? v.validation.gaps.join('; ') : '—';
+            const nextActions = v.validation?.nextActions?.length ? v.validation.nextActions.join('; ') : '—';
+            return (
+              <StructuredListRow key={`${v.runId}-${v.seq}`}>
+                <StructuredListCell noWrap>{fmtTs(v.ts)}</StructuredListCell>
+                <StructuredListCell noWrap>{`Validação${v.step != null ? ` (passo ${v.step})` : ''}`}</StructuredListCell>
+                <StructuredListCell noWrap>
+                  <IconIndicator kind={achieved ? 'succeeded' : 'caution-major'} label={achieved ? 'Atingido' : 'Pendente'} />
+                </StructuredListCell>
+                <StructuredListCell noWrap>{confidence}</StructuredListCell>
+                <StructuredListCell>{gaps}</StructuredListCell>
+                <StructuredListCell>{nextActions}</StructuredListCell>
+              </StructuredListRow>
+            );
+          }
+          const kind = v.goalAchieved ? 'succeeded' : v.maxStepsReached ? 'failed' : 'informative';
+          const label = v.goalAchieved ? 'Concluído' : v.maxStepsReached ? 'Limite de passos' : 'Encerrado';
+          return (
+            <StructuredListRow key={`${v.runId}-${v.seq}`}>
+              <StructuredListCell noWrap>{fmtTs(v.ts)}</StructuredListCell>
+              <StructuredListCell noWrap>{`Final${v.step != null ? ` (passo ${v.step})` : ''}`}</StructuredListCell>
+              <StructuredListCell noWrap>
+                <IconIndicator kind={kind} label={label} />
+              </StructuredListCell>
+              <StructuredListCell noWrap>—</StructuredListCell>
+              <StructuredListCell>{v.text ? truncateText(v.text, 140) : '—'}</StructuredListCell>
+              <StructuredListCell>—</StructuredListCell>
+            </StructuredListRow>
+          );
+        })}
+      </StructuredListBody>
+    </StructuredListWrapper>
+  );
+}
+
 interface AuditPanelProps {
   audit: AuditEvent[];
 }
@@ -278,6 +338,10 @@ export function AuditPanel({ audit }: AuditPanelProps) {
     const planEvents = audit.filter((a) => a.op === 'plan' && a.plan);
     return planEvents.length > 0 ? planEvents[planEvents.length - 1].plan ?? null : null;
   }, [audit]);
+  const validations = useMemo(
+    () => audit.filter((a) => a.op === 'goal_validation' || a.op === 'agent_final'),
+    [audit],
+  );
 
   return (
     <div className="audit-panel">
@@ -288,6 +352,7 @@ export function AuditPanel({ audit }: AuditPanelProps) {
           <Tab>Gates ({gates.length})</Tab>
           <Tab>RAG ({rag.length})</Tab>
           <Tab>Plano ({plan?.length ?? 0})</Tab>
+          <Tab>Validação ({validations.length})</Tab>
           <Tab>Latência</Tab>
         </TabList>
         <TabPanels>
@@ -310,6 +375,7 @@ export function AuditPanel({ audit }: AuditPanelProps) {
           <TabPanel><GatesList data={gates} filter={filter} /></TabPanel>
           <TabPanel><RagList data={rag} filter={filter} /></TabPanel>
           <TabPanel><PlanView plan={plan} /></TabPanel>
+          <TabPanel><ValidationList data={validations} /></TabPanel>
           <TabPanel><LatencyTable data={audit} /></TabPanel>
         </TabPanels>
       </Tabs>

@@ -271,3 +271,142 @@ test('unified Input and Output stages use instance selectors and sync with topba
   await expect(page.getByRole('button', { name: 'Falar' })).toHaveAttribute('aria-pressed', 'false');
   await expect.poll(() => page.evaluate(() => localStorage.getItem('falador.outputMode'))).toBe('write');
 });
+
+test('console modal, plan progress indicator, goal validation, gate history and audit validation tab', async ({ page }) => {
+  // Verifica no Builder que agent.tools não exibe tag falsa DRY-RUN / EXEC ATIVO
+  await page.getByRole('combobox', { name: 'Workflow' }).click();
+  await page.getByRole('option', { name: 'assistente-especialista-ti' }).click();
+  const agentNode = page.locator('.react-flow__node').filter({ hasText: 'agent.tools' });
+  await expect(agentNode).toBeVisible();
+  await expect(agentNode.getByText('DRY-RUN')).toHaveCount(0);
+  await expect(agentNode.getByText('EXEC ATIVO')).toHaveCount(0);
+
+  const events = [
+    { type: 'run_started' },
+    {
+      type: 'audit',
+      runId: 'run-test-1',
+      seq: 1,
+      ts: 1700000001000,
+      op: 'plan',
+      nodeId: 'agente',
+      plan: [
+        { id: 'p1', description: 'Checar uptime', verification: 'exec uptime', status: 'verified', evidence: 'up 10 days' },
+        { id: 'p2', description: 'Subir nginx', verification: 'systemctl is-active nginx', status: 'pending' },
+        { id: 'p3', description: 'Validar porta 80', verification: 'curl -I localhost', status: 'failed' },
+      ],
+    },
+    {
+      type: 'agent_step',
+      nodeId: 'agente',
+      step: 1,
+      phase: 'result',
+      tool: 'exec_ssh',
+      args: { command: 'uptime' },
+      host: 'srv-01',
+      transport: 'ssh',
+      output: 'up 10 days',
+      exitCode: 0,
+      ok: true,
+      durationMs: 12,
+    },
+    {
+      type: 'audit',
+      runId: 'run-test-1',
+      seq: 2,
+      ts: 1700000002000,
+      op: 'goal_validation',
+      nodeId: 'agente',
+      step: 1,
+      goal: 'Garantir nginx ativo',
+      validation: {
+        achieved: false,
+        confidence: 0.45,
+        gaps: ['Serviço nginx ainda parado'],
+        nextActions: ['Executar systemctl start nginx'],
+      },
+    },
+    {
+      type: 'audit',
+      runId: 'run-test-1',
+      seq: 3,
+      ts: 1700000003000,
+      op: 'agent_final',
+      nodeId: 'agente',
+      step: 2,
+      maxStepsReached: true,
+      goalAchieved: false,
+      text: 'Limite de passos atingido.',
+    },
+    {
+      type: 'gate',
+      nodeId: 'agente',
+      text: 'systemctl start nginx',
+      meta: { tool: 'exec_ssh', host: 'srv-01', command: 'systemctl start nginx', decision: 'sensivel' },
+    },
+  ];
+  const body = events.map((ev) => `event: runner\ndata: ${JSON.stringify(ev)}\n\n`).join('')
+    + 'event: ended\ndata: {"code":0}\n\n';
+
+  await page.route('**/api/gate', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }),
+  );
+  await page.route('**/api/run', (route) =>
+    route.fulfill({ status: 200, contentType: 'text/event-stream', body }),
+  );
+
+  await page.getByRole('button', { name: 'Runner' }).click();
+  await page.getByRole('button', { name: 'Iniciar', exact: true }).click();
+
+  // ProgressIndicator do plano
+  const planPanel = page.locator('.live-plan-panel');
+  await expect(planPanel).toBeVisible();
+  await expect(planPanel.locator('.cds--progress')).toBeVisible();
+  await expect(planPanel).toContainText('Checar uptime');
+  await expect(planPanel).toContainText('exec uptime');
+  await expect(planPanel).toContainText('up 10 days');
+
+  // Card agent-step + botão "Abrir no Console"
+  const stepCard = page.locator('.live-chat-entry--agent-step');
+  await expect(stepCard).toContainText('exec_ssh');
+  await stepCard.getByRole('button', { name: 'Abrir no Console' }).click();
+  const execModal = page.getByRole('dialog', { name: 'Execuções do run' });
+  await expect(execModal).toBeVisible();
+  await expect(execModal.getByRole('tab', { name: 'exec_ssh · srv-01 · 0' })).toBeVisible();
+  await expect(execModal).toContainText('up 10 days');
+  await execModal.getByRole('button', { name: 'Close' }).click();
+  await expect(execModal).not.toBeVisible();
+
+  // Botão Console do LogsPanel abre o mesmo Modal
+  await page.locator('.live2 .logs-panel').getByRole('button', { name: 'Console' }).click();
+  await expect(execModal).toBeVisible();
+  await execModal.getByRole('button', { name: 'Close' }).click();
+  await expect(execModal).not.toBeVisible();
+
+  // Cards Validação de Objetivo na Conversa
+  const validationCards = page.locator('.live-chat-entry--goal-validation');
+  await expect(validationCards).toHaveCount(2);
+  await expect(validationCards.first()).toContainText('Não atingido');
+  await expect(validationCards.first()).toContainText('45%');
+  await expect(validationCards.first()).toContainText('Serviço nginx ainda parado');
+  await expect(validationCards.first()).toContainText('Executar systemctl start nginx');
+  await expect(validationCards.last()).toContainText('Limite de passos atingido');
+
+  // Aba Validação no AuditPanel
+  const logsPanel = page.locator('.live2 .logs-panel');
+  await logsPanel.locator('.logs-panel-view').getByRole('tab', { name: /^Auditoria/ }).click();
+  const auditPanel = logsPanel.locator('.audit-panel');
+  await auditPanel.getByRole('tab', { name: /^Validação/ }).click();
+  await expect(auditPanel).toContainText('Serviço nginx ainda parado');
+  await expect(auditPanel).toContainText('Limite de passos atingido.');
+
+  // Histórico de Gate na Conversa após aprovação
+  const gateEntry = page.locator('.live-chat-entry.live-chat-entry--gate');
+  await expect(gateEntry).toBeVisible();
+  await gateEntry.getByRole('button', { name: 'Aprovar e Executar' }).click();
+  await expect(gateEntry).toHaveCount(0);
+  const gateHistoryEntry = page.locator('.live-chat-entry--gate-history');
+  await expect(gateHistoryEntry).toBeVisible();
+  await expect(gateHistoryEntry).toContainText('Aprovado');
+  await expect(gateHistoryEntry).toContainText('systemctl start nginx');
+});

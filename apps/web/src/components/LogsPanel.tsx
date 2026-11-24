@@ -389,7 +389,7 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onTo
             size="sm"
             renderIcon={Terminal}
             onClick={onOpenConsole}
-            title="Abrir Console do Agente (popup)"
+            title="Abrir Console de execuções"
           >
             Console
           </Button>
