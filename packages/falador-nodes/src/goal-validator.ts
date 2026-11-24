@@ -6,6 +6,7 @@
 import type { ControlMsg, NodeCtx, NodeRuntime, NodeTypeDef, ParamError } from '../../falador-graph/src/index.ts';
 import { omlxAuthHeaders, payloadText } from './sse.ts';
 import { inheritTrace } from './trace.ts';
+import { redactSecrets } from './redact.ts';
 import type { GoalValidationResult, PlanItem } from './audit.ts';
 
 export type GoalValidation = GoalValidationResult;
@@ -88,9 +89,10 @@ export async function validateGoal(o: {
   evidenceCharBudget?: number;
 }): Promise<GoalValidation> {
   const budget = o.evidenceCharBudget ?? DEFAULT_EVIDENCE_CHAR_BUDGET;
-  const evidenceText = budgetEvidence(o.evidence, budget);
+  const safeEvidence = o.evidence.map((e) => redactSecrets(e).text);
+  const evidenceText = budgetEvidence(safeEvidence, budget);
   const planText = o.plan && o.plan.length > 0
-    ? `\n\nPLANO:\n${o.plan.map((p) => `- [${p.status}] ${p.id}: ${p.description} (verificação: ${p.verification})${p.evidence ? ` evidência: ${p.evidence}` : ''}`).join('\n')}`
+    ? `\n\nPLANO:\n${o.plan.map((p) => `- [${p.status}] ${p.id}: ${p.description} (verificação: ${p.verification})${p.evidence ? ` evidência: ${redactSecrets(p.evidence).text}` : ''}`).join('\n')}`
     : '';
   const messages = [
     { role: 'system', content: VALIDATOR_SYSTEM },

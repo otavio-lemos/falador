@@ -33,6 +33,7 @@ export { turnDetector } from './turn-detector.ts';
 export {
   execCommand,
   DEFAULT_READONLY_PREFIXES,
+  INTERACTIVE_DENY_BINARIES,
   parseArgv,
   extractCommand,
   validateCommand,
@@ -77,6 +78,7 @@ export {
 export { inheritTrace, type TraceMeta } from './trace.ts';
 export { goalValidator, validateGoal, type GoalValidation } from './goal-validator.ts';
 export { parsePlanItems, preview, type AuditEvent, type PlanItem, type GoalValidationResult } from './audit.ts';
+export { redactSecrets, redactUnknown, createLineRedactor, type RedactResult, type LineRedactor } from './redact.ts';
 export { postJsonBytes, postSse, payloadText, omlxAuthHeaders } from './sse.ts';
 
 /** Registra todos os nós reais no registry dado. */

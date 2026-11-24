@@ -408,10 +408,10 @@ test('gate final rejeitado: não conclui e a rejeição realimenta o loop', asyn
 
 test('validador retorna lixo: fail-closed, não conclui sozinho', async () => {
   const llm = await mockLlm({
-    executor: [finalResp('está tudo pronto')],
+    executor: [toolCallResp('update_plan', { items: [PLAN_VERIFIED] }), finalResp('está tudo pronto')],
     validator: ['confia em mim, deu certo'],
   });
-  const h = await harness({ llm, agentParams: { validatorModel: 'val-model', maxSteps: 1 } });
+  const h = await harness({ llm, agentParams: { validatorModel: 'val-model', maxSteps: 2 } });
   try {
     await h.src.emit('objetivo: x');
     await waitFor(() => h.received.length > 0);
@@ -441,7 +441,10 @@ test('sem validatorModel e sem plano: caminho legado inalterado (1 chamada, sem 
 });
 
 test('interrupt durante o gate final não pendura o run', async () => {
-  const llm = await mockLlm({ executor: [finalResp('concluído')], validator: [VALID_VALIDATION] });
+  const llm = await mockLlm({
+    executor: [toolCallResp('update_plan', { items: [PLAN_VERIFIED] }), finalResp('concluído')],
+    validator: [VALID_VALIDATION],
+  });
   const gate = makeGate([], { hang: true });
   const h = await harness({ llm, gate, agentParams: { validatorModel: 'val-model' } });
   try {
@@ -479,4 +482,152 @@ test('multi-turn: segundo turno após conclusão não contamina goal/plano/evid�
     const uc = (secondValBody?.messages as Array<{ role: string; content: string }>).find((m) => m.role === 'user')?.content ?? '';
     assert.ok(!uc.includes('Checar disco'), 'evidência do turno A não vaza para o turno B');
   } finally { await h.stop(); await llm.close(); }
+});
+
+test('maxSteps até 50: executa >12 passos sem truncar em 12', async () => {
+  const steps: Array<Record<string, unknown>> = [];
+  for (let i = 1; i <= 14; i++) {
+    steps.push(toolCallResp('exec_local', { command: `echo step_${i}` }));
+  }
+  steps.push(finalResp('concluido em 15'));
+  const llm = await mockLlm({ executor: steps });
+  const h = await harness({
+    llm,
+    agentParams: { maxSteps: 50, approvalPolicy: 'never', checkpointEverySteps: 0 },
+    tools: [mockToolNode('test.exec', 'exec_local', { ok: true, output: 'ok', exitCode: 0 })],
+  });
+  try {
+    await h.src.emit('rodar 14 passos');
+    await waitFor(() => h.received.length > 0);
+    const out = h.received[h.received.length - 1];
+    assert.equal(out.meta?.steps, 15);
+    assert.notEqual(out.meta?.maxStepsReached, true);
+  } finally { await h.stop(); await llm.close(); }
+});
+
+test('checkpointEverySteps aciona gate humano periódico e respeita aprovação/rejeição', async () => {
+  const llm = await mockLlm({
+    executor: [
+      toolCallResp('exec_local', { command: 'echo 1' }),
+      toolCallResp('exec_local', { command: 'echo 2' }),
+      toolCallResp('exec_local', { command: 'echo 3' }),
+      finalResp('sintese apos rejeicao'),
+    ],
+  });
+  // Gate rejeita o checkpoint no step 2
+  const gate = makeGate([null]);
+  const h = await harness({
+    llm,
+    gate,
+    agentParams: { maxSteps: 5, approvalPolicy: 'never', checkpointEverySteps: 2 },
+    tools: [mockToolNode('test.exec', 'exec_local', { ok: true, output: 'ok', exitCode: 0 })],
+  });
+  try {
+    await h.src.emit('rodar com checkpoint');
+    await waitFor(() => h.received.length > 0);
+    assert.equal(gate.requests.length, 1);
+    assert.equal(gate.requests[0].meta?.tool, 'agent.checkpoint');
+    assert.equal(gate.requests[0].meta?.step, 2);
+    const cpAudit = h.audits.find((a) => a.op === 'gate' && a.tool === 'agent.checkpoint');
+    assert.equal(cpAudit?.gate, 'rejected');
+    assert.equal(cpAudit?.errorType, 'checkpoint_rejected');
+  } finally { await h.stop(); await llm.close(); }
+});
+
+test('validatorModel com plan === null exige update_plan e mantém alternância assistant/user', async () => {
+  const llm = await mockLlm({
+    executor: [
+      finalResp('tentei concluir sem plano'),
+      toolCallResp('update_plan', { items: [PLAN_VERIFIED] }),
+      finalResp('agora com plano'),
+    ],
+    validator: [VALID_VALIDATION],
+  });
+  const gate = makeGate(['aprovo']);
+  const h = await harness({ llm, gate, agentParams: { validatorModel: 'val-model', maxSteps: 5 } });
+  try {
+    await h.src.emit('objetivo com plano obrigatorio');
+    await waitFor(() => h.received.length > 0);
+    const secondCallMsgs = llm.bodies[1].messages as Array<{ role: string; content: string }>;
+    // Últimas 2 mensagens devem ser assistant -> user (sem 2 user seguidos)
+    assert.equal(secondCallMsgs[secondCallMsgs.length - 2].role, 'assistant');
+    assert.equal(secondCallMsgs[secondCallMsgs.length - 1].role, 'user');
+    assert.match(secondCallMsgs[secondCallMsgs.length - 1].content, /update_plan/);
+    assert.equal(h.received[0].meta?.goalAchieved, true);
+  } finally { await h.stop(); await llm.close(); }
+});
+
+test('audit propaga result.meta.code em errorType e mascara segredos em tool_output/audit/step/validator', async () => {
+  const stepEvents: Array<Record<string, unknown>> = [];
+  const llm = await mockLlm({
+    executor: [
+      toolCallResp('exec_local', { command: 'echo ghp_abcdefghijklmnopqrstuvwxyz123456' }),
+      toolCallResp('update_plan', { items: [PLAN_VERIFIED] }),
+      finalResp('fim com sk-proj-abcdefghijklmnopqrstuvwxyz123456'),
+    ],
+    validator: [VALID_VALIDATION],
+  });
+  const gate = makeGate(['aprovo']);
+  const reg = createRegistry().register(agentTools);
+  const src = manualSource();
+  const received: Envelope[] = [];
+  reg.register(src.def).register(collectSink(received));
+  const failTool = mockToolNode('test.exec', 'exec_local', {
+    ok: false,
+    output: 'falha com token ghp_abcdefghijklmnopqrstuvwxyz123456',
+    exitCode: 1,
+    meta: { code: 'EXEC_POLICY_DENIED' },
+  });
+  reg.register(failTool);
+  const audits: AuditEvent[] = [];
+  const rg = await runGraph(
+    {
+      version: 1,
+      stopWhenSourcesDone: false,
+      nodes: [
+        { id: 'src', type: 'test.source' },
+        { id: 'agente', type: 'agent.tools', params: { baseUrl: llm.url, model: 'exec-model', validatorModel: 'val-model', approvalPolicy: 'never', maxSteps: 5 } },
+        { id: 'exec', type: 'test.exec' },
+        { id: 'snk', type: 'test.collect' },
+      ],
+      edges: [
+        { from: 'src.phrase', to: 'agente.in' },
+        { from: 'exec.tool', to: 'agente.tools' },
+        { from: 'agente.out', to: 'snk.in' },
+      ],
+      bindings: {
+        agente: {
+          __gate: gate.holder,
+          __onAudit: (ev: AuditEvent) => audits.push(ev),
+          __onAgentStep: (ev: Record<string, unknown>) => stepEvents.push(ev),
+        },
+      },
+    },
+    reg,
+  );
+  try {
+    await src.emit('checar segredo');
+    await waitFor(() => received.length > 0);
+
+    const tc = audits.find((a) => a.op === 'tool_call');
+    assert.equal(tc?.errorType, 'EXEC_POLICY_DENIED');
+    assert.ok(!tc?.outputPreview?.includes('ghp_abcdefghijklmnopqrstuvwxyz123456'));
+    assert.ok(tc?.outputPreview?.includes('[REDACTED:github_token]'));
+
+    // <tool_output> enviado ao LLM não contém o segredo
+    const call2Msgs = llm.bodies[1].messages as Array<{ role: string; content: string }>;
+    const toolMsg = call2Msgs.find((m) => m.role === 'tool');
+    assert.ok(toolMsg && !toolMsg.content.includes('ghp_abcdefghijklmnopqrstuvwxyz123456'));
+    assert.ok(toolMsg?.content.includes('[REDACTED:github_token]'));
+
+    // step event mascarado
+    const resultStep = stepEvents.find((s) => s.phase === 'result');
+    assert.ok(resultStep && !String(resultStep.output).includes('ghp_abcdefghijklmnopqrstuvwxyz123456'));
+
+    // validador recebeu evidência mascarada
+    const valBody = llm.bodies.find((b) => b.model === 'val-model');
+    const valUser = (valBody?.messages as Array<{ role: string; content: string }>).find((m) => m.role === 'user')?.content ?? '';
+    assert.ok(!valUser.includes('ghp_abcdefghijklmnopqrstuvwxyz123456'));
+    assert.ok(valUser.includes('[REDACTED:github_token]'));
+  } finally { await rg.stop('fim'); await llm.close(); }
 });

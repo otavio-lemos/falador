@@ -1,6 +1,7 @@
 // falador-nodes — audit.ts: contrato da trilha de auditoria única por run (ADR-012).
 // Tipos + helpers puros. O runner grava JSONL append-only; o host repassa via SSE.
 // NADA fabricado: todo campo vem do que realmente aconteceu no loop do agente.
+import { redactSecrets } from './redact.ts';
 
 export interface PlanItem {
   id: string;
@@ -71,6 +72,9 @@ export function parsePlanItems(raw: unknown): { ok: true; items: PlanItem[] } | 
     if (it.evidence !== undefined && typeof it.evidence !== 'string') {
       return { ok: false, error: `items[${i}].evidence deve ser string` };
     }
+    if (status === 'verified' && (typeof it.evidence !== 'string' || it.evidence.trim().length === 0)) {
+      return { ok: false, error: `items[${i}].evidence obrigatório (string não-vazia) quando status é "verified"` };
+    }
     seen.add(id);
     items.push({
       id,
@@ -85,10 +89,11 @@ export function parsePlanItems(raw: unknown): { ok: true; items: PlanItem[] } | 
 
 const DEFAULT_PREVIEW_MAX = 2000;
 
-/** Preview de output para auditoria: corta no INÍCIO mantendo a cauda (o fim costuma ter o resultado/erro). */
+/** Preview de output para auditoria: mascara segredos e corta no INÍCIO mantendo a cauda (o fim costuma ter o resultado/erro). */
 export function preview(output: string, max: number = DEFAULT_PREVIEW_MAX): string {
-  if (output.length <= max) return output;
+  const safe = redactSecrets(output).text;
+  if (safe.length <= max) return safe;
   const marker = '[…cortado…]\n';
   const keep = Math.max(0, max - marker.length);
-  return marker + output.slice(output.length - keep);
+  return marker + safe.slice(safe.length - keep);
 }
