@@ -262,8 +262,9 @@ function parseGateCommand(gate: Gate | undefined): {
   command: string;
   decision?: string;
   reason?: string;
+  options: string[];
 } {
-  if (!gate) return { isCommand: false, isAskUser: false, host: 'local', command: '' };
+  if (!gate) return { isCommand: false, isAskUser: false, host: 'local', command: '', options: [] };
   const meta = gate.meta;
   let tool = meta?.tool;
   let host = meta?.host;
@@ -297,9 +298,14 @@ function parseGateCommand(gate: Gate | undefined): {
     prompt = reason || trimmed;
   }
   const isCommand = !isAskUser && Boolean(command || tool || meta?.host || meta?.command || meta?.reason || meta?.tool);
+  const metaOptions = meta?.args?.options;
+  const options = Array.isArray(metaOptions)
+    ? metaOptions.filter((o): o is string => typeof o === 'string' && o.trim() !== '')
+    : [];
   return {
     isCommand,
     isAskUser,
+    options,
     prompt,
     tool,
     host: host || 'local',
@@ -504,21 +510,22 @@ export function LiveView({
     return code !== 'log_info' && code !== 'log_warn' && code !== 'log_debug';
   }) as { message?: string; error?: string; nodeId?: string; _uiTs?: number } | undefined;
 
-  const approve = () => {
+  const approve = (value?: string | { type: string }) => {
     if (!gate) return;
     if (gateInfo.isAskUser) {
+      const answer = typeof value === 'string' ? value : (cmdDraft as string);
       setGateHistory((prev) => [
         ...prev,
         {
           id: `gate-${gate.nodeId}-${Date.now()}-${prev.length}`,
           nodeId: gate.nodeId,
           status: 'Aprovado',
-          command: cmdDraft,
+          command: answer,
           tool: 'ask_user',
           ts: Date.now(),
         },
       ]);
-      runner.gate(gate.nodeId, cmdDraft);
+      runner.gate(gate.nodeId, answer);
       setCmdDraft('');
       return;
     }
@@ -879,6 +886,15 @@ export function LiveView({
               <p className="live-chat-entry-text" style={{ fontWeight: 500 }}>
                 {gateInfo.prompt || gate.text}
               </p>
+              {gateInfo.options.length > 0 && (
+                <div className="live-chat-gate-options" role="group" aria-label="Opções sugeridas">
+                  {gateInfo.options.map((opt, i) => (
+                    <Button key={`${i}-${opt}`} kind="tertiary" size="sm" onClick={() => approve(opt)}>
+                      {opt}
+                    </Button>
+                  ))}
+                </div>
+              )}
               <TextArea
                 id="ask-user-gate-input"
                 labelText="Sua resposta"

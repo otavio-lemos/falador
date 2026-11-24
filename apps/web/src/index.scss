@@ -916,6 +916,17 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   max-height: 240px;
   overflow-y: auto;
 }
+.live-chat-gate-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $spacing-02 $spacing-03;
+  margin: $spacing-02 0;
+}
+.live-chat-gate-options .cds--btn {
+  border-radius: 0;
+  height: auto;
+  padding-block: $spacing-02;
+}
 .live-chat-gate-tags {
   display: flex;
   flex-wrap: wrap;
