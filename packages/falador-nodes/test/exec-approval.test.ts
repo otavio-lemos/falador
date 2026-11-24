@@ -47,11 +47,16 @@ async function invoke(gate?: { request(text: string, meta?: Record<string, unkno
   return { res, calls };
 }
 
-test('validateCommand: allowUnlisted pula só a allowlist, não a denylist dura', () => {
-  assert.equal(validateCommand('uname -a', policy, { allowUnlisted: true }).ok, true);
-  const denied = validateCommand('rm -rf /tmp/x', policy, { allowUnlisted: true });
-  assert.equal(denied.ok, false);
-  if (!denied.ok) assert.match(denied.reason, /denylist|destrutiv/i);
+test('validateCommand: aprovação libera prefixo, destrutivo e metacaracteres', () => {
+  assert.equal(validateCommand('uname -a', policy, { approved: true }).ok, true);
+  assert.equal(validateCommand('rm -rf /tmp/x', policy, { approved: true }).ok, true);
+  assert.equal(validateCommand('echo oi && ls', policy, { approved: true }).ok, true);
+});
+
+test('SSH: allowedHosts vazio também é pergunta, não proibição', () => {
+  const ssh: ExecPolicy = { ...policy, transport: 'ssh', allowedHosts: [] };
+  assert.equal(validateCommand({ command: 'uptime', host: 'srv.example.com' }, ssh).ok, false);
+  assert.equal(validateCommand({ command: 'uptime', host: 'srv.example.com' }, ssh, { approved: true }).ok, true);
 });
 
 test('comando na allowlist roda sem chamar gate', async () => {
@@ -74,6 +79,15 @@ test('fora da allowlist: aprovado roda nesta exec; negado não roda', async () =
   assert.equal(approved.res.ok, true);
 
   const rejected = await invoke(async () => null);
+  assert.equal(rejected.res.ok, false);
+  assert.match(rejected.res.output, /negado pelo usuário/);
+});
+
+test('rm -f: aprovado executa nesta vez; negado não executa', async () => {
+  const approved = await invoke(async () => 'rm -f /tmp/x');
+  assert.equal(approved.res.ok, true);
+
+  const rejected = await invoke(async () => null, 'rm -f /tmp/x');
   assert.equal(rejected.res.ok, false);
   assert.match(rejected.res.output, /negado pelo usuário/);
 });

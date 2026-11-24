@@ -518,11 +518,13 @@ export function buildSshRemoteCommand(argv: string[]): string {
  * 5. Allowlist e sanitização de host (para SSH)
  */
 export const ALLOWLIST_DENIAL_PREFIX = 'Comando fora da allowlist de prefixos permitidos';
+export const HARD_DENY_DENIAL_PREFIX = 'Binário destrutivo bloqueado pela denylist imutável';
 
 export function validateCommand(
   input: unknown,
   policy: ExecPolicy,
-  opts?: { allowUnlisted?: boolean },
+  /** humano aprovou nesta exec: libera prefixo e denylist destrutiva, mantém demais barreiras */
+  opts?: { approved?: boolean },
 ): ValidateResult {
   const extracted = extractCommand(input);
   if (!extracted.ok) {
@@ -531,15 +533,17 @@ export function validateCommand(
 
   const { command, reason } = extracted;
 
-  // 2. Denylist dura de metacaracteres
-  for (const meta of FORBIDDEN_METACHARS) {
-    if (command.includes(meta)) {
-      return {
-        ok: false,
-        code: 'EXEC_POLICY_DENIED',
-        reason: `Metacaractere de shell proibido detectado: ${JSON.stringify(meta)}`,
-        command,
-      };
+  // 2. Metacaracteres de shell (aprovação humana libera)
+  if (!opts?.approved) {
+    for (const meta of FORBIDDEN_METACHARS) {
+      if (command.includes(meta)) {
+        return {
+          ok: false,
+          code: 'EXEC_POLICY_DENIED',
+          reason: `Metacaractere de shell proibido detectado: ${JSON.stringify(meta)}`,
+          command,
+        };
+      }
     }
   }
 
@@ -559,13 +563,14 @@ export function validateCommand(
     return { ok: false, code: 'EXEC_POLICY_DENIED', reason: 'Comando sem executável', command };
   }
 
-  // Denylist dura de binários destrutivos (mesmo que estejam em allowedPrefixes)
+  // Barreiras de conteúdo: toda negação aqui é APROVÁVEL pelo humano nesta exec.
+  if (!opts?.approved) {
   const bin = basename(argv[0]).toLowerCase();
   if (HARD_DENY_BINARIES.has(bin) || bin.startsWith('mkfs.')) {
     return {
       ok: false,
       code: 'EXEC_POLICY_DENIED',
-      reason: `Binário destrutivo bloqueado pela denylist imutável: ${bin}`,
+      reason: `${HARD_DENY_DENIAL_PREFIX}: ${bin}`,
       command,
     };
   }
@@ -624,8 +629,9 @@ export function validateCommand(
       }
     }
   }
+  }
 
-  // 4. Allowlist de prefixo com fronteira de palavra (allowUnlisted = aprovação humana desta exec)
+  // 4. Allowlist de prefixo com fronteira de palavra (approved = aprovação humana desta exec)
   const normalized = command.replace(/\s+/g, ' ').trim();
   const prefixes = Array.isArray(policy.allowedPrefixes) ? policy.allowedPrefixes : [];
   const prefixMatched = prefixes.some((rawPrefix) => {
@@ -634,7 +640,7 @@ export function validateCommand(
     if (!p) return false;
     return normalized === p || normalized.startsWith(`${p} `);
   });
-  if (!prefixMatched && !opts?.allowUnlisted) {
+  if (!prefixMatched && !opts?.approved) {
     return {
       ok: false,
       code: 'EXEC_POLICY_DENIED',
@@ -692,23 +698,25 @@ export function validateCommand(
       };
     }
     const allowedHosts = Array.isArray(policy.allowedHosts) ? policy.allowedHosts : [];
-    if (allowedHosts.length === 0) {
-      return {
-        ok: false,
-        code: 'EXEC_POLICY_DENIED',
-        reason: 'allowedHosts vazio: execução SSH recusada por segurança',
-        command,
-        host: targetHost,
-      };
-    }
-    if (!allowedHosts.includes(targetHost)) {
-      return {
-        ok: false,
-        code: 'EXEC_POLICY_DENIED',
-        reason: `Host SSH fora de allowedHosts: ${targetHost}`,
-        command,
-        host: targetHost,
-      };
+    if (!opts?.approved) {
+      if (allowedHosts.length === 0) {
+        return {
+          ok: false,
+          code: 'EXEC_POLICY_DENIED',
+          reason: 'allowedHosts vazio: execução SSH recusada por segurança',
+          command,
+          host: targetHost,
+        };
+      }
+      if (!allowedHosts.includes(targetHost)) {
+        return {
+          ok: false,
+          code: 'EXEC_POLICY_DENIED',
+          reason: `Host SSH fora de allowedHosts: ${targetHost}`,
+          command,
+          host: targetHost,
+        };
+      }
     }
     host = targetHost;
   }
@@ -1143,9 +1151,14 @@ export const execCommand: NodeTypeDef = {
       };
 
       let validation = validateCommand(input, callPolicy);
-      // Fora da allowlist: pede aprovação humana para ESTA execução (não grava prefixo).
-      // Na lista segue direto; denylist/metacaracteres/host continuam barreiras duras.
-      if (!validation.ok && validation.reason.startsWith(ALLOWLIST_DENIAL_PREFIX) && gateHolder) {
+      // Toda recusa de conteúdo/host vira PERGUNTA (nunca proibição permanente).
+      // Exceção: comando vazio/sem host não existe para executar — é erro de entrada.
+      const needsHumanApproval =
+        !validation.ok &&
+        gateHolder !== undefined &&
+        Boolean(validation.command) &&
+        !validation.reason.startsWith('Host SSH não informado');
+      if (needsHumanApproval && !validation.ok) {
         const deniedCommand = validation.command ?? String(payloadText(input)?.text ?? '');
         let approvedText: string | null = null;
         try {
@@ -1172,7 +1185,7 @@ export const execCommand: NodeTypeDef = {
           };
         } else {
           const fromGate = extractCommand(approvedText);
-          validation = validateCommand(fromGate.ok ? approvedText : input, callPolicy, { allowUnlisted: true });
+          validation = validateCommand(fromGate.ok ? approvedText : input, callPolicy, { approved: true });
           ctx.metrics.counter('exec.command.approved', 1);
         }
       }
