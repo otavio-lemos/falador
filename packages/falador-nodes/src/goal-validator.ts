@@ -3,7 +3,14 @@
 // Fail-closed: erro HTTP / JSON inválido ⇒ achieved:false, confidence:0.
 // ENTRADA do nó: in (phrase) com { goal: string, evidence: string[] }
 // SAÍDA do nó:   out (phrase) JSON { achieved, confidence, gaps[], nextActions[] }
-import type { ControlMsg, NodeCtx, NodeRuntime, NodeTypeDef, ParamError } from '../../falador-graph/src/index.ts';
+import type {
+  ControlMsg,
+  NodeCtx,
+  NodeRuntime,
+  NodeTypeDef,
+  ParamError,
+  ValidatorProvider,
+} from '../../falador-graph/src/index.ts';
 import { omlxAuthHeaders, payloadText } from './sse.ts';
 import { inheritTrace } from './trace.ts';
 import { redactSecrets } from './redact.ts';
@@ -130,7 +137,10 @@ export const goalValidator: NodeTypeDef = {
   paramNames: ['baseUrl', 'model', 'confidenceThreshold'],
   bindingNames: ['__gate'],
   inputs: [{ name: 'in', type: 'phrase' }],
-  outputs: [{ name: 'out', type: 'phrase', required: true }],
+  outputs: [
+    { name: 'out', type: 'phrase', required: true },
+    { name: 'validator', type: 'validator', required: false },
+  ],
   validateParams: (p): ParamError[] => {
     const errs: ParamError[] = [];
     if (p.baseUrl !== undefined && typeof p.baseUrl !== 'string') {
@@ -150,7 +160,25 @@ export const goalValidator: NodeTypeDef = {
     const confidenceThreshold = (ctx.params.confidenceThreshold as number | undefined) ?? DEFAULT_CONFIDENCE_THRESHOLD;
     const gate = ctx.bindings.__gate as GoalGateHolder | undefined;
 
+    const validatorProvider: ValidatorProvider = {
+      confidenceThreshold,
+      async validate(input) {
+        const result = await validateGoal({
+          baseUrl,
+          model,
+          goal: input.goal,
+          evidence: input.evidence,
+          plan: input.plan as PlanItem[] | undefined,
+          signal: input.signal ?? ctx.signal,
+        });
+        ctx.metrics.counter('goal.validator.checks', 1);
+        ctx.metrics.counter(result.achieved ? 'goal.validator.achieved' : 'goal.validator.not_achieved', 1);
+        return result;
+      },
+    };
+
     return {
+      validatorProvider,
       async start() {},
       async onInput(_port, msg) {
         if (msg.control) return;

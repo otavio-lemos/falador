@@ -55,9 +55,45 @@
       }
     },
     {
+      "id": "decisor_d1",
+      "type": "decision.llm",
+      "params": {
+        "baseUrl": "http://127.0.0.1:8080",
+        "model": "d1-2B-MLX-4bit",
+        "mode": "systemone",
+        "options": [
+          "seguro",
+          "sensivel"
+        ],
+        "defaultOption": "sensivel",
+        "instructions": "Classifique esta chamada de ferramenta como \"seguro\" (leitura/consulta inofensiva) ou \"sensivel\" (escrita, alteração de estado, comando arriscado ou dúvida).",
+        "criteria": {
+          "seguro": "Consulta somente-leitura claramente inofensiva",
+          "sensivel": "Ação mutável, destrutiva, sensível ou incerta que exige aprovação humana"
+        }
+      }
+    },
+    {
+      "id": "gate_humano",
+      "type": "human.approve",
+      "params": {
+        "mode": "manual"
+      }
+    },
+    {
+      "id": "validador_objetivo",
+      "type": "goal.validator",
+      "params": {
+        "baseUrl": "http://127.0.0.1:8080",
+        "model": "LiquidAI--LFM3-1.7B-MLX-4bit",
+        "confidenceThreshold": 0.8
+      }
+    },
+    {
       "id": "web_search",
       "type": "tool.web_search",
       "params": {
+        "provider": "auto",
         "endpoint": "https://api.duckduckgo.com/",
         "timeoutMs": 10000,
         "maxResults": 10,
@@ -77,7 +113,7 @@
           "github.com",
           "gitlab.com",
           "docs.ansible.com",
-          "www.terraform.io",
+          "developer.hashicorp.com",
           "helm.sh",
           "docs.aws.amazon.com",
           "cloud.google.com",
@@ -316,6 +352,24 @@
     {
       "from": "rag_search.tool",
       "to": "agente.tools",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "decisor_d1.decider",
+      "to": "agente.decider",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "gate_humano.gate",
+      "to": "agente.gate",
+      "capacity": 8,
+      "overflow": "block"
+    },
+    {
+      "from": "validador_objetivo.validator",
+      "to": "agente.validator",
       "capacity": 8,
       "overflow": "block"
     },

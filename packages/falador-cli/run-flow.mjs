@@ -7,7 +7,7 @@
 //   {"type":"result",...} no fim (payloads coletados por sink.collect, truncados)
 // Stdout é 100% NDJSON (logs do server ficam no stderr do spawn da TUI).
 import { createRegistry, runGraph, sourceTone, pipeDelay, pipeParcs, sinkCollect } from '../falador-graph/src/index.ts';
-import { registerFaladorNodes } from '../falador-nodes/src/index.ts';
+import { registerFaladorNodes, GENESIS_HASH, chainAuditEvent } from '../falador-nodes/src/index.ts';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
@@ -167,21 +167,37 @@ async function main() {
     if (n.type === 'exec.command') {
       flow.bindings[n.id] = {
         ...(flow.bindings[n.id] ?? {}),
-        ...(!(flow.bindings[n.id]?.__onExecution) ? { __onExecution: (ev) => line({ type: 'execution', ...ev }) } : {}),
+        ...(!(flow.bindings[n.id]?.__onExecution)
+          ? {
+              __onExecution: (ev) => {
+                line({ type: 'execution', ...ev });
+                audit({
+                  op: 'exec',
+                  nodeId: n.id,
+                  command: typeof ev?.command === 'string' ? ev.command : undefined,
+                  host: typeof ev?.host === 'string' ? ev.host : undefined,
+                  transport: typeof ev?.transport === 'string' ? ev.transport : undefined,
+                  ok: typeof ev?.ok === 'boolean' ? ev.ok : undefined,
+                  exitCode: typeof ev?.exitCode === 'number' ? ev.exitCode : null,
+                  durationMs: typeof ev?.durationMs === 'number' ? ev.durationMs : undefined,
+                  dryRun: typeof ev?.dryRun === 'boolean' ? ev.dryRun : undefined,
+                  outputPreview: typeof ev?.output === 'string' ? ev.output.slice(-2000) : undefined,
+                });
+              },
+            }
+          : {}),
         ...(!(flow.bindings[n.id]?.__onExecChunk) ? { __onExecChunk: (ev) => line({ ...ev }) } : {}),
       };
     }
   }
 
-  // gates human.approve e agent.tools (quando approvalPolicy !== 'never'):
+  // gates human.approve e agent.tools:
   // runner cria holder por nó, anuncia {"type":"gate","nodeId","text","meta"?} e
   // resolve via stdin JSON {"type":"gate_action","nodeId","text"} (null = rejeitar).
   const gates = new Map(); // nodeId -> resolve
   const pendingGates = new Set(); // resolvers abertos (reject all no stop do run)
   for (const n of flow.nodes ?? []) {
-    const needsGate =
-      n.type === 'human.approve' ||
-      (n.type === 'agent.tools' && n.params?.approvalPolicy !== 'never');
+    const needsGate = (n.type === 'human.approve' || n.type === 'agent.tools') && !(flow.bindings[n.id]?.__gate);
     if (needsGate) {
       flow.bindings[n.id] = {
         ...(flow.bindings[n.id] ?? {}),
@@ -279,10 +295,12 @@ async function main() {
             for (const [id, fn] of chatSenders.entries()) {
               Promise.resolve(fn(text)).catch(() => {});
               line({ type: 'chat_sent', nodeId: id, text });
+              audit({ op: 'chat_input', nodeId: id, text: text.slice(0, 2000) });
             }
           } else if (chatSenders.has(target)) {
             Promise.resolve(chatSenders.get(target)(text)).catch(() => {});
             line({ type: 'chat_sent', nodeId: target, text });
+            audit({ op: 'chat_input', nodeId: target, text: text.slice(0, 2000) });
           }
         }
       } catch { /* linha inválida: ignora */ }
@@ -291,13 +309,18 @@ async function main() {
 
   const line = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
 
-  // ADR-012: trilha de auditoria ÚNICA por run — NDJSON no stdout + JSONL append-only.
-  // O runId é o do motor (run_started). Falha de escrita NUNCA derruba o run (warn 1× no stderr).
+  // ADR-012 / P3: trilha de auditoria ÚNICA tamper-evident (SHA-256) por run — NDJSON no stdout + JSONL append-only.
+  // runId é gerado antes de runGraph() e initAuditFile() roda ANTES de runGraph() (elimina race condition).
+  // Falha de escrita NUNCA derruba o run (warn 1× no stderr).
+  const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   let auditSeq = 0;
   let auditFile = null;
   let auditWarned = false;
+  let prevAuditHash = GENESIS_HASH;
   const audit = (ev) => {
-    const rec = { runId: rg?.runId ?? 'run', seq: ++auditSeq, ts: Date.now(), ...ev };
+    const baseRec = { runId, seq: ++auditSeq, ts: Date.now(), ...ev };
+    const rec = chainAuditEvent(baseRec, prevAuditHash);
+    prevAuditHash = rec.hash;
     line({ type: 'audit', ...rec });
     if (!auditFile) return;
     try {
@@ -314,7 +337,7 @@ async function main() {
     try {
       mkdirSync(dir, { recursive: true });
     } catch { /* o warn sai na primeira tentativa de escrita */ }
-    auditFile = join(dir, `${rg.runId}.jsonl`);
+    auditFile = join(dir, `${runId}.jsonl`);
   };
   // --run-seconds N: fonte contínua (mic/BlackHole) não "esgota" — o host pede stop programático
   const testMode = args.includes('--test-mode');
@@ -330,13 +353,13 @@ async function main() {
   const runSecondsArg = args.find((a) => a === '--run-seconds');
   const runSeconds = runSecondsArg ? Number(args[args.indexOf('--run-seconds') + 1]) : 0;
   if (testMode) line({ type: 'test_mode', enabled: true });
+  initAuditFile();
   try {
-    rg = await runGraph(flow, registry);
+    rg = await runGraph(flow, registry, { runId });
   } catch (err) {
     line({ type: 'flow_invalid', error: String(err?.message ?? err) });
     process.exit(1);
   }
-  initAuditFile();
   // fase 3: métricas por nó AO VIVO (1 Hz) — o snapshot final também vai no summary.
   const metricsTimer = setInterval(() => line({ type: 'metrics', snapshot: rg.snapshot() }), 1000);
   metricsTimer.unref?.();
@@ -347,7 +370,14 @@ async function main() {
   // do summary, senão o process.exit() final engole run_stopped/node_error.
   const eventsDrained = (async () => {
     try {
-      for await (const ev of rg.events()) line({ ...ev });
+      for await (const ev of rg.events()) {
+        line({ ...ev });
+        if (ev.type === 'run_started') {
+          audit({ op: 'run_started', nodeId: 'runner' });
+        } else if (ev.type === 'run_stopped') {
+          audit({ op: 'run_stopped', nodeId: 'runner', reason: ev.reason });
+        }
+      }
     } catch { /* stop encerra o iterador */ }
   })();
   const summary = await rg.done.catch((e) => ({ error: String(e?.message ?? e) }));

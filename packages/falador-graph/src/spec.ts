@@ -54,6 +54,7 @@ export interface ValidatedFlow {
 
 const ID_RE = /^[A-Za-z0-9_-]+$/;
 const OVERFLOWS = ['drop_oldest', 'drop_newest', 'block'] as const;
+const PROVIDER_PORT_TYPES = new Set<PortType>(['tool', 'decider', 'gate', 'validator']);
 
 function portOf(def: NodeTypeDef, name: string, dir: 'in' | 'out', params?: Record<string, unknown>): PortDecl | null {
   if (dir === 'out' && def.outputsFor) {
@@ -175,7 +176,8 @@ export function validateFlow(raw: FlowSpec, registry: Map<string, NodeTypeDef>):
     outEdges.get(fromNode)!.push(ve);
   }
 
-  // V2: in-degree <= 1 por (nó, porta), exceto portas do tipo 'tool' (ADR-008)
+  // V2: in-degree <= 1 por (nó, porta), exceto portas do tipo 'tool' (ADR-008).
+  // Portas de capability ('decider', 'gate', 'validator') mantêm in-degree <= 1.
   const inEdges = new Map<string, ValidatedEdge[]>();
   for (const e of edges) {
     const key = `${e.toNode}.${e.toPort}`;
@@ -190,15 +192,17 @@ export function validateFlow(raw: FlowSpec, registry: Map<string, NodeTypeDef>):
   for (const n of nodes.values()) {
     const hasIn = edges.some((e) => e.toNode === n.id);
     const hasOut = edges.some((e) => e.fromNode === n.id);
-    const hasToolOut = edges.some((e) => e.fromNode === n.id && e.portType === 'tool');
-    const isToolOnlyNode = n.def.outputs.length > 0 && n.def.outputs.every((p) => p.type === 'tool');
-    if (!hasIn && !n.def.sourceOnly && !n.def.sink && !hasToolOut && !isToolOnlyNode) {
+    const hasProviderOut = edges.some((e) => e.fromNode === n.id && PROVIDER_PORT_TYPES.has(e.portType));
+    const resolvedOutputs = n.def.outputsFor ? n.def.outputsFor(n.params) : n.def.outputs;
+    const isProviderOnlyNode =
+      resolvedOutputs.length > 0 && resolvedOutputs.every((p) => PROVIDER_PORT_TYPES.has(p.type));
+    if (!hasIn && !n.def.sourceOnly && !n.def.sink && !hasProviderOut && !isProviderOnlyNode) {
       throw new GraphError('DISCONNECTED_NODE', `nodes[${n.id}]`, 'nó sem entrada: declare sourceOnly (ou é um sink?)');
     }
     for (const p of n.def.outputs) {
       const required = p.required !== false;
       const used = edges.some((e) => e.fromNode === n.id && e.fromPort === p.name);
-      if (required && !used) {
+      if (required && !used && !hasProviderOut) {
         throw new GraphError('DEAD_OUTPUT_PORT', `nodes[${n.id}].${p.name}`, 'porta de saída required sem edge (marque required: false se for opcional)');
       }
     }
