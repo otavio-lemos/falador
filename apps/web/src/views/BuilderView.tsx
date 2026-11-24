@@ -6,7 +6,6 @@ import { Checkmark, Close, Play } from '@carbon/icons-react';
 import { useNodesState, useEdgesState, addEdge, type Edge, type Connection } from '@xyflow/react';
 import { Palette } from '../components/Palette';
 import { FlowCanvas } from '../components/FlowCanvas';
-import { LogsPanel } from '../components/LogsPanel';
 import { fetchFlow, saveFlow, type Catalog, type Flow, type ServiceStatusMap } from '../api';
 import { flowToRf, rfToFlow, newNodeId, type FNode } from '../flow-utils';
 import { NODE_META, accentOf } from '../data';
@@ -145,7 +144,7 @@ export function BuilderView({
   }, [buildFlow, doSave, registerActions]);
 
   // feedback real de execução no builder (erros reais, gates, passos de agente, chat e collect)
-  // — logs informativos/warn ficam exclusivamente no LogsPanel abaixo.
+  // — Logs/Auditoria ficam exclusivamente no Runner (LiveView), não no Builder.
   const errEv = [...runner.events].reverse().find((e) => {
     if (e.type === 'flow_invalid') return true;
     if (e.type !== 'node_error') return false;
@@ -174,11 +173,6 @@ export function BuilderView({
     || finalCaptions.length > 0
     || (lastCaption && !lastCaption.final)
     || collectEntries.length > 0,
-  );
-
-  const flowNodes = useMemo(
-    () => nodes.map((n) => ({ id: n.id, type: n.data.type, params: n.data.params, enabled: n.data.enabled })),
-    [nodes],
   );
 
   return (
@@ -275,7 +269,6 @@ export function BuilderView({
           )}
         </div>
       )}
-      <LogsPanel flowNodes={flowNodes} onServiceStatus={onServiceStatus} audit={runner.audit} />
     </div>
   );
 }
