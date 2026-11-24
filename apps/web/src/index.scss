@@ -970,18 +970,9 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 // nem colados ao carimbo de hora (pedido do dono 2026-11-24).
 .live-chat-gate-wrapper {
   display: flex;
-  gap: $spacing-03;
+  gap: $spacing-02;
   align-items: flex-start;
   width: 100%;
-}
-.live-chat-gate-actions-outside {
-  flex-shrink: 0;
-  width: 230px;
-  display: flex;
-  flex-direction: column;
-  gap: $spacing-02;
-  margin-top: 0;
-  .cds--btn { width: 100%; max-width: none; min-height: 38px; padding-block: 5px; font-size: 13px; }
 }
 
 // Tags (Tool / Host / Risco) ficam dentro do corpo do card, abaixo do cabeçalho,
@@ -1104,6 +1095,13 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   display: block;
   overflow-x: hidden;
   overflow-y: auto;
+}
+.logs-panel-body--terminal {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  height: 100%;
 }
 .logs-panel-title {
   @include type-style('label-01');

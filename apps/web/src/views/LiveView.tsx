@@ -463,9 +463,8 @@ export function LiveView({
   const consoleWinRef = useRef<Window | null>(null);
   const consoleBcRef = useRef<BroadcastChannel | null>(null);
   const openConsole = () => {
-    const w = consoleWinRef.current;
-    if (w && !w.closed) { w.focus(); return; }
-    consoleWinRef.current = window.open('/console', 'falador-console', 'popup,width=640,height=340,scrollbars=yes,resizable=yes');
+    // Aciona a aba Terminal embutida no painel inferior da tela (sem popup solto)
+    window.dispatchEvent(new CustomEvent('falador-open-terminal'));
   };
 
   // A janela do Console aprova gates; a conversa espelha o histórico sem reenviar o POST.
@@ -972,13 +971,14 @@ export function LiveView({
                     </div>
                   )}
                   {(gateInfo.fields ?? []).length > 0 ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                       {(gateInfo.fields ?? []).map((f) => (
                         f.type === 'select' ? (
                           <Select
                             key={f.name}
                             id={`field-${f.name}`}
                             labelText={f.label}
+                            size="sm"
                             value={fieldValues[f.name] ?? ''}
                             onChange={(e) => setFieldValues((v) => ({ ...v, [f.name]: e.target.value }))}
                           >
@@ -991,6 +991,7 @@ export function LiveView({
                             id={`field-${f.name}`}
                             labelText={f.label}
                             type={f.type === 'password' ? 'password' : 'text'}
+                            size="sm"
                             placeholder={f.placeholder ?? ''}
                             value={fieldValues[f.name] ?? ''}
                             onChange={(e) => setFieldValues((v) => ({ ...v, [f.name]: e.target.value }))}
@@ -999,79 +1000,80 @@ export function LiveView({
                       ))}
                     </div>
                   ) : (
-                    <TextArea
-                      id="ask-user-gate-input"
-                      labelText=""
-                      rows={2}
-                      className="cmd-gate-textarea"
-                      placeholder="Digite sua resposta para o agente continuar..."
-                      value={cmdDraft}
-                      onChange={(e) => setCmdDraft(e.target.value)}
-                    />
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end' }}>
+                      <TextInput
+                        id="ask-user-gate-input"
+                        labelText=""
+                        size="sm"
+                        placeholder="Digite sua resposta para o agente continuar..."
+                        value={cmdDraft}
+                        onChange={(e) => setCmdDraft(e.target.value)}
+                        style={{ flex: 1 }}
+                      />
+                      <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
+                        Responder
+                      </Button>
+                    </div>
                   )}
                 </>
               ) : gateInfo.isCommand ? (
                 <>
                   {gateInfo.reason && <p className="live-chat-entry-text">{gateInfo.reason}</p>}
-                  <TextArea
-                    id="cmd-gate-input"
-                    labelText="Comando (editável antes da execução)"
-                    rows={2}
-                    className="cmd-gate-textarea"
-                    value={cmdDraft}
-                    onChange={(e) => setCmdDraft(e.target.value)}
-                  />
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end' }}>
+                    <TextArea
+                      id="cmd-gate-input"
+                      labelText="Comando (editável antes da execução)"
+                      rows={2}
+                      className="cmd-gate-textarea"
+                      value={cmdDraft}
+                      onChange={(e) => setCmdDraft(e.target.value)}
+                      style={{ flex: 1 }}
+                    />
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                      <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
+                        Aprovar e Executar
+                      </Button>
+                      <Button kind="tertiary" size="sm" renderIcon={Edit} onClick={() => document.getElementById('cmd-gate-input')?.focus()}>
+                        Editar
+                      </Button>
+                      <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>
+                        Rejeitar
+                      </Button>
+                    </div>
+                  </div>
                 </>
               ) : editing ? (
-                <TextArea
-                  id="edit-chat-suggestion"
-                  labelText="Editar sugestão"
-                  hideLabel
-                  rows={2}
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                />
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end' }}>
+                  <TextArea
+                    id="edit-chat-suggestion"
+                    labelText="Editar sugestão"
+                    hideLabel
+                    rows={2}
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    style={{ flex: 1 }}
+                  />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                    <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={approve}>Enviar editada</Button>
+                    <Button kind="ghost" size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
+                  </div>
+                </div>
               ) : (
-                <div className="live-chat-entry-text">{suggestion}</div>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end' }}>
+                  <div className="live-chat-entry-text" style={{ flex: 1 }}>{suggestion}</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                    <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
+                      {hasTTS ? 'Aprovar & Falar' : 'Aprovar'}
+                    </Button>
+                    <Button kind="tertiary" size="sm" renderIcon={Edit} onClick={startEdit}>Editar</Button>
+                    {hasLLM && <Button kind="tertiary" size="sm" renderIcon={Renew} onClick={onRegenerate}>Regerar</Button>}
+                    <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>Rejeitar</Button>
+                  </div>
+                </div>
               )}
             </>
           )}
         />
-        <div className="live-chat-gate-actions-outside">
-          {gateInfo.isAskUser ? (
-            <>
-              <Button kind="primary" size="lg" renderIcon={Checkmark} className="approve-btn" onClick={approve} style={{ width: '100%' }}>
-                Responder
-              </Button>
-            </>
-          ) : gateInfo.isCommand ? (
-            <>
-              <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
-                Aprovar e Executar
-              </Button>
-              <Button kind="tertiary" size="sm" renderIcon={Edit} onClick={() => document.getElementById('cmd-gate-input')?.focus()}>
-                Editar
-              </Button>
-              <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>
-                Rejeitar
-              </Button>
-            </>
-          ) : editing ? (
-            <>
-              <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={approve}>Enviar editada</Button>
-              <Button kind="ghost" size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
-            </>
-          ) : (
-            <>
-              <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
-                {hasTTS ? 'Aprovar & Falar' : 'Aprovar'}
-              </Button>
-              <Button kind="tertiary" size="sm" renderIcon={Edit} onClick={startEdit}>Editar</Button>
-              {hasLLM && <Button kind="tertiary" size="sm" renderIcon={Renew} onClick={onRegenerate}>Regerar</Button>}
-              <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>Rejeitar</Button>
-            </>
-          )}
-        </div>
       </div>
     </>
   ) : null;
@@ -1855,6 +1857,14 @@ export function LiveView({
         onOpenConsole={openConsole}
         audit={runner.audit}
         auditFocus={auditFocus}
+        executions={runner.executions}
+        gates={runner.gates}
+        onApproveGate={(g, text) => {
+          void gateAction(g.nodeId, text);
+        }}
+        onRejectGate={(g, reason) => {
+          void gateAction(g.nodeId, null, reason);
+        }}
       />
 
       <Modal
