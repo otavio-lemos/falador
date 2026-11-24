@@ -1215,9 +1215,24 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   position: relative;
   flex-shrink: 0;
 }
-// Reserva espaço à direita na lista de abas para a busca não sobrepor os rótulos.
+// Reserva espaço à direita para a busca não sobrepor os rótulos, e ESTICA as
+// sub-abas para ocuparem a largura toda (sem miolo vazio).
+.audit-bar .cds--tabs,
+.audit-bar .cds--tab--list {
+  inline-size: 100%;
+}
 .audit-bar .cds--tab--list {
   padding-inline-end: 272px;
+  display: flex;
+}
+.audit-bar .cds--tabs__nav-item {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  justify-content: center;
+  text-align: center;
+}
+.audit-bar .cds--tabs__nav-item--close--hidden {
+  flex: 0 0 0;
 }
 .audit-search {
   position: absolute;

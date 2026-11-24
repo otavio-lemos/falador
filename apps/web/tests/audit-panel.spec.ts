@@ -34,24 +34,5 @@ test('aba Todos (default) mostra eventos run_started e chat_input na Auditoria',
   await expect(auditPanel.getByText('Nenhuma decisão registrada.')).not.toBeVisible();
 });
 
-test('Expandir painel aumenta altura do LogsPanel e Restaurar altura retorna ao tamanho menor', async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 800 });
-  await page.getByRole('button', { name: 'Runner' }).click();
-
-  const logs = page.locator('.live2 .logs-panel');
-  await expect(logs).toBeVisible();
-  const initialBox = await logs.boundingBox();
-  expect(initialBox).not.toBeNull();
-  const initialHeight = initialBox!.height;
-
-  await logs.getByRole('button', { name: 'Expandir painel' }).click();
-  const expandedBox = await logs.boundingBox();
-  expect(expandedBox).not.toBeNull();
-  expect(expandedBox!.height).toBeGreaterThan(450);
-
-  await logs.getByRole('button', { name: 'Restaurar altura' }).click();
-  const restoredBox = await logs.boundingBox();
-  expect(restoredBox).not.toBeNull();
-  expect(restoredBox!.height).toBeLessThan(450);
-  expect(Math.abs(restoredBox!.height - initialHeight)).toBeLessThan(20);
-});
+// (teste do botão "Expandir painel" removido em 2026-11-24: a seta de expandir foi
+// removida por pedido do dono — o painel continua redimensionável pelo resizer.)
