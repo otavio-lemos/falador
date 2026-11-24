@@ -22,6 +22,7 @@ context/docs.json
 sessions/
 logs/exec-audit.jsonl
 logs/audit/
+packages/falador-cli/logs/
 
 # artefatos de teste da UI
 apps/web/playwright-report/

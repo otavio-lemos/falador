@@ -133,8 +133,9 @@ test('P3-N1: agent.tools usa decision.llm + human.approve + goal.validator expl�
     }
     const parsed = JSON.parse(body) as { model?: string };
     if (parsed.model === 'val-node-model') {
+      // Uma única saída de ferramenta: confiança 0.95 seria calibrada para 0.79 (abaixo do gate).
       res.end(JSON.stringify({
-        choices: [{ message: { role: 'assistant', content: '{"achieved":true,"confidence":0.95,"gaps":[],"nextActions":[]}' } }],
+        choices: [{ message: { role: 'assistant', content: '{"achieved":true,"confidence":0.8,"gaps":[],"nextActions":[]}' } }],
       }));
       return;
     }

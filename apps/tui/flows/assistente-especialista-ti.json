@@ -39,7 +39,7 @@
       "type": "agent.tools",
       "params": {
         "baseUrl": "http://127.0.0.1:8080",
-        "model": "mlx-community--Qwen3-Coder-30B-A3B-Instruct-4bit",
+        "model": "Qwen3-Coder-30B-A3B-Instruct-4bit",
         "enableThinking": false,
         "maxSteps": 50,
         "approvalPolicy": "always",
@@ -85,7 +85,7 @@
       "type": "goal.validator",
       "params": {
         "baseUrl": "http://127.0.0.1:8080",
-        "model": "LiquidAI--LFM3-1.7B-MLX-4bit",
+        "model": "LFM3-1.7B-MLX-4bit",
         "confidenceThreshold": 0.8
       }
     },

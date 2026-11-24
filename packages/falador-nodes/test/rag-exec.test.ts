@@ -877,10 +877,17 @@ describe('ADR-007 Fase B — exec.command (validador adversarial + execução se
       if (!res.ok) assert.equal(res.code, 'EXEC_POLICY_DENIED');
     }
 
-    // Equivalentes não-interativos passam
-    for (const cmd of ['docker exec app ls -la', 'kubectl exec pod -- uptime', 'tail -n 20 /var/log/syslog', 'journalctl -u nginx -n 50']) {
+    // Equivalentes não-interativos de leitura passam
+    for (const cmd of ['tail -n 20 /var/log/syslog', 'journalctl -u nginx -n 50']) {
       const res = validateCommand(cmd, policy);
       assert.equal(res.ok, true, `Deveria permitir comando não-interativo: ${cmd}`);
+    }
+
+    // exec é caminho mutante: exige aprovação mesmo sem flags interativas (argv-risk)
+    for (const cmd of ['docker exec app ls -la', 'kubectl exec pod -- uptime']) {
+      const res = validateCommand(cmd, policy);
+      assert.equal(res.ok, false, `Deveria exigir aprovação: ${cmd}`);
+      if (!res.ok) assert.match(res.reason, /^MUTATING_PATH_REQUIRES_APPROVAL: (docker|kubectl) exec/);
     }
   });
 

@@ -53,6 +53,64 @@ test('validateCommand: aprovação libera prefixo, destrutivo e metacaracteres',
   assert.equal(validateCommand('echo oi && ls', policy, { approved: true }).ok, true);
 });
 
+const mutatingPolicy: ExecPolicy = {
+  transport: 'local',
+  mode: 'allowlist',
+  allowedPrefixes: ['systemctl restart sshd', 'systemctl status sshd'],
+  allowedHosts: [],
+};
+
+test('comando mutante em allowedPrefixes sem aprovação exige gate', () => {
+  const result = validateCommand('systemctl restart sshd', mutatingPolicy);
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.reason, /^MUTATING_PATH_REQUIRES_APPROVAL: systemctl restart/);
+});
+
+test('mesmo comando mutante com approved:true passa', () => {
+  assert.equal(validateCommand('systemctl restart sshd', mutatingPolicy, { approved: true }).ok, true);
+});
+
+test('comando de leitura em allowedPrefixes passa sem gate', () => {
+  const result = validateCommand('systemctl status sshd', mutatingPolicy);
+  assert.equal(result.ok, true);
+});
+
+test('comando mutante na allowlist abre gate e aprovado executa', async () => {
+  let asked = 0;
+  const ctl = new AbortController();
+  const ctx = {
+    id: 'exec1',
+    params: {
+      transport: 'local',
+      mode: 'allowlist',
+      dryRun: true,
+      allowedPrefixes: ['systemctl restart sshd'],
+      auditLogPath: join(tmpdir(), 'falador-exec-mutating-audit.jsonl'),
+    },
+    bindings: {
+      __gate: {
+        request: async (text: string) => {
+          asked += 1;
+          assert.match(text, /Aprovar execução desta vez/);
+          return 'systemctl restart sshd';
+        },
+      },
+    },
+    signal: ctl.signal,
+    log: () => {},
+    metrics: { counter: () => {}, timer: () => {} },
+    emit: async () => {},
+  };
+  const rt = execCommand.create(ctx as never);
+  const res = await rt.toolProvider!.invoke(
+    'exec_local',
+    { command: 'systemctl restart sshd' },
+    { signal: new AbortController().signal, runId: 'r1', callerNodeId: 'a1' },
+  );
+  assert.equal(asked, 1);
+  assert.equal(res.ok, true);
+});
+
 test('SSH: allowedHosts vazio também é pergunta, não proibição', () => {
   const ssh: ExecPolicy = { ...policy, transport: 'ssh', allowedHosts: [] };
   assert.equal(validateCommand({ command: 'uptime', host: 'srv.example.com' }, ssh).ok, false);

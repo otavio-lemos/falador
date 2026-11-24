@@ -16,6 +16,7 @@ import {
 } from '../../falador-graph/src/index.ts';
 import { payloadText } from './sse.ts';
 import { createLineRedactor, redactSecrets } from './redact.ts';
+import { classifyArgvRisk } from './argv-risk.ts';
 
 export const DEFAULT_READONLY_PREFIXES: readonly string[] = [
   'uname',
@@ -629,6 +630,17 @@ export function validateCommand(
       }
     }
   }
+
+  // Caminho mutante (argv0 + subcomando) exige aprovação mesmo se o prefixo está na allowlist.
+  const argvRisk = classifyArgvRisk(argv);
+  if (argvRisk.risk === 'mutating') {
+    return {
+      ok: false,
+      code: 'EXEC_POLICY_DENIED',
+      reason: `MUTATING_PATH_REQUIRES_APPROVAL: ${argvRisk.path}`,
+      command,
+    };
+  }
   }
 
   // 4. Allowlist de prefixo com fronteira de palavra (approved = aprovação humana desta exec)
@@ -1153,26 +1165,26 @@ export const execCommand: NodeTypeDef = {
       let validation = validateCommand(input, callPolicy);
       // Toda recusa de conteúdo/host vira PERGUNTA (nunca proibição permanente).
       // Exceção: comando vazio/sem host não existe para executar — é erro de entrada.
+      const isHostMissing = !validation.ok && validation.reason.startsWith('Host SSH não informado');
       const needsHumanApproval =
         !validation.ok &&
         gateHolder !== undefined &&
-        Boolean(validation.command) &&
-        !validation.reason.startsWith('Host SSH não informado');
+        Boolean(validation.command);
       if (needsHumanApproval && !validation.ok) {
         const deniedCommand = validation.command ?? String(payloadText(input)?.text ?? '');
+        const prompt = isHostMissing
+          ? `Host SSH não informado. Digite o host (ex: 192.168.64.7) ou o comando completo com host para executar:\n${deniedCommand}`
+          : `Comando fora da allowlist. Aprovar execução desta vez?\n${deniedCommand}`;
         let approvedText: string | null = null;
         try {
-          approvedText = await gateHolder.request(
-            `Comando fora da allowlist. Aprovar execução desta vez?\n${deniedCommand}`,
-            {
-              tool: resolvedToolName,
-              kind: 'approve',
-              command: deniedCommand,
-              host: preliminaryHost || 'local',
-              transport,
-              reason: 'Aprovação válida apenas para esta execução',
-            },
-          );
+          approvedText = await gateHolder.request(prompt, {
+            tool: resolvedToolName,
+            kind: 'approve',
+            command: deniedCommand,
+            host: preliminaryHost || '',
+            transport,
+            reason: 'Aprovação válida apenas para esta execução',
+          });
         } catch {
           approvedText = null;
         }
@@ -1185,7 +1197,16 @@ export const execCommand: NodeTypeDef = {
           };
         } else {
           const fromGate = extractCommand(approvedText);
-          validation = validateCommand(fromGate.ok ? approvedText : input, callPolicy, { approved: true });
+          let merged: unknown = approvedText;
+          if (!fromGate.ok || !fromGate.command) {
+            const hostCandidate = String(approvedText).trim();
+            if (hostCandidate && !hostCandidate.includes(' ') && !hostCandidate.startsWith('{')) {
+              merged = { command: deniedCommand, host: hostCandidate };
+            } else {
+              merged = input;
+            }
+          }
+          validation = validateCommand(merged, callPolicy, { approved: true });
           ctx.metrics.counter('exec.command.approved', 1);
         }
       }
