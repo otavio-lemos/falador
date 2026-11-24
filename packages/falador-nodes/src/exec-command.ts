@@ -619,7 +619,7 @@ export function validateCommand(input: unknown, policy: ExecPolicy): ValidateRes
     }
   }
 
-  // 4. Allowlist de prefixo com fronteira de palavra
+  // 4. Allowlist de prefixo com fronteira de palavra (bypass: requireAllowlist=false)
   const normalized = command.replace(/\s+/g, ' ').trim();
   const prefixes = Array.isArray(policy.allowedPrefixes) ? policy.allowedPrefixes : [];
   const prefixMatched = prefixes.some((rawPrefix) => {
@@ -628,7 +628,7 @@ export function validateCommand(input: unknown, policy: ExecPolicy): ValidateRes
     if (!p) return false;
     return normalized === p || normalized.startsWith(`${p} `);
   });
-  if (!prefixMatched) {
+  if (!prefixMatched && policy.requireAllowlist !== false) {
     return {
       ok: false,
       code: 'EXEC_POLICY_DENIED',
@@ -840,6 +840,7 @@ export const execCommand: NodeTypeDef = {
   paramNames: [
     'transport',
     'mode',
+    'requireAllowlist',
     'dryRun',
     'allowedPrefixes',
     'allowedHosts',
