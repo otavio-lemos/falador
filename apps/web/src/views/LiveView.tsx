@@ -433,9 +433,36 @@ export function LiveView({
   const [uploadTags, setUploadTags] = useState('');
   const [exportOpen, setExportOpen] = useState(false);
   const [execOpen, setExecOpen] = useState(false);
+  const [consoleWin, setConsoleWin] = useState<Window | null>(null);
   const [execTab, setExecTab] = useState(0);
   const [streamFilter, setStreamFilter] = useState<'all' | 'stdout' | 'stderr'>('all');
   const [gateHistory, setGateHistory] = useState<GateHistoryItem[]>([]);
+  // Popup do browser dedicado ao Console do Agente: abre quando o modal de execuções abre.
+  useEffect(() => {
+    if (!execOpen) {
+      try { consoleWin?.close(); } catch { /* já fechado */ }
+      setConsoleWin(null);
+      return;
+    }
+    const w = window.open('', 'falador-console', 'width=900,height=700,scrollbars=yes,resizable=yes');
+    if (!w) return;
+    w.document.title = 'Falador Console';
+    setConsoleWin(w);
+    const refresh = () => {
+      const items = runner.executions
+        .map((e) => {
+          const cmd = String(e.command ?? '').slice(0, 140).replace(/</g, '&lt;');
+          const status = e.status === 'running' ? 'Em execução' : e.ok === false ? 'Falhou' : e.exitCode != null ? `Saída: ${e.exitCode}` : 'Concluído';
+          return `<li>${e.tool || 'exec'} · ${e.host || 'local'} :: <b>${cmd}</b> — ${status}</li>`;
+        })
+        .join('');
+      w.document.body.innerHTML = `<h3 style="font-family:sans-serif;font-size:16px">Falador Console</h3><ul style="font-family:monospace;font-size:12px">${items || '<li>Nenhuma execução registrada.</li>'}</ul>`;
+    };
+    refresh();
+    const t = setInterval(refresh, 500);
+    return () => { clearInterval(t); };
+  }, [execOpen, runner.executions, consoleWin]);
+
   const wasRunningRef = useRef(runner.running);
   useEffect(() => {
     if (!wasRunningRef.current && runner.running) {
