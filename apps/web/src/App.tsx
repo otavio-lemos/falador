@@ -116,8 +116,18 @@ export function App() {
   useEffect(() => {
     fetchCatalog().then(setCatalog).catch(() => setToast('Falha ao carregar catálogo'));
     fetchFlows().then((fs) => {
-      setFlows(fs);
-      setCurrentFlow((cur) => cur || (fs.find((f) => f.name === 'especialista-ti') ?? fs[0])?.name || '');
+      const defaultName = (fs.find((f) => f.name === 'especialista-ti') ?? fs[0])?.name;
+      setCurrentFlow(defaultName || '');
+      if (defaultName) {
+        fetchFlow(defaultName).then((f) => {
+          const initialMode = readSavedInputMode() ?? modeFromFlow(f);
+          const initialOut = readSavedOutputMode() ?? outputModeFromFlow(f);
+          if (initialMode !== 'chat') lastVoiceModeRef.current = initialMode;
+          setInputMode(initialMode);
+          setOutputMode(initialOut);
+          setLiveFlow(applyOutputMode(applyInputMode(f, initialMode), initialOut));
+        }).catch(() => setToast('Falha ao carregar fluxo inicial'));
+      }
     }).catch(() => setToast('Falha ao listar flows'));
     fetchModels().then(setModels).catch(() => {});
     fetchApps().then(setApps).catch(() => {});
