@@ -130,6 +130,17 @@ function mockToolNode(type: string, toolName: string, result: Partial<ToolCallRe
   };
 }
 
+/** Duas saídas de ferramenta reais: evidência mínima para o avaliador não ser recalibrado. */
+function evidenceCalls() {
+  return [
+    toolCallResp('exec_local', { command: 'df -h' }),
+    toolCallResp('exec_local', { command: 'uptime' }),
+  ];
+}
+function evidenceTool(): NodeTypeDef[] {
+  return [mockToolNode('test.evidence', 'exec_local', { ok: true, output: 'df -h: 45%\nup 10 days', exitCode: 0 })];
+}
+
 function manualSource(): { def: NodeTypeDef; emit: (text: string) => Promise<void>; interrupt: () => void } {
   let emitFn: ((port: string, payload: unknown) => Promise<void>) | null = null;
   let ctrlFn: ((port: string, c: ControlMsg) => void) | null = null;
@@ -218,11 +229,11 @@ async function harness(o: {
 
 test('update_plan está nas tools enviadas ao LLM, grava plano, emite audit plan e NÃO abre gate', async () => {
   const llm = await mockLlm({
-    executor: [toolCallResp('update_plan', { items: [PLAN_VERIFIED] }), finalResp('concluído')],
+    executor: [toolCallResp('update_plan', { items: [PLAN_VERIFIED] }), ...evidenceCalls(), finalResp('concluído')],
     validator: [VALID_VALIDATION],
   });
   const gate = makeGate(['aprovo']);
-  const h = await harness({ llm, gate, agentParams: { validatorModel: 'val-model' } });
+  const h = await harness({ llm, gate, tools: evidenceTool(), agentParams: { validatorModel: 'val-model', approvalPolicy: 'never' } });
   try {
     await h.src.emit('objetivo: verificar disco');
     await waitFor(() => h.received.length > 0);
@@ -363,11 +374,11 @@ test('final com plano pendente: pendências realimentam o LLM e não conclui', a
 
 test('conclusão validada: avaliador achieved + gate final aprovado ⇒ goalAchieved + audits', async () => {
   const llm = await mockLlm({
-    executor: [toolCallResp('update_plan', { items: [PLAN_VERIFIED] }), finalResp('OBJETIVO CONCLUÍDO')],
+    executor: [toolCallResp('update_plan', { items: [PLAN_VERIFIED] }), ...evidenceCalls(), finalResp('OBJETIVO CONCLUÍDO')],
     validator: [VALID_VALIDATION],
   });
   const gate = makeGate(['aprovo']);
-  const h = await harness({ llm, gate, agentParams: { validatorModel: 'val-model' } });
+  const h = await harness({ llm, gate, tools: evidenceTool(), agentParams: { validatorModel: 'val-model', approvalPolicy: 'never' } });
   try {
     await h.src.emit('objetivo: verificar disco');
     await waitFor(() => h.received.length > 0);
@@ -390,11 +401,11 @@ test('conclusão validada: avaliador achieved + gate final aprovado ⇒ goalAchi
 
 test('gate final rejeitado: não conclui e a rejeição realimenta o loop', async () => {
   const llm = await mockLlm({
-    executor: [toolCallResp('update_plan', { items: [PLAN_VERIFIED] }), finalResp('concluído')],
+    executor: [toolCallResp('update_plan', { items: [PLAN_VERIFIED] }), ...evidenceCalls(), finalResp('concluído')],
     validator: [VALID_VALIDATION],
   });
   const gate = makeGate([null]);
-  const h = await harness({ llm, gate, agentParams: { validatorModel: 'val-model', maxSteps: 2 } });
+  const h = await harness({ llm, gate, tools: evidenceTool(), agentParams: { validatorModel: 'val-model', maxSteps: 6, approvalPolicy: 'never' } });
   try {
     await h.src.emit('objetivo: x');
     await waitFor(() => h.received.length > 0);
@@ -442,11 +453,11 @@ test('sem validatorModel e sem plano: caminho legado inalterado (1 chamada, sem 
 
 test('interrupt durante o gate final não pendura o run', async () => {
   const llm = await mockLlm({
-    executor: [toolCallResp('update_plan', { items: [PLAN_VERIFIED] }), finalResp('concluído')],
+    executor: [toolCallResp('update_plan', { items: [PLAN_VERIFIED] }), ...evidenceCalls(), finalResp('concluído')],
     validator: [VALID_VALIDATION],
   });
   const gate = makeGate([], { hang: true });
-  const h = await harness({ llm, gate, agentParams: { validatorModel: 'val-model' } });
+  const h = await harness({ llm, gate, tools: evidenceTool(), agentParams: { validatorModel: 'val-model', approvalPolicy: 'never' } });
   try {
     await h.src.emit('objetivo: x');
     await waitFor(() => gate.requests.length > 0);
@@ -458,13 +469,13 @@ test('interrupt durante o gate final não pendura o run', async () => {
 test('multi-turn: segundo turno após conclusão não contamina goal/plano/evidência do primeiro', async () => {
   const llm = await mockLlm({
     executor: [
-      toolCallResp('update_plan', { items: [PLAN_VERIFIED] }), finalResp('CONCLUÍDO 1'),
-      toolCallResp('update_plan', { items: [{ ...PLAN_VERIFIED, id: '2', description: 'Checar memória', verification: 'free -h' }] }), finalResp('CONCLUÍDO 2'),
+      toolCallResp('update_plan', { items: [PLAN_VERIFIED] }), ...evidenceCalls(), finalResp('CONCLUÍDO 1'),
+      toolCallResp('update_plan', { items: [{ ...PLAN_VERIFIED, id: '2', description: 'Checar memória', verification: 'free -h' }] }), ...evidenceCalls(), finalResp('CONCLUÍDO 2'),
     ],
     validator: [VALID_VALIDATION, VALID_VALIDATION],
   });
   const gate = makeGate(['', '']);
-  const h = await harness({ llm, gate, agentParams: { validatorModel: 'val-model' } });
+  const h = await harness({ llm, gate, tools: evidenceTool(), agentParams: { validatorModel: 'val-model', approvalPolicy: 'never' } });
   try {
     await h.src.emit('objetivo A: verificar disco');
     await waitFor(() => h.audits.some((a) => a.op === 'agent_final' && a.goalAchieved === true));
@@ -539,12 +550,13 @@ test('validatorModel com plan === null exige update_plan e mantém alternância 
     executor: [
       finalResp('tentei concluir sem plano'),
       toolCallResp('update_plan', { items: [PLAN_VERIFIED] }),
+      ...evidenceCalls(),
       finalResp('agora com plano'),
     ],
     validator: [VALID_VALIDATION],
   });
   const gate = makeGate(['aprovo']);
-  const h = await harness({ llm, gate, agentParams: { validatorModel: 'val-model', maxSteps: 5 } });
+  const h = await harness({ llm, gate, tools: evidenceTool(), agentParams: { validatorModel: 'val-model', maxSteps: 8, approvalPolicy: 'never' } });
   try {
     await h.src.emit('objetivo com plano obrigatorio');
     await waitFor(() => h.received.length > 0);

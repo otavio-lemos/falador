@@ -42,6 +42,7 @@ export {
   type ValidateResult,
   type AuditEntry,
 } from './exec-command.ts';
+export { classifyArgvRisk, type ArgvRisk, type ArgvRiskResult } from './argv-risk.ts';
 export {
   chunkDocument,
   searchChunks,

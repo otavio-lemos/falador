@@ -44,7 +44,8 @@ Responda APENAS com JSON:
   "nextActions": string[]
 }
 Seja rigoroso: achieved=true só se a evidência PROVAR conclusão completa de TODOS os itens do plano (se houver).
-Evidência ausente, ambígua ou só parcial ⇒ achieved=false com gaps concretos.`;
+Evidência ausente, ambígua ou só parcial ⇒ achieved=false com gaps concretos.
+Evidência vazia ou plano incompleto ⇒ achieved=false, mesmo que você discorde.`;
 
 function tryParseValidation(text: string): GoalValidation | null {
   const trimmed = text.trim();
@@ -75,6 +76,31 @@ function tryParseValidation(text: string): GoalValidation | null {
 
 function failClosed(reason: string): GoalValidation {
   return { achieved: false, confidence: 0, gaps: [reason], nextActions: ['Coletar evidência real e tentar novamente'] };
+}
+
+/** Calibra deterministicamente a confiança do modelo contra evidência/plano reais (sem LLM extra). */
+export function applyEvidenceCalibration(
+  result: GoalValidation,
+  o: { evidence: string[]; plan?: PlanItem[] },
+): GoalValidation {
+  let calibrated = result;
+  let gaps = result.gaps;
+  const addGap = (gap: string) => {
+    if (!gaps.includes(gap)) gaps = [...gaps, gap];
+  };
+  if (o.evidence.length === 0 && calibrated.achieved) {
+    calibrated = { ...calibrated, achieved: false, confidence: Math.min(calibrated.confidence, 0.35) };
+    addGap('Nenhuma evidência real coletada');
+  }
+  if (o.plan?.some((item) => item.status !== 'verified') && result.achieved) {
+    calibrated = { ...calibrated, achieved: false };
+    addGap('Plano incompleto: itens pendentes/falhados');
+  }
+  if (calibrated.confidence >= 0.9 && o.evidence.length < 2) {
+    calibrated = { ...calibrated, confidence: 0.79 };
+    addGap('Menos de duas fontes de evidência citadas');
+  }
+  return gaps === result.gaps ? calibrated : { ...calibrated, gaps };
 }
 
 /** Corta a evidência pelo budget mantendo a CAUDA (evidência mais recente é a mais relevante). */
@@ -129,7 +155,9 @@ export async function validateGoal(o: {
   } catch (e) {
     return failClosed(`Erro no validador: ${(e as Error)?.message ?? String(e)}`);
   }
-  return tryParseValidation(content) ?? failClosed('Validador não retornou JSON válido');
+  const parsed = tryParseValidation(content) ?? failClosed('Validador não retornou JSON válido');
+  // Único ponto de calibração: cobre o nó E o agent.tools (validatorProvider).
+  return applyEvidenceCalibration(parsed, { evidence: o.evidence, plan: o.plan });
 }
 
 export const goalValidator: NodeTypeDef = {

@@ -4,7 +4,8 @@ import test from 'node:test';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createRegistry, runGraph, type FlowSpec, type NodeTypeDef } from '../../falador-graph/src/index.ts';
-import { validateGoal, goalValidator } from '../src/goal-validator.ts';
+import { validateGoal, goalValidator, type GoalValidation } from '../src/goal-validator.ts';
+import type { PlanItem } from '../src/audit.ts';
 
 function httpServer(
   handler: (req: http.IncomingMessage, body: string, res: http.ServerResponse) => void,
@@ -29,6 +30,19 @@ function chatResponse(content: string) {
   return JSON.stringify({ choices: [{ message: { role: 'assistant', content } }] });
 }
 
+async function validateWith(
+  modelReply: string,
+  o: { evidence: string[]; plan?: PlanItem[] },
+): Promise<GoalValidation> {
+  const srv = await httpServer((_req, _body, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(chatResponse(modelReply));
+  });
+  try {
+    return await validateGoal({ baseUrl: srv.url, model: 'm', goal: 'g', ...o, signal: AbortSignal.timeout(5000) });
+  } finally { await srv.close(); }
+}
+
 const VALID = '{"achieved":true,"confidence":0.9,"gaps":[],"nextActions":["nada"]}';
 
 test('validateGoal: JSON válido retorna o resultado parseado', async () => {
@@ -39,7 +53,7 @@ test('validateGoal: JSON válido retorna o resultado parseado', async () => {
   try {
     const r = await validateGoal({
       baseUrl: srv.url, model: 'm', goal: 'subir o serviço',
-      evidence: ['systemctl: active'], signal: AbortSignal.timeout(5000),
+      evidence: ['systemctl: active', 'curl: 200'], signal: AbortSignal.timeout(5000),
     });
     assert.equal(r.achieved, true);
     assert.equal(r.confidence, 0.9);
@@ -80,7 +94,7 @@ test('validateGoal: JSON em code-fence é parseado', async () => {
   });
   try {
     const r = await validateGoal({
-      baseUrl: srv.url, model: 'm', goal: 'g', evidence: [], signal: AbortSignal.timeout(5000),
+      baseUrl: srv.url, model: 'm', goal: 'g', evidence: ['e1', 'e2'], signal: AbortSignal.timeout(5000),
     });
     assert.equal(r.achieved, true);
   } finally { await srv.close(); }
@@ -149,6 +163,62 @@ test('validateGoal: plano entra no prompt do usuário', async () => {
   } finally { await srv.close(); }
 });
 
+test('calibração: achieved=true 0.97 sem evidência cai para <=0.35 e achieved=false', async () => {
+  const r = await validateWith('{"achieved":true,"confidence":0.97,"gaps":[],"nextActions":["nada"]}', { evidence: [] });
+  assert.equal(r.achieved, false);
+  assert.ok(r.confidence <= 0.35, `confidence ${r.confidence}`);
+  assert.ok(r.gaps.includes('Nenhuma evidência real coletada'));
+  assert.deepEqual(r.nextActions, ['nada']);
+});
+
+test('calibração: plano com item pending derruba achieved mesmo com evidência', async () => {
+  const plan: PlanItem[] = [
+    { id: '1', description: 'checar disco', verification: 'df -h', status: 'verified', evidence: '45%' },
+    { id: '2', description: 'reiniciar', verification: 'systemctl is-active', status: 'pending' },
+  ];
+  const r = await validateWith('{"achieved":true,"confidence":0.8,"gaps":[],"nextActions":["nada"]}', {
+    evidence: ['e1', 'e2'], plan,
+  });
+  assert.equal(r.achieved, false);
+  assert.ok(r.gaps.includes('Plano incompleto: itens pendentes/falhados'));
+  assert.equal(r.confidence, 0.8);
+  const semEvidencia = await validateWith('{"achieved":true,"confidence":0.8,"gaps":[],"nextActions":[]}', { evidence: [], plan });
+  assert.ok(semEvidencia.gaps.includes('Nenhuma evidência real coletada'));
+  assert.ok(semEvidencia.gaps.includes('Plano incompleto: itens pendentes/falhados'));
+});
+
+test('calibração: confiança 0.95 com uma evidência cai para 0.79', async () => {
+  const r = await validateWith('{"achieved":true,"confidence":0.95,"gaps":[],"nextActions":["nada"]}', {
+    evidence: ['e1'],
+  });
+  assert.equal(r.confidence, 0.79);
+  assert.equal(r.achieved, true);
+  assert.ok(r.gaps.includes('Menos de duas fontes de evidência citadas'));
+  assert.deepEqual(r.nextActions, ['nada']);
+});
+
+test('calibração: duas evidências e plano todo verified não altera o veredito', async () => {
+  const plan: PlanItem[] = [
+    { id: '1', description: 'checar disco', verification: 'df -h', status: 'verified', evidence: '45%' },
+  ];
+  const original = { achieved: true, confidence: 0.9, gaps: [] as string[], nextActions: ['nada'] };
+  const r = await validateWith(JSON.stringify(original), { evidence: ['e1', 'e2'], plan });
+  assert.deepEqual(r, original);
+});
+
+test('calibração: HTTP 500 continua fail-closed sem gaps de evidência', async () => {
+  const srv = await httpServer((_req, _body, res) => { res.statusCode = 500; res.end('boom'); });
+  try {
+    const r = await validateGoal({
+      baseUrl: srv.url, model: 'm', goal: 'g', evidence: [], signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(r.achieved, false);
+    assert.equal(r.confidence, 0);
+    assert.equal(r.gaps.length, 1);
+    assert.match(r.gaps[0], /^Validador indisponível: HTTP 500/);
+  } finally { await srv.close(); }
+});
+
 test('nó goal.validator: flow source -> goal.validator -> collect emite o JSON do avaliador', async () => {
   const srv = await httpServer((_req, _body, res) => {
     res.setHeader('content-type', 'application/json');
@@ -159,7 +229,7 @@ test('nó goal.validator: flow source -> goal.validator -> collect emite o JSON 
     type: 'test.src', sourceOnly: true, inputs: [],
     outputs: [{ name: 'out', type: 'phrase', required: false }],
     create: (ctx) => ({
-      async start() { await ctx.emit('out', JSON.stringify({ goal: 'subir serviço', evidence: ['active'] })); },
+      async start() { await ctx.emit('out', JSON.stringify({ goal: 'subir serviço', evidence: ['active', 'healthy'] })); },
       async onInput() {}, async stop() {},
     }),
   };
