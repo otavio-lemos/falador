@@ -351,7 +351,17 @@ export function App() {
       ...liveFlow,
       nodes: liveFlow.nodes.map((n) => {
         if (n.id !== nodeId) return n;
-        const nextParams: Record<string, unknown> = { ...n.params, [param]: value };
+        // Dropdown do Carbon devolve id string; params numéricos (maxResults/topK/maxPages)
+        // precisam virar number senão o validateFlow do motor rejeita o run.
+        const prev = n.params[param];
+        const coerced =
+          typeof value === 'string' &&
+          value !== '' &&
+          (prev === undefined || typeof prev === 'number') &&
+          Number.isFinite(Number(value))
+            ? Number(value)
+            : value;
+        const nextParams: Record<string, unknown> = { ...n.params, [param]: coerced };
         if (n.type === 'decision.llm' && param === 'model') {
           nextParams.mode = isDecisionModel(String(value)) ? 'systemone' : 'chat';
         }
