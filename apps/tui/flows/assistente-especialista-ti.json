@@ -280,7 +280,8 @@
           "awk",
           "cut",
           "sort",
-          "uniq"
+          "uniq",
+          "uname"
         ],
         "allowedHosts": [],
         "defaultHost": "",
