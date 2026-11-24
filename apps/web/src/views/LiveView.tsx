@@ -501,7 +501,7 @@ export function LiveView({
     if (e.type === 'flow_invalid') return true;
     if (e.type !== 'node_error') return false;
     const code = String((e as { code?: string }).code ?? '');
-    return code !== 'log_info' && code !== 'log_warn';
+    return code !== 'log_info' && code !== 'log_warn' && code !== 'log_debug';
   }) as { message?: string; error?: string; nodeId?: string; _uiTs?: number } | undefined;
 
   const approve = () => {

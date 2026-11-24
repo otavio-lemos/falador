@@ -36,3 +36,37 @@ test('stage dropdown sends numeric params as numbers to /api/run', async ({ page
   expect(paramsOf('rag_search').topK).toBe(5); // intocado, continua número
   expect(paramsOf('crawler').maxPages).toBe(10); // intocado, continua número
 });
+
+test('exec stage "Exec ativo" grava dryRun boolean (não string "ativo")', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('combobox', { name: 'Workflow' }).click();
+  await page.getByRole('option', { name: 'assistente-especialista-ti' }).click();
+  await page.getByRole('button', { name: 'Runner' }).click();
+
+  let payload: { flow: { nodes: Array<{ id: string; params: Record<string, unknown> }> } } | null = null;
+  await page.route('**/api/run', async (route) => {
+    payload = route.request().postDataJSON();
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: 'event: ended\ndata: {"code":0}\n\n',
+    });
+  });
+
+  // troca Exec/SSH de dry-run → EXEC ATIVO
+  const execStage = page
+    .locator('.stage-dd')
+    .filter({ has: page.locator('.stage-dd-label', { hasText: 'Exec/SSH' }) })
+    .first();
+  await expect(execStage).toBeVisible();
+  await execStage.locator('.stage-main-select').click();
+  await page.getByRole('option', { name: 'EXEC ATIVO' }).click();
+  await expect(execStage).toContainText('EXEC ATIVO');
+
+  await page.getByRole('button', { name: 'Iniciar', exact: true }).click();
+  await expect.poll(() => payload !== null).toBe(true);
+
+  const params = payload!.flow.nodes.find((n) => n.id === 'exec_ssh')!.params;
+  expect(typeof params.dryRun).toBe('boolean'); // era "ativo" (string) → INVALID_PARAM
+  expect(params.dryRun).toBe(false);
+});

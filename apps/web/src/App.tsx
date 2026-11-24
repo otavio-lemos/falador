@@ -354,13 +354,17 @@ export function App() {
         // Dropdown do Carbon devolve id string; params numéricos (maxResults/topK/maxPages)
         // precisam virar number senão o validateFlow do motor rejeita o run.
         const prev = n.params[param];
-        const coerced =
+        let coerced =
           typeof value === 'string' &&
           value !== '' &&
           (prev === undefined || typeof prev === 'number') &&
           Number.isFinite(Number(value))
             ? Number(value)
             : value;
+        // Stage "Exec/SSH" grava o modo como string: 'ativo' = execução real → dryRun:false.
+        if (n.type === 'exec.command' && param === 'dryRun' && typeof coerced === 'string') {
+          coerced = coerced === 'ativo' ? false : coerced === 'dry-run' ? true : coerced;
+        }
         const nextParams: Record<string, unknown> = { ...n.params, [param]: coerced };
         if (n.type === 'decision.llm' && param === 'model') {
           nextParams.mode = isDecisionModel(String(value)) ? 'systemone' : 'chat';
