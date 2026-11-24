@@ -68,7 +68,6 @@ import {
 } from '../live-utils';
 import { WorkflowMiniMap } from '../components/WorkflowMiniMap';
 import { LogsPanel } from '../components/LogsPanel';
-import { SessionsPanel } from '../components/SessionsPanel';
 
 const WEBHOOK_STORAGE_KEY = 'falador.webhookUrl';
 const THOUGHTS_STORAGE_KEY = 'falador.showThoughts';
@@ -264,8 +263,10 @@ function parseGateCommand(gate: Gate | undefined): {
   decision?: string;
   reason?: string;
   options: string[];
+  context?: string;
+  fields?: { name: string; label: string; type?: string; placeholder?: string; options?: string[]; required?: boolean }[];
 } {
-  if (!gate) return { isCommand: false, isAskUser: false, host: 'local', command: '', options: [] };
+  if (!gate) return { isCommand: false, isAskUser: false, host: 'local', command: '', options: [], fields: [] };
   const meta = gate.meta;
   let tool = meta?.tool;
   let host = meta?.host;
@@ -275,6 +276,8 @@ function parseGateCommand(gate: Gate | undefined): {
   let prompt: string | undefined;
 
   const trimmed = gate.text.trim();
+  let ctxVal: string | undefined;
+  let fieldsVal: any;
   const candidate = trimmed.startsWith('{')
     ? trimmed
     : (trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim() ?? '');
@@ -291,6 +294,10 @@ function parseGateCommand(gate: Gate | undefined): {
       else if (obj.args && typeof (obj.args as Record<string, unknown>).prompt === 'string') {
         prompt = (obj.args as Record<string, unknown>).prompt as string;
       }
+      if (typeof obj.context === 'string') ctxVal = obj.context;
+      else if (obj.args && typeof (obj.args as Record<string, unknown>).context === 'string') ctxVal = (obj.args as Record<string, unknown>).context as string;
+      if (Array.isArray(obj.fields)) fieldsVal = obj.fields;
+      else if (obj.args && Array.isArray((obj.args as Record<string, unknown>).fields)) fieldsVal = (obj.args as Record<string, unknown>).fields;
     } catch { /* não é JSON */ }
   }
 
@@ -300,6 +307,8 @@ function parseGateCommand(gate: Gate | undefined): {
   }
   const isCommand = !isAskUser && Boolean(command || tool || meta?.host || meta?.command || meta?.reason || meta?.tool);
   const metaOptions = meta?.args?.options;
+  if (!ctxVal && typeof meta?.args?.context === 'string') ctxVal = meta.args.context as string;
+  if (!fieldsVal && Array.isArray(meta?.args?.fields)) fieldsVal = meta.args.fields;
   const options = Array.isArray(metaOptions)
     ? metaOptions.filter((o): o is string => typeof o === 'string' && o.trim() !== '')
     : [];
@@ -313,6 +322,8 @@ function parseGateCommand(gate: Gate | undefined): {
     command: command ?? gate.text,
     decision,
     reason,
+    context: ctxVal,
+    fields: Array.isArray(fieldsVal) ? fieldsVal : [],
   };
 }
 
@@ -435,6 +446,7 @@ export function LiveView({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [cmdDraft, setCmdDraft] = useState('');
+  const [fieldValues, setFieldValues] = useState<Record<string,string>>({});
   const [chatInput, setChatInput] = useState('');
   const [sendingChat, setSendingChat] = useState(false);
   const [showThoughts, setShowThoughts] = useState(() => {
@@ -443,7 +455,6 @@ export function LiveView({
   const [docsOpen, setDocsOpen] = useState(false);
   const [uploadTags, setUploadTags] = useState('');
   const [exportOpen, setExportOpen] = useState(false);
-  const [sessionsOpen, setSessionsOpen] = useState(false);
   const [gateHistory, setGateHistory] = useState<GateHistoryItem[]>([]);
   const [auditFocus, setAuditFocus] = useState<AuditFocus | null>(null);
   // Uma janela de browser real, reaproveitada. Nunca about:blank, nunca innerHTML.
@@ -513,7 +524,8 @@ export function LiveView({
   // Sincroniza rascunho editável do comando sempre que chegar um novo gate de comando
   useEffect(() => {
     if (gate && (gateInfo.isCommand || gateInfo.isAskUser)) {
-      setCmdDraft(gateInfo.isAskUser ? '' : gateInfo.command);
+      setCmdDraft(gateInfo.isAskUser ? "" : gateInfo.command);
+      setFieldValues({});
     }
   }, [gate, gateInfo.isCommand, gateInfo.isAskUser, gateInfo.command]);
 
@@ -554,7 +566,12 @@ export function LiveView({
   const approve = (value?: string | { type: string }) => {
     if (!gate) return;
     if (gateInfo.isAskUser) {
-      const answer = typeof value === 'string' ? value : (cmdDraft as string);
+      const fields = gateInfo.fields ?? [];
+      const answer = typeof value === 'string'
+        ? value
+        : (fields.length > 0
+            ? JSON.stringify(fieldValues)
+            : (cmdDraft as string));
       setGateHistory((prev) => [
         ...prev,
         {
@@ -926,7 +943,6 @@ export function LiveView({
       body={(
         <>
           <div className="live-chat-gate-tags">
-            {gateInfo.isAskUser && <Tag type="cyan" size="sm">Pergunta Guiada</Tag>}
             {gateInfo.isCommand && gateInfo.tool && <Tag type="teal" size="sm">Tool: {gateInfo.tool}</Tag>}
             {gateInfo.isCommand && gateInfo.host && <Tag type="cyan" size="sm">Host: {gateInfo.host}</Tag>}
             {gateInfo.isCommand && gateInfo.decision && (
@@ -942,6 +958,11 @@ export function LiveView({
               <p className="live-chat-entry-text" style={{ fontWeight: 500 }}>
                 {gateInfo.prompt || gate.text}
               </p>
+              {gateInfo.context && (
+                <p className="live-chat-entry-text" style={{ fontSize: '0.85rem', opacity: 0.8 }}>
+                  {gateInfo.context}
+                </p>
+              )}
               {gateInfo.options.length > 0 && (
                 <div className="live-chat-gate-options" role="group" aria-label="Opções sugeridas">
                   {gateInfo.options.map((opt, i) => (
@@ -951,15 +972,42 @@ export function LiveView({
                   ))}
                 </div>
               )}
-              <TextArea
-                id="ask-user-gate-input"
-                labelText="Sua resposta"
-                rows={2}
-                className="cmd-gate-textarea"
-                placeholder="Digite sua resposta para o agente continuar..."
-                value={cmdDraft}
-                onChange={(e) => setCmdDraft(e.target.value)}
-              />
+              {(gateInfo.fields ?? []).length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {(gateInfo.fields ?? []).map((f) => (
+                    <div key={f.name}>
+                      {f.type === 'select' ? (
+                        <select
+                          value={fieldValues[f.name] ?? ''}
+                          onChange={(e) => setFieldValues((v) => ({ ...v, [f.name]: e.target.value }))}
+                          style={{ width: '100%', padding: '0.5rem' }}
+                        >
+                          <option value="">{f.placeholder ?? f.label}</option>
+                          {(f.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
+                        </select>
+                      ) : (
+                        <input
+                          type={f.type === 'password' ? 'password' : 'text'}
+                          placeholder={f.placeholder ?? f.label}
+                          value={fieldValues[f.name] ?? ''}
+                          onChange={(e) => setFieldValues((v) => ({ ...v, [f.name]: e.target.value }))}
+                          style={{ width: '100%', padding: '0.5rem' }}
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <TextArea
+                  id="ask-user-gate-input"
+                  labelText="Sua resposta"
+                  rows={2}
+                  className="cmd-gate-textarea"
+                  placeholder="Digite sua resposta para o agente continuar..."
+                  value={cmdDraft}
+                  onChange={(e) => setCmdDraft(e.target.value)}
+                />
+              )}
             </>
           ) : gateInfo.isCommand ? (
             <>
@@ -990,12 +1038,6 @@ export function LiveView({
               <>
                 <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
                   Responder
-                </Button>
-                <Button kind="tertiary" size="sm" renderIcon={Edit} onClick={() => document.getElementById('ask-user-gate-input')?.focus()}>
-                  Editar
-                </Button>
-                <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>
-                  Rejeitar
                 </Button>
               </>
             ) : gateInfo.isCommand ? (
@@ -1507,9 +1549,6 @@ export function LiveView({
         </div>
 
         <div className="live2-top-actions">
-          <Button kind="tertiary" size="sm" renderIcon={Document} onClick={() => setSessionsOpen(true)}>
-            Sessões
-          </Button>
           <Button kind="tertiary" size="sm" renderIcon={Download} onClick={() => { setExportResult(null); setExportOpen(true); }}>
             Exportar
           </Button>
@@ -1669,11 +1708,6 @@ export function LiveView({
                       <p className="live-chat-empty" style={{ margin: 0 }}>
                         {runner.running ? 'Envie uma mensagem para conversar com o agente.' : 'Inicie a sessão para conversar com o agente.'}
                       </p>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                        {SUGGESTED_PROMPTS.map((p) => (
-                          <Button key={p} kind="tertiary" size="sm" onClick={() => setChatInput(p)}>{p}</Button>
-                        ))}
-                      </div>
                     </div>
                   )}
                   {conversation.map(renderConversationEntry)}
@@ -1843,7 +1877,6 @@ export function LiveView({
         {exportResult && <p className="export-modal-result">{exportResult}</p>}
       </Modal>
 
-      <SessionsPanel open={sessionsOpen} onClose={() => setSessionsOpen(false)} />
 
     </div>
   );
