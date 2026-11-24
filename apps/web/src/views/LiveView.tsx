@@ -934,7 +934,7 @@ export function LiveView({
       kind="gate"
       nodeId={gate.nodeId}
       role={gateInfo.isAskUser ? 'Pergunta do Agente' : 'Aprovação'}
-      tag={gateInfo.isAskUser ? 'Pergunta Guiada' : gateInfo.isCommand ? 'Comando' : 'Revisão'}
+      tag={gateInfo.isAskUser ? undefined : (gateInfo.isCommand ? 'Comando' : 'Revisão')}
       tagType={gateInfo.isAskUser ? 'cyan' : gateInfo.isCommand ? 'teal' : 'purple'}
       accent={gateInfo.isAskUser ? 'var(--cds-support-info)' : 'var(--cds-support-warning, #f1c21b)'}
       icon={gateInfo.isAskUser ? <Chat size={18} /> : <Checkmark size={18} />}
