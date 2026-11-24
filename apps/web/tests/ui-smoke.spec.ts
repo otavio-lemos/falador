@@ -172,7 +172,6 @@ test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed 
   await expect(logsPanel.locator('.logs-panel-services').getByText('Auditoria')).toHaveCount(0);
   await page.keyboard.press('Escape');
 
-  const badges = await logsPanel.locator('.logs-service-badges').boundingBox();
   const title = await viewTabs.boundingBox();
   const clear = await logsPanel.getByRole('button', { name: 'Limpar logs' }).boundingBox();
   const collapseButtons = logsPanel.getByRole('button', { name: 'Recolher logs' });
@@ -181,11 +180,15 @@ test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed 
   const collapseRight = await collapseButtons.last().boundingBox();
   const thoughts = await thoughtsToggle.boundingBox();
   expect(collapseLeft!.x + collapseLeft!.width).toBeLessThanOrEqual(title!.x);
-  expect(badges!.x).toBeGreaterThan(title!.x);
-  expect(badges!.x).toBeGreaterThan(clear!.x + clear!.width);
-  expect(badges!.x).toBeGreaterThan(thoughts!.x + thoughts!.width);
-  expect(collapseRight!.x).toBeGreaterThanOrEqual(badges!.x + badges!.width);
+  expect(thoughts!.x).toBeGreaterThan(clear!.x + clear!.width);
+  expect(collapseRight!.x).toBeGreaterThan(thoughts!.x + thoughts!.width);
   expect(await logsPanel.locator('.logs-panel-count').count()).toBe(0);
+
+  // Status tag OK / NOK presente no cabeçalho do bloco de serviço
+  const statusTags = logsPanel.locator('.logs-status-tag');
+  await expect(statusTags.first()).toBeVisible();
+  await expect(statusTags.first()).toHaveText(/^(OK|NOK)$/);
+
   const head = await logsPanel.locator('.logs-panel-head').boundingBox();
   expect(head!.height).toBeLessThanOrEqual(42);
 });

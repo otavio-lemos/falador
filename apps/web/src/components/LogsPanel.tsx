@@ -408,20 +408,6 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onTo
             Pensamentos
           </Button>
         )}
-        <div className="logs-service-badges" role="status" aria-label="Status dos serviços">
-          {servicesMeta.map((meta) => {
-            const up = serviceStatus ? serviceStatus[meta.id as keyof ServiceStatusMap] : false;
-            return (
-              <span
-                key={meta.id}
-                className={`logs-svc-badge ${up ? 'logs-svc-badge--up' : 'logs-svc-badge--down'}`}
-                title={`${meta.label} — ${up ? 'Rodando' : 'Parado'}`}
-              >
-                {meta.shortLabel}
-              </span>
-            );
-          })}
-        </div>
         <Button
           kind="ghost"
           size="sm"
@@ -444,10 +430,17 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onTo
           {logServices.map((svc) => {
             const meta = servicesMeta.find((s) => s.id === svc);
             const lines = logsByService[svc] ?? [];
+            const up = serviceStatus ? Boolean(serviceStatus[svc as keyof ServiceStatusMap]) : false;
             return (
               <div key={svc} className="logs-block">
                 <div className="logs-block-head">
                   <span className="logs-block-title">{meta?.label ?? svc}</span>
+                  <span
+                    className={`logs-status-tag ${up ? 'logs-status-tag--ok' : 'logs-status-tag--nok'}`}
+                    title={`${meta?.label ?? svc} — ${up ? 'OK (Rodando)' : 'NOK (Parado)'}`}
+                  >
+                    {up ? 'OK' : 'NOK'}
+                  </span>
                   <code className="logs-block-path">logs/{svc}.log</code>
                   {meta && meta.colors.length > 0 && (
                     <span className="logs-color-swatches" aria-label="Componentes deste log">

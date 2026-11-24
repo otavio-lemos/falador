@@ -964,26 +964,27 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   min-width: 0;
   margin-left: auto;
 }
-.logs-svc-badge {
+.logs-status-tag {
   display: inline-flex;
   align-items: center;
-  height: 24px;
-  max-width: 200px;
-  padding: 0 $spacing-02;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  border-radius: 0;
+  justify-content: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 2px;
   @include type-style('label-01');
-  font-weight: 600;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
   color: #ffffff;
-  white-space: nowrap;
   user-select: none;
+  flex-shrink: 0;
+  margin-left: 2px;
 }
-.logs-svc-badge--up {
+.logs-status-tag--ok {
   background: var(--cds-support-success, #198038);
   color: #ffffff;
 }
-.logs-svc-badge--down {
+.logs-status-tag--nok {
   background: var(--cds-support-error, #da1e28);
   color: #ffffff;
 }
