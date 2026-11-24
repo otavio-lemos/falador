@@ -116,6 +116,7 @@ export function App() {
   useEffect(() => {
     fetchCatalog().then(setCatalog).catch(() => setToast('Falha ao carregar catálogo'));
     fetchFlows().then((fs) => {
+      setFlows(fs);
       const defaultName = (fs.find((f) => f.name === 'especialista-ti') ?? fs[0])?.name;
       setCurrentFlow(defaultName || '');
       if (defaultName) {
