@@ -243,12 +243,18 @@ export function ConsoleView() {
             {pending.map((g) => (
               <section className="console-card console-gate" key={g.nodeId} aria-label={`Aprovação pendente ${g.nodeId}`}>
                 <div className="console-card-head">
-                  <span className="console-gate-title">Aprovação pendente</span>
+                  <span className="console-gate-title">Aprovação</span>
+                  <div className="console-head-tags">
+                    <Tag type="cyan" size="sm">Comando</Tag>
+                    {typeof g.meta?.tool === 'string' && g.meta.tool && (
+                      <Tag type="teal" size="sm">Tool: {g.meta.tool}</Tag>
+                    )}
+                    {typeof g.meta?.host === 'string' && g.meta.host && g.meta.host !== 'local' && (
+                      <Tag type="cyan" size="sm">Host: {g.meta.host}</Tag>
+                    )}
+                  </div>
                   <span className="console-time">{stamp(g.ts)}</span>
                 </div>
-                {typeof g.meta?.host === 'string' && g.meta.host && g.meta.host !== 'local' && (
-                  <Tag type="gray" size="sm">Host: {g.meta.host}</Tag>
-                )}
                 <p className="console-gate-prompt">{g.text}</p>
                 {typeof g.meta?.reason === 'string' && g.meta.reason && (
                   <p className="console-gate-reason">Motivo: {g.meta.reason}</p>

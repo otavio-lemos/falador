@@ -1249,6 +1249,12 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   gap: $spacing-01;
   flex-wrap: wrap;
 }
+.console-head-tags {
+  display: flex;
+  align-items: center;
+  gap: $spacing-01;
+  flex-wrap: wrap;
+}
 .console-gate-title {
   @include type-style('label-01');
   margin: 0;
