@@ -243,18 +243,17 @@ export function ConsoleView() {
             {pending.map((g) => (
               <section className="console-card console-gate" key={g.nodeId} aria-label={`Aprovação pendente ${g.nodeId}`}>
                 <div className="console-card-head">
-                  <h2>Aprovar e executar</h2>
-                  <Tag type="cyan" size="sm">{g.nodeId}</Tag>
-                  {typeof g.meta?.host === 'string' && g.meta.host && g.meta.host !== 'local' && (
-                    <Tag type="gray" size="sm">Host: {g.meta.host}</Tag>
-                  )}
+                  <span className="console-gate-title">Aprovação pendente</span>
                   <span className="console-time">{stamp(g.ts)}</span>
                 </div>
+                {typeof g.meta?.host === 'string' && g.meta.host && g.meta.host !== 'local' && (
+                  <Tag type="gray" size="sm">Host: {g.meta.host}</Tag>
+                )}
                 <p className="console-gate-prompt">{g.text}</p>
                 {typeof g.meta?.reason === 'string' && g.meta.reason && (
                   <p className="console-gate-reason">Motivo: {g.meta.reason}</p>
                 )}
-                <div className="console-gate-row">
+                <div className="console-gate-actions">
                   <TextInput
                     id={`console-gate-${g.nodeId}`}
                     size="sm"
@@ -265,9 +264,15 @@ export function ConsoleView() {
                     onChange={(e) => setDrafts((d) => ({ ...d, [g.nodeId]: e.target.value }))}
                   />
                   <div className="console-actions">
-                    <Button kind="primary" size="sm" onClick={() => void approve(g, drafts[g.nodeId] ?? gateCommand(g))}>Aprovar e executar</Button>
-                    <Button kind="tertiary" size="sm" onClick={() => document.getElementById(`console-gate-${g.nodeId}`)?.focus()}>Editar</Button>
-                    <Button kind="danger--tertiary" size="sm" onClick={() => void reject(g, drafts[g.nodeId] ?? gateCommand(g))}>Rejeitar</Button>
+                    <Button kind="primary" size="sm" onClick={() => void approve(g, drafts[g.nodeId] ?? gateCommand(g))}>
+                      Aprovar e executar
+                    </Button>
+                    <Button kind="tertiary" size="sm" onClick={() => document.getElementById(`console-gate-${g.nodeId}`)?.focus()}>
+                      Editar
+                    </Button>
+                    <Button kind="danger--tertiary" size="sm" onClick={() => void reject(g, drafts[g.nodeId] ?? gateCommand(g))}>
+                      Rejeitar
+                    </Button>
                   </div>
                 </div>
                 {errors[g.nodeId] && <p className="console-gate-error" role="alert">{errors[g.nodeId]}</p>}
