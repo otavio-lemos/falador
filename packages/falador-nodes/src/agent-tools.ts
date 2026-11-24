@@ -86,6 +86,22 @@ const ASK_USER_TOOL = {
           items: { type: 'string' },
           description: 'Opções sugeridas para facilitar a resposta (opcional).',
         },
+        fields: {
+          type: 'array',
+          description: 'Campos estruturados a coletar do operador (opcional). Quando presentes, a UI renderiza inputs em vez de texto livre.',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', description: 'Chave do campo (ex.: host, user, credential, mode).' },
+              label: { type: 'string', description: 'Rótulo exibido (ex.: Host/IP, Usuário, Credencial/Chave, Modo).' },
+              type: { type: 'string', enum: ['text', 'password', 'select'], description: 'Tipo de input.' },
+              placeholder: { type: 'string', description: 'Placeholder (opcional).' },
+              options: { type: 'array', items: { type: 'string' }, description: 'Opções para select (opcional).' },
+              required: { type: 'boolean', description: 'Se obrigatório (opcional).' },
+            },
+            required: ['name', 'label'],
+          },
+        },
       },
       required: ['question'],
     },
@@ -856,9 +872,7 @@ export const agentTools: NodeTypeDef = {
                   continue;
                 }
                 const tAskStart = Date.now();
-                const askText = typeof args.context === 'string' && args.context.trim()
-                  ? `${question}\n\nContexto: ${args.context.trim()}`
-                  : question;
+                const askText = question;
                 const gateRes = await requestGateApproval(effectiveGate, askText, {
                   tool: 'ask_user',
                   kind: 'respond',
