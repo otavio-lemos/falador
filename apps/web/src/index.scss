@@ -976,12 +976,12 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 }
 .live-chat-gate-actions-outside {
   flex-shrink: 0;
-  width: 150px;
+  width: 230px;
   display: flex;
   flex-direction: column;
   gap: $spacing-02;
   margin-top: 0;
-  .cds--btn { width: 100%; max-width: none; min-height: 28px; padding-block: 2px; font-size: 11px; }
+  .cds--btn { width: 100%; max-width: none; min-height: 38px; padding-block: 5px; font-size: 13px; }
 }
 
 // Tags (Tool / Host / Risco) ficam dentro do corpo do card, abaixo do cabeçalho,
