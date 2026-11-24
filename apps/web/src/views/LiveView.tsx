@@ -5,6 +5,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Accordion,
   AccordionItem,
+  AILabel,
+  AILabelContent,
   Button,
   Dropdown,
   Modal,
@@ -42,6 +44,7 @@ import {
   Download,
   Reset,
   Terminal,
+  Chat,
   User,
   Bot,
   Router,
@@ -143,6 +146,7 @@ interface ConversationEntry {
   nodeType?: string;
   tool?: string;
   step?: number;
+  agentStep?: AgentStep;
   auditEvent?: AuditEvent;
   gateStatus?: GateHistoryItem['status'];
   gateHost?: string;
@@ -151,10 +155,34 @@ interface ConversationEntry {
 
 function stageItems(stage: Stage, models: { omlx: string[]; cache: string[] }, apps: string[]): Item[] {
   if (stage.kind === 'approve-mode') {
-    return [{ id: 'manual', label: 'Manual' }, { id: 'auto', label: 'Auto (bypass)' }];
+    return [
+      { id: 'always', label: 'Always' },
+      { id: 'manual', label: 'Manual' },
+      { id: 'non_readonly', label: 'Non-readonly' },
+      { id: 'auto', label: 'Auto (bypass)' },
+      { id: 'never', label: 'Never' },
+    ];
   }
   if (stage.kind === 'output-mode') {
     return [{ id: 'write', label: 'Escrever' }, { id: 'speak', label: 'Falar' }];
+  }
+  if (stage.kind === 'exec-mode') {
+    return [{ id: 'dry-run', label: 'DRY-RUN' }, { id: 'ativo', label: 'EXEC ATIVO' }];
+  }
+  if (stage.kind === 'conector-rag') {
+    return [{ id: '1', label: '1 chunk' }, { id: '3', label: '3 chunks' }, { id: '5', label: '5 chunks' }, { id: '10', label: '10 chunks' }];
+  }
+  if (stage.kind === 'conector-web') {
+    return [{ id: '3', label: '3 resultados' }, { id: '5', label: '5 resultados' }, { id: '10', label: '10 resultados' }];
+  }
+  if (stage.kind === 'conector-crawler') {
+    return [{ id: '3', label: '3 páginas' }, { id: '5', label: '5 páginas' }, { id: '10', label: '10 páginas' }];
+  }
+  if (stage.kind === 'conector-mcp') {
+    return [{ id: 'stdio', label: 'stdio' }, { id: 'http', label: 'http' }];
+  }
+  if (stage.kind === 'conector-workflow') {
+    return [{ id: 'dry-run', label: 'dry-run' }, { id: 'ativo', label: 'gravar' }];
   }
   if (stage.kind === 'voice') return [{ id: 'female', label: 'Feminino' }, { id: 'male', label: 'Masculino' }];
   if (stage.kind === 'app') {
@@ -227,40 +255,52 @@ function stageItems(stage: Stage, models: { omlx: string[]; cache: string[] }, a
 
 function parseGateCommand(gate: Gate | undefined): {
   isCommand: boolean;
+  isAskUser: boolean;
+  prompt?: string;
   tool?: string;
   host: string;
   command: string;
   decision?: string;
   reason?: string;
 } {
-  if (!gate) return { isCommand: false, host: 'local', command: '' };
+  if (!gate) return { isCommand: false, isAskUser: false, host: 'local', command: '' };
   const meta = gate.meta;
   let tool = meta?.tool;
   let host = meta?.host;
   let command = meta?.command;
   let decision = meta?.decision;
   let reason = meta?.reason;
+  let prompt: string | undefined;
 
-  if (!command || !tool) {
+  const trimmed = gate.text.trim();
+  const candidate = trimmed.startsWith('{')
+    ? trimmed
+    : (trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim() ?? '');
+  if (candidate.startsWith('{')) {
     try {
-      const trimmed = gate.text.trim();
-      const candidate = trimmed.startsWith('{')
-        ? trimmed
-        : (trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim() ?? '');
-      if (candidate.startsWith('{')) {
-        const obj = JSON.parse(candidate) as Record<string, unknown>;
-        if (typeof obj.tool === 'string' && !tool) tool = obj.tool;
-        if (typeof obj.command === 'string' && !command) command = obj.command;
-        if (typeof obj.host === 'string' && !host) host = obj.host;
-        if (typeof obj.reason === 'string' && !reason) reason = obj.reason;
-        if (typeof obj.decision === 'string' && !decision) decision = obj.decision;
+      const obj = JSON.parse(candidate) as Record<string, unknown>;
+      if (typeof obj.tool === 'string' && !tool) tool = obj.tool;
+      if (typeof obj.command === 'string' && !command) command = obj.command;
+      if (typeof obj.host === 'string' && !host) host = obj.host;
+      if (typeof obj.reason === 'string' && !reason) reason = obj.reason;
+      if (typeof obj.decision === 'string' && !decision) decision = obj.decision;
+      if (typeof obj.prompt === 'string') prompt = obj.prompt;
+      else if (typeof obj.question === 'string') prompt = obj.question;
+      else if (obj.args && typeof (obj.args as Record<string, unknown>).prompt === 'string') {
+        prompt = (obj.args as Record<string, unknown>).prompt as string;
       }
     } catch { /* não é JSON */ }
   }
 
-  const isCommand = Boolean(command || tool || meta?.host || meta?.command || meta?.reason || meta?.tool);
+  const isAskUser = tool === 'ask_user' || meta?.tool === 'ask_user' || gate.nodeId.includes('ask_user') || trimmed.includes('"ask_user"');
+  if (isAskUser && !prompt) {
+    prompt = reason || trimmed;
+  }
+  const isCommand = !isAskUser && Boolean(command || tool || meta?.host || meta?.command || meta?.reason || meta?.tool);
   return {
     isCommand,
+    isAskUser,
+    prompt,
     tool,
     host: host || 'local',
     command: command ?? gate.text,
@@ -293,7 +333,7 @@ type ChatTagType = 'gray' | 'cyan' | 'green' | 'blue' | 'purple' | 'teal' | 'red
 // barra de acento, avatar, papel em negrito, Tag, hora e corpo. Vale para mensagem,
 // transcrição, resposta, áudio, passo, decisão, erro e aprovação.
 function ChatCard({
-  kind, nodeId, role, tag, tagType, accent, icon, ts, meta, body, ariaLabel,
+  kind, nodeId, role, tag, tagType, accent, icon, ts, meta, aiLabel, body, ariaLabel,
 }: {
   kind: string;
   nodeId: string;
@@ -304,6 +344,7 @@ function ChatCard({
   icon: ReactNode;
   ts?: number;
   meta?: ReactNode;
+  aiLabel?: boolean;
   body: ReactNode;
   ariaLabel?: string;
 }) {
@@ -320,6 +361,13 @@ function ChatCard({
         <span className="live-chat-entry-head">
           <strong className="live-chat-entry-role">{role}</strong>
           <Tag type={tagType} size="sm">{tag}</Tag>
+          {aiLabel && (
+            <AILabel kind="inline" size="mini" autoAlign>
+              <AILabelContent>
+                <p className="secondary">Gerado por IA</p>
+              </AILabelContent>
+            </AILabel>
+          )}
           <span className="live-chat-entry-meta">
             {meta}
             {ts != null && <time>{new Date(ts).toLocaleTimeString()}</time>}
@@ -417,10 +465,10 @@ export function LiveView({
 
   // Sincroniza rascunho editável do comando sempre que chegar um novo gate de comando
   useEffect(() => {
-    if (gate && gateInfo.isCommand) {
-      setCmdDraft(gateInfo.command);
+    if (gate && (gateInfo.isCommand || gateInfo.isAskUser)) {
+      setCmdDraft(gateInfo.isAskUser ? '' : gateInfo.command);
     }
-  }, [gate, gateInfo.isCommand, gateInfo.command]);
+  }, [gate, gateInfo.isCommand, gateInfo.isAskUser, gateInfo.command]);
 
   const suggestion = gate ? gate.text : (lastOf(sinks.suggestion)?.text ?? '');
 
@@ -458,6 +506,22 @@ export function LiveView({
 
   const approve = () => {
     if (!gate) return;
+    if (gateInfo.isAskUser) {
+      setGateHistory((prev) => [
+        ...prev,
+        {
+          id: `gate-${gate.nodeId}-${Date.now()}-${prev.length}`,
+          nodeId: gate.nodeId,
+          status: 'Aprovado',
+          command: cmdDraft,
+          tool: 'ask_user',
+          ts: Date.now(),
+        },
+      ]);
+      runner.gate(gate.nodeId, cmdDraft);
+      setCmdDraft('');
+      return;
+    }
     if (gateInfo.isCommand) {
       const wasEdited = cmdDraft.trim() !== gateInfo.command.trim();
       setGateHistory((prev) => [
@@ -495,6 +559,22 @@ export function LiveView({
   };
   const rejectGate = () => {
     if (!gate) return;
+    if (gateInfo.isAskUser) {
+      setGateHistory((prev) => [
+        ...prev,
+        {
+          id: `gate-${gate.nodeId}-${Date.now()}-${prev.length}`,
+          nodeId: gate.nodeId,
+          status: 'Rejeitado',
+          command: cmdDraft,
+          tool: 'ask_user',
+          ts: Date.now(),
+        },
+      ]);
+      runner.gate(gate.nodeId, null);
+      setCmdDraft('');
+      return;
+    }
     setGateHistory((prev) => [
       ...prev,
       {
@@ -643,14 +723,15 @@ export function LiveView({
     }
     for (const [key, s] of latestSteps) {
       const phase = s.phase === 'calling' ? 'chamando' : s.phase === 'rejected' ? 'rejeitada' : s.phase === 'repeated' ? 'repetida' : s.ok === false ? 'erro' : 'concluída';
-      const args = s.args && Object.keys(s.args).length > 0 ? `\n${JSON.stringify(s.args)}` : '';
+      const isSearchTool = s.tool === 'rag.search' || s.tool === 'rag_search' || s.tool === 'tool.web_search' || s.tool === 'tool_web_search' || s.tool === 'tool.crawler' || s.tool === 'tool_crawler';
+      const args = (!isSearchTool && s.args && Object.keys(s.args).length > 0) ? `\n${JSON.stringify(s.args)}` : '';
       const duration = typeof s.durationMs === 'number' ? ` · ${Math.round(s.durationMs)} ms` : '';
       items.push({
         id: `agent-step-${key}`, kind: 'agent-step', nodeId: s.nodeId,
         title: label(s.nodeId), subtitle: `Passo ${s.step} · ${phase}`,
         text: `${s.tool}${duration}${s.dryRun ? ' · dry-run' : ''}${args}`, ts: s.ts,
         tag: `Passo ${s.step}`, nodeType: nodes.get(s.nodeId)?.type,
-        tool: s.tool, step: s.step,
+        tool: s.tool, step: s.step, agentStep: s,
       });
     }
     for (const ev of runner.audit) {
@@ -772,16 +853,17 @@ export function LiveView({
     <ChatCard
       kind="gate"
       nodeId={gate.nodeId}
-      role="Aprovação"
-      tag={gateInfo.isCommand ? 'Comando' : 'Revisão'}
-      tagType={gateInfo.isCommand ? 'teal' : 'purple'}
-      accent="var(--cds-support-warning, #f1c21b)"
-      icon={<Checkmark size={18} />}
+      role={gateInfo.isAskUser ? 'Pergunta do Agente' : 'Aprovação'}
+      tag={gateInfo.isAskUser ? 'Pergunta Guiada' : gateInfo.isCommand ? 'Comando' : 'Revisão'}
+      tagType={gateInfo.isAskUser ? 'cyan' : gateInfo.isCommand ? 'teal' : 'purple'}
+      accent={gateInfo.isAskUser ? 'var(--cds-support-info)' : 'var(--cds-support-warning, #f1c21b)'}
+      icon={gateInfo.isAskUser ? <Chat size={18} /> : <Checkmark size={18} />}
       ts={gate.ts}
-      ariaLabel={gateInfo.isCommand ? 'Aprovação de comando pendente' : 'Aprovação de resposta pendente'}
+      ariaLabel={gateInfo.isAskUser ? 'Pergunta guiada pendente' : gateInfo.isCommand ? 'Aprovação de comando pendente' : 'Aprovação de resposta pendente'}
       body={(
         <>
           <div className="live-chat-gate-tags">
+            {gateInfo.isAskUser && <Tag type="cyan" size="sm">Pergunta Guiada</Tag>}
             {gateInfo.isCommand && gateInfo.tool && <Tag type="teal" size="sm">Tool: {gateInfo.tool}</Tag>}
             {gateInfo.isCommand && gateInfo.host && <Tag type="cyan" size="sm">Host: {gateInfo.host}</Tag>}
             {gateInfo.isCommand && gateInfo.decision && (
@@ -792,7 +874,22 @@ export function LiveView({
             )}
             {runner.testMode && <Tag type="magenta" size="sm">TESTE</Tag>}
           </div>
-          {gateInfo.isCommand ? (
+          {gateInfo.isAskUser ? (
+            <>
+              <p className="live-chat-entry-text" style={{ fontWeight: 500 }}>
+                {gateInfo.prompt || gate.text}
+              </p>
+              <TextArea
+                id="ask-user-gate-input"
+                labelText="Sua resposta"
+                rows={3}
+                className="cmd-gate-textarea"
+                placeholder="Digite sua resposta para o agente continuar..."
+                value={cmdDraft}
+                onChange={(e) => setCmdDraft(e.target.value)}
+              />
+            </>
+          ) : gateInfo.isCommand ? (
             <>
               {gateInfo.reason && <p className="live-chat-entry-text">{gateInfo.reason}</p>}
               <TextArea
@@ -817,7 +914,16 @@ export function LiveView({
             <div className="live-chat-entry-text">{suggestion}</div>
           )}
           <div className="live2-actions live-chat-gate-actions">
-            {gateInfo.isCommand ? (
+            {gateInfo.isAskUser ? (
+              <>
+                <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
+                  Responder
+                </Button>
+                <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>
+                  Cancelar
+                </Button>
+              </>
+            ) : gateInfo.isCommand ? (
               <>
                 <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
                   Aprovar e Executar
@@ -913,22 +1019,38 @@ export function LiveView({
     const active = new Set<string>();
     if (!runner.running) return active;
     const flowNodeIds = new Set(flow.nodes.map((n) => n.id));
-    for (const g of runner.gates) active.add(g.nodeId);
+    for (const g of runner.gates) {
+      active.add(g.nodeId);
+      if (flowNodeIds.has('gate_humano')) active.add('gate_humano');
+    }
     for (const s of runner.agentSteps.slice(-4)) {
       if (s.phase === 'calling') {
         active.add(s.nodeId);
+        if (flowNodeIds.has('decisor_d1')) active.add('decisor_d1');
         const mapped = TOOL_TO_NODE_ID[s.tool]
           ?? (s.tool.includes('mcp') && flowNodeIds.has('tool_mcp') ? 'tool_mcp' : undefined)
           ?? flow.nodes.find((n) => n.id === s.tool || n.params?.toolName === s.tool)?.id;
         if (mapped && flowNodeIds.has(mapped)) active.add(mapped);
       }
     }
+    const recentAudit = runner.audit.slice(-3);
+    for (const a of recentAudit) {
+      if (a.op === 'goal_validation' && flowNodeIds.has('validador_objetivo')) {
+        active.add('validador_objetivo');
+      }
+      if (a.risk != null && flowNodeIds.has('decisor_d1')) {
+        active.add('decisor_d1');
+      }
+    }
     const recentEvents = runner.events.slice(-6);
     for (let i = recentEvents.length - 1; i >= 0; i--) {
       const ev = recentEvents[i] as { type?: string; nodeId?: string };
-      if (ev.nodeId && (ev.type === 'caption' || ev.type === 'agent_step' || ev.type === 'gate' || ev.type === 'node_started')) {
+      if (ev.nodeId && (ev.type === 'caption' || ev.type === 'agent_step' || ev.type === 'gate' || ev.type === 'node_started' || ev.type === 'decision' || ev.type === 'goal_validation')) {
         active.add(ev.nodeId);
-        if (active.size >= 2) break;
+        if (ev.nodeId === 'decisor_d1' || ev.nodeId === 'gate_humano' || ev.nodeId === 'validador_objetivo') {
+          active.add(ev.nodeId);
+        }
+        if (active.size >= 4) break;
       }
     }
     if (active.size === 0) {
@@ -939,7 +1061,7 @@ export function LiveView({
       }
     }
     return active;
-  }, [runner.running, runner.gates, runner.agentSteps, runner.events, flow.nodes]);
+  }, [runner.running, runner.gates, runner.agentSteps, runner.audit, runner.events, flow.nodes]);
 
   // Métricas executivas por stage (o que não existir naquele nó fica apenas "—").
   const stageMetrics = (s: Stage): { ctx: string; tps: string; time: string } => {
@@ -1054,6 +1176,7 @@ export function LiveView({
           accent={achieved ? 'var(--cds-support-success)' : isMaxSteps ? 'var(--cds-support-error)' : 'var(--cds-support-warning)'}
           icon={achieved ? <Checkmark size={18} /> : isMaxSteps ? <ErrorFilled size={18} /> : <Bot size={18} />}
           ts={m.ts}
+          aiLabel={true}
           ariaLabel="Validação de Objetivo"
           body={(
             <div className="live-goal-validation">
@@ -1150,6 +1273,14 @@ export function LiveView({
           (e) => e.id === `${m.nodeId}:${m.step ?? 0}` || (e.nodeId === m.nodeId && e.step === m.step),
         )
       : -1;
+    const isStructuredSearch = m.kind === 'agent-step' && Boolean(
+      m.tool && (
+        m.tool === 'rag.search' || m.tool === 'rag_search' ||
+        m.tool === 'tool.web_search' || m.tool === 'tool_web_search' ||
+        m.tool === 'tool.crawler' || m.tool === 'tool_crawler'
+      )
+    );
+    const searchArgs = m.agentStep?.args;
     return (
       <ChatCard
         key={m.id}
@@ -1162,12 +1293,34 @@ export function LiveView({
         icon={icon}
         ts={m.ts}
         meta={meta}
+        aiLabel={m.kind === 'agent' || m.kind === 'decision'}
         body={(
           <>
             <div className="live-chat-entry-text">
               {m.text}
               {m.live && <span className="live-cursor" />}
             </div>
+            {isStructuredSearch && searchArgs && Object.keys(searchArgs).length > 0 && (
+              <div className="live-chat-structured-step" style={{ marginTop: '0.5rem' }}>
+                <Accordion size="sm">
+                  <AccordionItem
+                    title={
+                      m.tool?.includes('crawler')
+                        ? `Parâmetros do crawler: ${searchArgs.url ? String(searchArgs.url).slice(0, 50) : 'configuração'}`
+                        : `Parâmetros da consulta: ${searchArgs.query ? `"${String(searchArgs.query).slice(0, 50)}"` : 'detalhes'}`
+                    }
+                  >
+                    <div className="live-chat-structured-args" style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.8125rem' }}>
+                      {Object.entries(searchArgs).map(([k, v]) => (
+                        <div key={k}>
+                          <strong>{k}:</strong> <span style={{ fontFamily: 'var(--cds-code-font, monospace)' }}>{typeof v === 'object' ? JSON.stringify(v) : String(v)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </AccordionItem>
+                </Accordion>
+              </div>
+            )}
             {(isExecStep || execIdx >= 0) && (
               <div className="live-chat-step-actions">
                 <Button
@@ -1199,7 +1352,7 @@ export function LiveView({
         <header className="live2-top">
         <div className="live2-left-controls">
           <div className="live2-workflow-col">
-            <div className="nav-mode-tabs" role="tablist" aria-label="Modo da interface">
+            <div className="nav-mode-tabs" role="group" aria-label="Modo da interface">
               <Button kind="tertiary" size="sm" onClick={onGoBuilder}>
                 Builder
               </Button>
@@ -1323,10 +1476,12 @@ export function LiveView({
                   : primaryValue;
               const isDual = Boolean(s.secondaryParam);
               const langItems = isDual
-                ? supportedLanguagesForModel(
-                    s.kind === 'voice' ? 'LFM3-Audio' : s.value,
-                    s.secondaryKind === 'language-optional',
-                  )
+                ? s.secondaryKind === 'transport'
+                  ? [{ id: 'local', label: 'Local' }, { id: 'ssh', label: 'SSH' }]
+                  : supportedLanguagesForModel(
+                      s.kind === 'voice' ? 'LFM3-Audio' : s.value,
+                      s.secondaryKind === 'language-optional',
+                    )
                 : [];
               const curLang = s.secondaryValue === '-' || s.secondaryValue === '—' ? '' : (s.secondaryValue ?? '');
               const langDisabled = s.kind === 'model-translate' && (!s.value || s.value === '-' || s.value === '—');
@@ -1530,7 +1685,16 @@ export function LiveView({
                 )}
                 {d.points.length > 0 && <ul className="ctx-points">{d.points.map((p, i) => <li key={i}>{p}</li>)}</ul>}
               </div>
-              <button className="ctx-doc-remove" onClick={() => onRemoveDoc(d.name)} title="Remover documento"><TrashCan size={14} /></button>
+              <Button
+                kind="ghost"
+                size="sm"
+                hasIconOnly
+                renderIcon={TrashCan}
+                iconDescription="Remover documento"
+                tooltipPosition="left"
+                className="ctx-doc-remove"
+                onClick={() => onRemoveDoc(d.name)}
+              />
             </div>
           ))}
           {contextDocs.length === 0 && (

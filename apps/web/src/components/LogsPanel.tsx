@@ -356,8 +356,12 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onTo
               <Tab>{`Auditoria${audit.length > 0 ? ` (${audit.length})` : ''}`}</Tab>
             </TabList>
             <TabPanels>
-              <TabPanel />
-              <TabPanel />
+              <TabPanel aria-label="Logs">
+                <span className="logs-tabpanel-label">Logs dos serviços residentes</span>
+              </TabPanel>
+              <TabPanel aria-label="Auditoria">
+                <span className="logs-tabpanel-label">Trilha de auditoria</span>
+              </TabPanel>
             </TabPanels>
           </Tabs>
         </div>

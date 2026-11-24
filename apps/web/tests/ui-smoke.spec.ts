@@ -543,3 +543,148 @@ test('console modal streams chunks with bastion header, stderr filter, and cance
   await execModal.getByRole('button', { name: 'Cancelar' }).click();
   await expect.poll(() => stopCalled).toBe(true);
 });
+
+test('assistente-especialista-ti runner bar, 2-lane minimap with 14 nodes, ask_user gate and Carbon/a11y updates', async ({ page }) => {
+  // 1. Carrega assistente-especialista-ti e abre Runner
+  await page.getByRole('combobox', { name: 'Workflow' }).click();
+  await page.getByRole('option', { name: 'assistente-especialista-ti' }).click();
+
+  const canvas = page.locator('.react-flow');
+  await expect(canvas).toBeVisible();
+
+  await page.getByRole('button', { name: 'Runner' }).click();
+
+  // Verifica conformidade WCAG 2.2 AA na barra de navegação de modo em LiveView
+  const navTabs = page.locator('.live2 .nav-mode-tabs');
+  await expect(navTabs).toHaveAttribute('role', 'group');
+  await expect(navTabs).toHaveAttribute('aria-label', 'Modo da interface');
+
+  // 2. MiniMap com 14 nós em layout de 2 raias
+  const minimapNodes = page.locator('.wf-minimap .wf-mm-node');
+  await expect(minimapNodes).toHaveCount(14);
+
+  // Valida nós da Raia 1 vs Raia 2 (Raia 2 tem Y maior que Raia 1)
+  const agentMiniNode = minimapNodes.filter({ hasText: /Agent/ }).first();
+  const execMiniNode = minimapNodes.filter({ hasText: /Command/ }).first();
+  await expect(agentMiniNode).toBeVisible();
+  await expect(execMiniNode).toBeVisible();
+  const agentBox = await agentMiniNode.boundingBox();
+  const execBox = await execMiniNode.boundingBox();
+  expect(execBox!.y).toBeGreaterThan(agentBox!.y);
+
+  // 3. Barra de Etapas do Runner completa
+  const stageLabels = page.locator('.live2-stages .stage-dd-label');
+  await expect(stageLabels.filter({ hasText: 'Input' }).first()).toBeVisible();
+  await expect(stageLabels.filter({ hasText: 'Agent' }).first()).toBeVisible();
+  await expect(stageLabels.filter({ hasText: 'Decision' }).first()).toBeVisible();
+  await expect(stageLabels.filter({ hasText: 'Approval' }).first()).toBeVisible();
+  await expect(stageLabels.filter({ hasText: 'Validator' }).first()).toBeVisible();
+  await expect(stageLabels.filter({ hasText: 'Exec/SSH' }).first()).toBeVisible();
+  await expect(stageLabels.filter({ hasText: 'RAG' }).first()).toBeVisible();
+  await expect(stageLabels.filter({ hasText: 'WebSearch' }).first()).toBeVisible();
+  await expect(stageLabels.filter({ hasText: 'Crawler' }).first()).toBeVisible();
+  await expect(stageLabels.filter({ hasText: 'MCP' }).first()).toBeVisible();
+  await expect(stageLabels.filter({ hasText: 'Output' }).first()).toBeVisible();
+
+  // Exec/SSH possui dropdown com Transport (Local / SSH) e modo (DRY-RUN / EXEC ATIVO)
+  const execStage = page.locator('.stage-dd').filter({ has: page.locator('.stage-dd-label', { hasText: 'Exec/SSH' }) }).first();
+  await expect(execStage).toBeVisible();
+  await expect(execStage.getByRole('combobox')).toHaveCount(3); // instancia, modo, transport
+
+  // 4. TabPanel com conteúdo real em LogsPanel
+  const tabPanels = page.locator('.live2 .logs-panel [role="tabpanel"]');
+  await expect(tabPanels).toHaveCount(2);
+  await expect(tabPanels.first()).not.toBeEmpty();
+  await expect(tabPanels.nth(1)).not.toBeEmpty();
+
+  // 5. Simulação de execução com pergunta guiada (ask_user), busca estruturada com Accordion e AILabel
+  const events = [
+    { type: 'run_started' },
+    {
+      type: 'agent_step',
+      nodeId: 'agente',
+      step: 1,
+      phase: 'result',
+      tool: 'rag.search',
+      args: { query: 'instrucoes deploy', topK: 3 },
+      ok: true,
+      durationMs: 45,
+    },
+    {
+      type: 'caption',
+      nodeId: 'final_output',
+      text: 'Preciso confirmar se podemos prosseguir.',
+      final: true,
+    },
+    {
+      type: 'gate',
+      nodeId: 'agente',
+      text: '{"tool":"ask_user","prompt":"Qual o ambiente de destino (staging ou prod)?"}',
+      meta: { tool: 'ask_user' },
+    },
+    {
+      type: 'audit',
+      runId: 'run-ti-1',
+      seq: 1,
+      ts: 1700000005000,
+      op: 'goal_validation',
+      nodeId: 'validador_objetivo',
+      validation: {
+        achieved: true,
+        confidence: 0.95,
+        gaps: [],
+        nextActions: [],
+      },
+    },
+  ];
+
+  const body = events.map((ev) => `event: runner\ndata: ${JSON.stringify(ev)}\n\n`).join('');
+  let answeredText = '';
+  await page.route('**/api/gate', async (route) => {
+    const postData = route.request().postDataJSON() as { text?: string };
+    answeredText = postData?.text ?? '';
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
+  });
+  await page.route('**/api/run', (route) => route.fulfill({
+    status: 200,
+    contentType: 'text/event-stream',
+    body,
+  }));
+
+  await page.getByRole('button', { name: 'Iniciar', exact: true }).click();
+
+  // Card do agent-step com Accordion fechado por padrão
+  const stepCard = page.locator('.live-chat-entry--agent-step');
+  await expect(stepCard).toBeVisible();
+  const accordion = stepCard.locator('.cds--accordion');
+  await expect(accordion).toBeVisible();
+  await expect(accordion).toContainText('Parâmetros da consulta');
+  // Expande o accordion e verifica itens estruturados
+  await accordion.getByRole('button').click();
+  await expect(accordion).toContainText('query:');
+  await expect(accordion).toContainText('instrucoes deploy');
+
+  // AILabel nos cards de Agent e Validação de Objetivo
+  const agentCard = page.locator('.live-chat-entry--agent');
+  await expect(agentCard).toBeVisible();
+  await expect(agentCard.locator('.cds--ai-label')).toBeVisible();
+
+  const valCard = page.locator('.live-chat-entry--goal-validation');
+  await expect(valCard).toBeVisible();
+  await expect(valCard.locator('.cds--ai-label')).toBeVisible();
+
+  // Card de Pergunta Guiada (ask_user)
+  const askGateCard = page.locator('.live-chat-entry--gate');
+  await expect(askGateCard).toBeVisible();
+  await expect(askGateCard).toContainText('Pergunta do Agente');
+  await expect(askGateCard).toContainText('Pergunta Guiada');
+  await expect(askGateCard).toContainText('Qual o ambiente de destino (staging ou prod)?');
+
+  const answerInput = askGateCard.locator('#ask-user-gate-input');
+  await expect(answerInput).toBeVisible();
+  await answerInput.fill('staging');
+  await askGateCard.getByRole('button', { name: 'Responder' }).click();
+
+  await expect.poll(() => answeredText).toBe('staging');
+  await expect(askGateCard).toHaveCount(0);
+});

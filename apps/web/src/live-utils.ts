@@ -19,12 +19,18 @@ export interface Stage {
     | 'model-decision'
     | 'approve-mode'
     | 'voice'
-    | 'output-mode';
+    | 'output-mode'
+    | 'exec-mode'
+    | 'conector-rag'
+    | 'conector-web'
+    | 'conector-crawler'
+    | 'conector-mcp'
+    | 'conector-workflow';
   value: string;
   isDefault?: boolean;
   options?: string[];
   secondaryParam?: string;
-  secondaryKind?: 'language-optional' | 'language-required';
+  secondaryKind?: 'language-optional' | 'language-required' | 'transport';
   secondaryValue?: string;
   secondaryLabel?: string;
 }
@@ -287,6 +293,87 @@ export function deriveStages(flow: Flow): Stage[] {
         kind: 'approve-mode',
         value: String(p.mode ?? 'manual'),
       });
+    } else if (n.type === 'goal.validator') {
+      out.push({
+        key: `validator-${n.id}`,
+        label: 'Validator',
+        accent: accentOf(n.type),
+        nodeId: n.id,
+        nodeType: n.type,
+        param: 'model',
+        kind: 'model-llm',
+        value: String(p.model ?? DEFAULT_LLM_MODEL),
+      });
+    } else if (n.type === 'exec.command') {
+      out.push({
+        key: `exec-${n.id}`,
+        label: 'Exec/SSH',
+        accent: accentOf(n.type),
+        nodeId: n.id,
+        nodeType: n.type,
+        param: 'dryRun',
+        kind: 'exec-mode',
+        value: p.dryRun === false ? 'ativo' : 'dry-run',
+        secondaryParam: 'transport',
+        secondaryKind: 'transport',
+        secondaryValue: String(p.transport ?? 'local'),
+        secondaryLabel: 'Transport',
+      });
+    } else if (n.type === 'rag.search') {
+      out.push({
+        key: `rag-${n.id}`,
+        label: 'RAG',
+        accent: accentOf(n.type),
+        nodeId: n.id,
+        nodeType: n.type,
+        param: 'topK',
+        kind: 'conector-rag',
+        value: String(p.topK ?? '3'),
+      });
+    } else if (n.type === 'tool.web_search') {
+      out.push({
+        key: `websearch-${n.id}`,
+        label: 'WebSearch',
+        accent: accentOf(n.type),
+        nodeId: n.id,
+        nodeType: n.type,
+        param: 'maxResults',
+        kind: 'conector-web',
+        value: String(p.maxResults ?? '5'),
+      });
+    } else if (n.type === 'tool.crawler') {
+      out.push({
+        key: `crawler-${n.id}`,
+        label: 'Crawler',
+        accent: accentOf(n.type),
+        nodeId: n.id,
+        nodeType: n.type,
+        param: 'maxPages',
+        kind: 'conector-crawler',
+        value: String(p.maxPages ?? '5'),
+      });
+    } else if (n.type === 'tool.mcp') {
+      out.push({
+        key: `mcp-${n.id}`,
+        label: 'MCP',
+        accent: accentOf(n.type),
+        nodeId: n.id,
+        nodeType: n.type,
+        param: 'transport',
+        kind: 'conector-mcp',
+        value: String(p.transport ?? 'stdio'),
+      });
+    } else if (n.type === 'tool.workflow') {
+      out.push({
+        key: `workflow-${n.id}`,
+        label: 'Workflows',
+        accent: accentOf(n.type),
+        nodeId: n.id,
+        nodeType: n.type,
+        param: 'dryRun',
+        kind: 'conector-workflow',
+        value: p.dryRun === false ? 'ativo' : 'dry-run',
+      });
     } else if (n.type === 'tts.sts') {
       out.push({
         key: `voz-${n.id}`,
@@ -304,7 +391,75 @@ export function deriveStages(flow: Flow): Stage[] {
       });
     }
   }
+
+  // Se o flow contém agent.tools mas não possui nós dedicados de Decision, Approval ou Validator,
+  // expõe essas etapas a partir dos parâmetros de capability do próprio agente.
+  const agentNode = flow.nodes.find((n) => n.enabled !== false && n.type === 'agent.tools');
+  if (agentNode) {
+    const ap = agentNode.params as Record<string, unknown>;
+    if (!out.some((s) => s.label === 'Decision')) {
+      out.push({
+        key: `decision-${agentNode.id}`,
+        label: 'Decision',
+        accent: '#f59e0b',
+        nodeId: agentNode.id,
+        nodeType: 'decision.llm',
+        param: 'd1Model',
+        kind: 'model-decision',
+        value: String(ap.d1Model ?? DEFAULT_DECISION_MODEL),
+      });
+    }
+    if (!out.some((s) => s.label === 'Approval')) {
+      out.push({
+        key: `approve-${agentNode.id}`,
+        label: 'Approval',
+        accent: '#f59e0b',
+        nodeId: agentNode.id,
+        nodeType: 'human.approve',
+        param: 'approvalPolicy',
+        kind: 'approve-mode',
+        value: String(ap.approvalPolicy ?? 'always'),
+      });
+    }
+    if (!out.some((s) => s.label === 'Validator')) {
+      out.push({
+        key: `validator-${agentNode.id}`,
+        label: 'Validator',
+        accent: '#10b981',
+        nodeId: agentNode.id,
+        nodeType: 'goal.validator',
+        param: 'validatorModel',
+        kind: 'model-llm',
+        value: String(ap.validatorModel ?? DEFAULT_LLM_MODEL),
+      });
+    }
+  }
+
+  const STAGE_ORDER: Record<string, number> = {
+    'Input': 10,
+    'Transcription': 20,
+    'Speech Translation': 25,
+    'Agent': 30,
+    'LLM': 32,
+    'Translate': 35,
+    'Turn Detector': 40,
+    'Decision': 45,
+    'Approval': 50,
+    'Validator': 55,
+    'Exec/SSH': 60,
+    'RAG': 70,
+    'WebSearch': 72,
+    'Crawler': 74,
+    'MCP': 76,
+    'Workflows': 78,
+    'Output': 90,
+    'TTS': 92,
+  };
+
   return out.sort((a, b) => {
+    const orderA = STAGE_ORDER[a.label] ?? 80;
+    const orderB = STAGE_ORDER[b.label] ?? 80;
+    if (orderA !== orderB) return orderA - orderB;
     const ra = rank.get(a.nodeId) ?? 999;
     const rb = rank.get(b.nodeId) ?? 999;
     if (ra !== rb) return ra - rb;

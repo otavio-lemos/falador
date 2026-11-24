@@ -54,31 +54,115 @@ export function FlowCanvas(p: Props) {
     data: { ...n.data, title: names.get(n.id)?.label ?? n.data.title, metrics: p.metrics[n.id], running: p.running },
   })), [p.nodes, p.metrics, p.running, names]);
 
-  // arestas coloridas pelo tipo real da porta de saída
+  // arestas coloridas pelo tipo real da porta e contexto bidirecional
   const edges = useMemo(() => p.edges.map((e) => {
     const src = p.nodes.find((n) => n.id === e.source);
     const tgt = p.nodes.find((n) => n.id === e.target);
-    const isBranch = src?.data.type === 'decision.llm';
-    const isToolToAgent = src?.data.type?.startsWith('tool.') || src?.data.type === 'exec.command' || src?.data.type === 'rag.search';
-    const isAgentOut = src?.data.type === 'agent.tools' && tgt?.data.type === 'sink.captions';
-    const srcPort = src?.data.outputs.find((o) => o.name === e.sourceHandle);
-    const portType = srcPort?.type ?? (isBranch ? 'tokens_parcial' : '');
-    const color = edgeColor(portType);
-    const isObservation = isToolToAgent && tgt?.data.type === 'agent.tools';
+    const isBranch = src?.data.type === 'decision.llm' && tgt?.data.type !== 'agent.tools';
+    const isAgentOut = src?.data.type === 'agent.tools' && (tgt?.data.type === 'sink.captions' || tgt?.data.type === 'sink.playback');
+
+    // Identificação de conexões com capacidades / ferramentas do agente
+    const isDecider =
+      e.sourceHandle === 'decider' ||
+      e.targetHandle === 'decider' ||
+      src?.id === 'decisor_d1' ||
+      tgt?.id === 'decisor_d1' ||
+      (src?.data.type === 'decision.llm' && tgt?.data.type === 'agent.tools') ||
+      (tgt?.data.type === 'decision.llm' && src?.data.type === 'agent.tools');
+
+    const isGate =
+      e.sourceHandle === 'gate' ||
+      e.targetHandle === 'gate' ||
+      src?.id === 'gate_humano' ||
+      tgt?.id === 'gate_humano' ||
+      (src?.data.type === 'human.approve' && tgt?.data.type === 'agent.tools') ||
+      (tgt?.data.type === 'human.approve' && src?.data.type === 'agent.tools');
+
+    const isValidator =
+      e.sourceHandle === 'validator' ||
+      e.targetHandle === 'validator' ||
+      src?.id === 'validador_objetivo' ||
+      tgt?.id === 'validador_objetivo' ||
+      src?.data.type === 'goal.validator' ||
+      tgt?.data.type === 'goal.validator';
+
+    const isTool =
+      e.sourceHandle === 'tool' ||
+      e.targetHandle === 'tool' ||
+      e.targetHandle === 'tools' ||
+      src?.data.type.startsWith('tool.') ||
+      src?.data.type === 'exec.command' ||
+      src?.data.type === 'rag.search' ||
+      tgt?.data.type.startsWith('tool.') ||
+      tgt?.data.type === 'exec.command' ||
+      tgt?.data.type === 'rag.search';
+
+    const isBidirectional = isDecider || isGate || isValidator || isTool;
+
+    // Determina cor
+    let color: string;
+    const toolNode = (src?.data.type.startsWith('tool.') || src?.data.type === 'exec.command' || src?.data.type === 'rag.search')
+      ? src
+      : tgt;
+
+    if (isDecider) {
+      color = PORT_COLOR.decider ?? '#f59e0b';
+    } else if (isGate) {
+      color = PORT_COLOR.gate ?? '#ec4899';
+    } else if (isValidator) {
+      color = PORT_COLOR.validator ?? '#10b981';
+    } else if (toolNode?.data.type === 'exec.command' || toolNode?.data.type === 'tool.mcp') {
+      const isExecActive = toolNode.data.params?.dryRun === false;
+      color = isExecActive ? '#da1e28' : '#0ea5e9'; // Vermelho p/ EXEC ATIVO, azul p/ DRY-RUN
+    } else if (isTool) {
+      color = PORT_COLOR.tool ?? '#0ea5e9';
+    } else {
+      const srcPort = src?.data.outputs.find((o) => o.name === e.sourceHandle);
+      const portType = srcPort?.type ?? (isBranch ? 'tokens_parcial' : '');
+      color = edgeColor(portType);
+    }
+
+    // Determina rótulo contextual
+    let label: string | undefined;
+    if (isDecider) {
+      label = 'risco / d1';
+    } else if (isGate) {
+      label = 'aprovação';
+    } else if (isValidator) {
+      label = 'validação';
+    } else if (toolNode?.data.type === 'exec.command') {
+      label = 'comando / stdout·stderr';
+    } else if (toolNode?.data.type === 'rag.search' || toolNode?.data.type === 'tool.web_search') {
+      label = 'consulta / trechos';
+    } else if (toolNode?.data.type === 'tool.crawler') {
+      label = 'crawler / páginas';
+    } else if (toolNode?.data.type === 'tool.mcp') {
+      label = 'mcp / chamada·resposta';
+    } else if (toolNode?.data.type === 'tool.workflow') {
+      label = 'workflow / schema';
+    } else if (isTool) {
+      label = 'tool / retorno';
+    } else if (isBranch) {
+      label = String(e.sourceHandle ?? '');
+    } else if (isAgentOut) {
+      label = 'saída';
+    }
+
     return {
       ...e,
       type: 'smoothstep',
-      label: isBranch ? String(e.sourceHandle ?? '') : (isObservation ? 'observação' : (isAgentOut ? 'saída' : undefined)),
+      label,
       labelStyle: { fill: '#f4f4f4', fontSize: 10, fontWeight: 600 },
       labelBgStyle: { fill: '#161616', stroke: '#3a3a3a', strokeWidth: 1 },
       labelBgPadding: [6, 3] as [number, number],
       labelBgBorderRadius: 4,
       style: {
         stroke: color,
-        strokeWidth: isObservation ? 2.5 : 2,
-        strokeDasharray: isObservation ? '6 3' : undefined,
+        strokeWidth: isBidirectional ? 2.5 : 2,
+        strokeDasharray: isBidirectional ? '6 3' : undefined,
       },
-      markerEnd: { type: MarkerType.ArrowClosed, color, width: 16, height: 16 },
+      markerEnd: { type: MarkerType.ArrowClosed, color, width: 14, height: 14 },
+      markerStart: isBidirectional ? { type: MarkerType.ArrowClosed, color, width: 14, height: 14 } : undefined,
     };
   }), [p.edges, p.nodes]);
 
