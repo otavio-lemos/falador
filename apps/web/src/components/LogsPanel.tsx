@@ -4,10 +4,11 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { Button, MultiSelect, Tab, TabList, TabPanel, TabPanels, Tabs } from '@carbon/react';
 import { ChevronDown, ChevronUp, Close, Terminal, TrashCan } from '@carbon/icons-react';
-import type { AuditEvent, Thought } from '../useRunner';
+import type { AuditEvent, Thought, Execution, Gate } from '../useRunner';
 import { clearLogs, fetchLogs, fetchServiceStatus, type ServiceStatusMap } from '../api';
 import { accentOf, serviceOfNode, shortNodeName } from '../data';
 import { AuditPanel } from '../components/AuditPanel';
+import { TerminalPanel } from './TerminalPanel';
 
 interface ServiceColorTag {
   color: string;
@@ -99,24 +100,59 @@ interface LogsPanelProps {
   onOpenConsole?: () => void;
   audit?: AuditEvent[];
   auditFocus?: { nodeId: string; token: number } | null;
+  executions?: Execution[];
+  gates?: Gate[];
+  onApproveGate?: (gate: Gate, text: string) => Promise<void> | void;
+  onRejectGate?: (gate: Gate, reason?: string) => Promise<void> | void;
 }
 
-export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, thoughts = [], onToggleThoughts, resetSignal = 0, hasAgent = false, onOpenConsole, audit = [], auditFocus = null }: LogsPanelProps) {
+export function LogsPanel({
+  flowNodes,
+  onServiceStatus,
+  thoughtsOn = false,
+  thoughts = [],
+  onToggleThoughts,
+  resetSignal = 0,
+  hasAgent = false,
+  onOpenConsole,
+  audit = [],
+  auditFocus = null,
+  executions = [],
+  gates = [],
+  onApproveGate,
+  onRejectGate,
+}: LogsPanelProps) {
   const logsRefs = useRef<Record<string, HTMLPreElement | null>>({});
   const clearEpochRef = useRef(0);
   const onServiceStatusRef = useRef(onServiceStatus);
   onServiceStatusRef.current = onServiceStatus;
   const [clearing, setClearing] = useState(false);
   const [serviceStatus, setServiceStatus] = useState<ServiceStatusMap | null>(null);
-  // Alterna Logs ⇄ Auditoria no MESMO painel (proposto pelo dono em 2026-11-23).
-  const [view, setView] = useState<0 | 1>(() => {
-    try { return localStorage.getItem(LOG_VIEW_KEY) === 'audit' ? 1 : 0; } catch { return 0; }
+  // Alterna Logs (0) ⇄ Auditoria (1) ⇄ Terminal (2) no MESMO painel embutido.
+  const [view, setView] = useState<0 | 1 | 2>(() => {
+    try {
+      const saved = localStorage.getItem(LOG_VIEW_KEY);
+      if (saved === 'terminal') return 2;
+      if (saved === 'audit') return 1;
+      return 0;
+    } catch { return 0; }
   });
   const changeView = (index: number) => {
-    const next: 0 | 1 = index === 1 ? 1 : 0;
+    const next: 0 | 1 | 2 = index === 2 ? 2 : index === 1 ? 1 : 0;
     setView(next);
-    try { localStorage.setItem(LOG_VIEW_KEY, next === 1 ? 'audit' : 'logs'); } catch { /* ignore */ }
+    try {
+      localStorage.setItem(LOG_VIEW_KEY, next === 2 ? 'terminal' : next === 1 ? 'audit' : 'logs');
+    } catch { /* ignore */ }
   };
+
+  useEffect(() => {
+    const handler = () => {
+      changeView(2);
+      setLogsCollapsed(false);
+    };
+    window.addEventListener('falador-open-terminal', handler);
+    return () => window.removeEventListener('falador-open-terminal', handler);
+  }, []);
 
   const [logServices, setLogServices] = useState<string[]>(() => {
     try {
@@ -372,6 +408,7 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, thou
             <TabList size="sm" aria-label="Painel inferior">
               <Tab>Logs</Tab>
               <Tab>{`Auditoria${audit.length > 0 ? ` (${audit.length})` : ''}`}</Tab>
+              <Tab>{`Terminal${executions.length > 0 ? ` (${executions.length})` : ''}`}</Tab>
             </TabList>
             <TabPanels>
               <TabPanel aria-label="Logs">
@@ -379,6 +416,9 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, thou
               </TabPanel>
               <TabPanel aria-label="Auditoria">
                 <span className="logs-tabpanel-label">Trilha de auditoria</span>
+              </TabPanel>
+              <TabPanel aria-label="Terminal">
+                <span className="logs-tabpanel-label">Terminal de execuções SSH/local</span>
               </TabPanel>
             </TabPanels>
           </Tabs>
@@ -390,6 +430,7 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, thou
             titleText="Componentes"
             hideLabel
             label="Selecionar componentes"
+            disabled={view !== 0}
             items={servicesMeta}
             itemToString={(it) => (it ? it.label : '')}
             selectedItems={servicesMeta.filter((s) => logServices.includes(s.id))}
@@ -401,19 +442,22 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, thou
           size="sm"
           renderIcon={TrashCan}
           onClick={() => void handleClearLogs()}
-          disabled={view === 1 || logServices.length === 0 || clearing}
+          disabled={view !== 0 || logServices.length === 0 || clearing}
         >
           Limpar logs
         </Button>
         {hasAgent && (
           <Button
-            kind="tertiary"
+            kind={view === 2 ? 'primary' : 'tertiary'}
             size="sm"
             renderIcon={Terminal}
-            onClick={onOpenConsole}
-            title="Abrir Console de execuções"
+            onClick={() => {
+              changeView(2);
+              setLogsCollapsed(false);
+            }}
+            title="Abrir Terminal de execuções"
           >
-            Console
+            Terminal
           </Button>
         )}
         {onToggleThoughts && (
@@ -456,9 +500,20 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, thou
         />
       </div>
       {!logsCollapsed && (
-        <div className={`logs-panel-body${view === 1 ? ' logs-panel-body--audit' : ''}`}>
+        <div
+          className={`logs-panel-body${
+            view === 1 ? ' logs-panel-body--audit' : view === 2 ? ' logs-panel-body--terminal' : ''
+          }`}
+        >
           {view === 1 ? (
             <AuditPanel audit={audit} />
+          ) : view === 2 ? (
+            <TerminalPanel
+              executions={executions}
+              gates={gates}
+              onApprove={onApproveGate}
+              onReject={onRejectGate}
+            />
           ) : (
             <>
           {logServices.length === 0 && (
