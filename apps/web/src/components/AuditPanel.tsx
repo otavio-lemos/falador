@@ -4,17 +4,15 @@
 import { Fragment, useMemo, useState } from 'react';
 import {
   Table,
-  TableHeader,
+  TableHead,
   TableBody,
   TableRow,
-  TableHead,
+  TableHeader,
   TableCell,
   TableContainer,
   TableExpandRow,
   TableExpandedRow,
-  TableToolbar,
-  TableToolbarContent,
-  TableToolbarSearch,
+  Search,
   Tabs,
   TabList,
   Tab,
@@ -163,16 +161,16 @@ function AllEventsTable({ data, filter }: { data: AuditEvent[]; filter: string }
   return (
     <TableContainer>
       <Table size="sm">
-        <TableHeader>
+        <TableHead>
           <TableRow>
-            <TableHead>Hora</TableHead>
-            <TableHead>Evento</TableHead>
-            <TableHead>Nó</TableHead>
-            <TableHead>Resumo / Detalhes</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Duração</TableHead>
+            <TableHeader>Hora</TableHeader>
+            <TableHeader>Evento</TableHeader>
+            <TableHeader>Nó</TableHeader>
+            <TableHeader>Resumo / Detalhes</TableHeader>
+            <TableHeader>Status</TableHeader>
+            <TableHeader>Duração</TableHeader>
           </TableRow>
-        </TableHeader>
+        </TableHead>
         <TableBody>
           {rows.map((ev) => (
             <TableRow key={`${ev.runId}-${ev.seq}`}>
@@ -196,18 +194,18 @@ function DecisionsTable({ data, filter }: { data: AuditEvent[]; filter: string }
   return (
     <TableContainer>
       <Table size="sm">
-        <TableHeader>
+        <TableHead>
           <TableRow>
-            <TableHead>Step</TableHead>
-            <TableHead>Tool</TableHead>
-            <TableHead>Args</TableHead>
-            <TableHead>Risco d1</TableHead>
-            <TableHead>Gate</TableHead>
-            <TableHead>OK</TableHead>
-            <TableHead>Duração</TableHead>
-            <TableHead>Hora</TableHead>
+            <TableHeader>Step</TableHeader>
+            <TableHeader>Tool</TableHeader>
+            <TableHeader>Args</TableHeader>
+            <TableHeader>Risco d1</TableHeader>
+            <TableHeader>Gate</TableHeader>
+            <TableHeader>OK</TableHeader>
+            <TableHeader>Duração</TableHeader>
+            <TableHeader>Hora</TableHeader>
           </TableRow>
-        </TableHeader>
+        </TableHead>
         <TableBody>
           {rows.map((d) => (
             <TableRow key={`${d.runId}-${d.seq}`}>
@@ -239,18 +237,18 @@ function ExecutionsTable({ data, filter }: { data: AuditEvent[]; filter: string 
   return (
     <TableContainer>
       <Table size="sm">
-        <TableHeader>
+        <TableHead>
           <TableRow>
-            <TableHead style={{ width: '2.5rem' }} />
-            <TableHead>Tool</TableHead>
-            <TableHead>Host</TableHead>
-            <TableHead>Transport</TableHead>
-            <TableHead>Comando</TableHead>
-            <TableHead>Exit</TableHead>
-            <TableHead>Duração</TableHead>
-            <TableHead>Modo</TableHead>
+            <TableHeader style={{ width: '2.5rem' }} />
+            <TableHeader>Tool</TableHeader>
+            <TableHeader>Host</TableHeader>
+            <TableHeader>Transport</TableHeader>
+            <TableHeader>Comando</TableHeader>
+            <TableHeader>Exit</TableHeader>
+            <TableHeader>Duração</TableHeader>
+            <TableHeader>Modo</TableHeader>
           </TableRow>
-        </TableHeader>
+        </TableHead>
         <TableBody>
           {rows.map((e) => {
             const rowId = `${e.runId}-${e.seq}`;
@@ -343,22 +341,23 @@ function RagList({ data, filter }: { data: AuditEvent[]; filter: string }) {
   );
 }
 
-function PlanView({ plan }: { plan: PlanItem[] | null }) {
-  if (!plan || plan.length === 0) return <Empty label="Nenhum plano registrado (o agente cria via update_plan)." />;
+function PlanView({ plan, filter }: { plan: PlanItem[] | null; filter: string }) {
+  const rows = (plan ?? []).filter((p) => matches(filter, p.id, p.description, p.verification, p.status, p.evidence));
+  if (rows.length === 0) return <Empty label="Nenhum plano registrado (o agente cria via update_plan)." />;
   return (
     <TableContainer>
       <Table size="sm">
-        <TableHeader>
+        <TableHead>
           <TableRow>
-            <TableHead>ID</TableHead>
-            <TableHead>Item</TableHead>
-            <TableHead>Verificação</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Evidência</TableHead>
+            <TableHeader>ID</TableHeader>
+            <TableHeader>Item</TableHeader>
+            <TableHeader>Verificação</TableHeader>
+            <TableHeader>Status</TableHeader>
+            <TableHeader>Evidência</TableHeader>
           </TableRow>
-        </TableHeader>
+        </TableHead>
         <TableBody>
-          {plan.map((p) => (
+          {rows.map((p) => (
             <TableRow key={p.id}>
               <TableCell>{p.id}</TableCell>
               <TableCell>{p.description}</TableCell>
@@ -385,7 +384,7 @@ function percentile(sorted: number[], pct: number): number | null {
   return Math.round(sorted[idx]);
 }
 
-function LatencyTable({ data }: { data: AuditEvent[] }) {
+function LatencyTable({ data, filter }: { data: AuditEvent[]; filter: string }) {
   const rows = useMemo(() => {
     const byTool = new Map<string, number[]>();
     for (const ev of data) {
@@ -400,20 +399,21 @@ function LatencyTable({ data }: { data: AuditEvent[] }) {
       return { stage, samples: s.length, p50: percentile(s, 50), p95: percentile(s, 95) };
     });
   }, [data]);
-  if (rows.length === 0) return <Empty label="Nenhuma latência registrada." />;
+  const visible = rows.filter((r) => matches(filter, r.stage));
+  if (visible.length === 0) return <Empty label="Nenhuma latência registrada." />;
   return (
     <TableContainer>
       <Table size="sm">
-        <TableHeader>
+        <TableHead>
           <TableRow>
-            <TableHead>Etapa</TableHead>
-            <TableHead>Amostras</TableHead>
-            <TableHead>p50</TableHead>
-            <TableHead>p95</TableHead>
+            <TableHeader>Etapa</TableHeader>
+            <TableHeader>Amostras</TableHeader>
+            <TableHeader>p50</TableHeader>
+            <TableHeader>p95</TableHeader>
           </TableRow>
-        </TableHeader>
+        </TableHead>
         <TableBody>
-          {rows.map((l) => (
+          {visible.map((l) => (
             <TableRow key={l.stage}>
               <TableCell><strong>{l.stage}</strong></TableCell>
               <TableCell>{l.samples}</TableCell>
@@ -427,8 +427,11 @@ function LatencyTable({ data }: { data: AuditEvent[] }) {
   );
 }
 
-function ValidationList({ data }: { data: AuditEvent[] }) {
-  if (data.length === 0) return <Empty label="Nenhuma validação de objetivo registrada." />;
+function ValidationList({ data, filter }: { data: AuditEvent[]; filter: string }) {
+  const rows = data.filter((v) => v.op === 'goal_validation'
+    ? matches(filter, v.validation?.gaps?.join(' '), v.validation?.nextActions?.join(' '), String(v.validation?.confidence ?? ''), v.validation?.achieved ? 'atingido' : 'pendente')
+    : matches(filter, v.text, v.goalAchieved ? 'concluído' : ''));
+  if (rows.length === 0) return <Empty label="Nenhuma validação de objetivo registrada." />;
   return (
     <StructuredListWrapper isCondensed aria-label="Validações de objetivo">
       <StructuredListHead>
@@ -442,7 +445,7 @@ function ValidationList({ data }: { data: AuditEvent[] }) {
         </StructuredListRow>
       </StructuredListHead>
       <StructuredListBody>
-        {data.map((v) => {
+        {rows.map((v) => {
           if (v.op === 'goal_validation') {
             const achieved = Boolean(v.validation?.achieved);
             const confidence = v.validation ? `${Math.round(v.validation.confidence * 100)}%` : '—';
@@ -510,49 +513,43 @@ export function AuditPanel({ audit }: AuditPanelProps) {
 
   return (
     <div className="audit-panel">
-      <Tabs selectedIndex={activeTab} onChange={({ selectedIndex }) => setActiveTab(selectedIndex ?? 0)}>
-        <TabList aria-label="Auditoria do run">
-          <Tab>Todos ({audit.length})</Tab>
-          <Tab>Decisões ({toolCalls.length})</Tab>
-          <Tab>Execuções ({executions.length})</Tab>
-          <Tab>Gates ({gates.length})</Tab>
-          <Tab>RAG ({rag.length})</Tab>
-          <Tab>Plano ({plan?.length ?? 0})</Tab>
-          <Tab>Validação ({validations.length})</Tab>
-          <Tab>Latência</Tab>
-        </TabList>
-        <TabPanels>
-          <TabPanel>
-            <TableToolbar>
-              <TableToolbarContent>
-                <TableToolbarSearch id="audit-filter-decisions" placeholder="Filtrar eventos…" value={filter} onChange={(e) => setFilter((e as unknown as { target?: { value?: string } }).target?.value ?? '')} />
-              </TableToolbarContent>
-            </TableToolbar>
-            <AllEventsTable data={audit} filter={filter} />
-          </TabPanel>
-          <TabPanel>
-            <TableToolbar>
-              <TableToolbarContent>
-                <TableToolbarSearch id="audit-filter-tool-calls" placeholder="Filtrar decisões…" value={filter} onChange={(e) => setFilter((e as unknown as { target?: { value?: string } }).target?.value ?? '')} />
-              </TableToolbarContent>
-            </TableToolbar>
-            <DecisionsTable data={toolCalls} filter={filter} />
-          </TabPanel>
-          <TabPanel>
-            <TableToolbar>
-              <TableToolbarContent>
-                <TableToolbarSearch id="audit-filter-exec" placeholder="Filtrar execuções…" value={filter} onChange={(e) => setFilter((e as unknown as { target?: { value?: string } }).target?.value ?? '')} />
-              </TableToolbarContent>
-            </TableToolbar>
-            <ExecutionsTable data={executions} filter={filter} />
-          </TabPanel>
-          <TabPanel><GatesList data={gates} filter={filter} /></TabPanel>
-          <TabPanel><RagList data={rag} filter={filter} /></TabPanel>
-          <TabPanel><PlanView plan={plan} /></TabPanel>
-          <TabPanel><ValidationList data={validations} /></TabPanel>
-          <TabPanel><LatencyTable data={audit} /></TabPanel>
-        </TabPanels>
-      </Tabs>
+      <div className="audit-bar">
+        <Tabs selectedIndex={activeTab} onChange={({ selectedIndex }) => setActiveTab(selectedIndex ?? 0)}>
+          <TabList aria-label="Auditoria do run">
+            <Tab>Todos ({audit.length})</Tab>
+            <Tab>Decisões ({toolCalls.length})</Tab>
+            <Tab>Execuções ({executions.length})</Tab>
+            <Tab>Gates ({gates.length})</Tab>
+            <Tab>RAG ({rag.length})</Tab>
+            <Tab>Plano ({plan?.length ?? 0})</Tab>
+            <Tab>Validação ({validations.length})</Tab>
+            <Tab>Latência</Tab>
+          </TabList>
+          <TabPanels>
+            <TabPanel><AllEventsTable data={audit} filter={filter} /></TabPanel>
+            <TabPanel><DecisionsTable data={toolCalls} filter={filter} /></TabPanel>
+            <TabPanel><ExecutionsTable data={executions} filter={filter} /></TabPanel>
+            <TabPanel><GatesList data={gates} filter={filter} /></TabPanel>
+            <TabPanel><RagList data={rag} filter={filter} /></TabPanel>
+            <TabPanel><PlanView plan={plan} filter={filter} /></TabPanel>
+            <TabPanel><ValidationList data={validations} filter={filter} /></TabPanel>
+            <TabPanel><LatencyTable data={audit} filter={filter} /></TabPanel>
+          </TabPanels>
+        </Tabs>
+        {/* Busca única na mesma faixa das 8 sub-abas: substitui as 3 TableToolbar
+            de 48px que existiam por aba e passa a valer em TODAS as visões. */}
+        <div className="audit-search">
+          <Search
+            id="audit-filter-decisions"
+            size="sm"
+            labelText="Filtrar eventos de auditoria"
+            placeholder="Filtrar eventos..."
+            closeButtonLabelText="Limpar filtro"
+            value={filter}
+            onChange={(e) => setFilter((e as unknown as { target?: { value?: string } }).target?.value ?? '')}
+          />
+        </div>
+      </div>
     </div>
   );
 }

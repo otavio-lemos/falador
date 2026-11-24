@@ -1129,8 +1129,31 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: $spacing-03 0;
+    padding: 0 0 $spacing-03;
   }
+  // Cabeçalho de tabela fixo no topo enquanto a aba rola.
+  .cds--data-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--cds-layer-accent-01, #393939);
+  }
+}
+// Faixa única: 8 sub-abas + busca à direita (elimina a TableToolbar de 48px por aba).
+.audit-bar {
+  position: relative;
+  flex-shrink: 0;
+}
+// Reserva espaço à direita na lista de abas para a busca não sobrepor os rótulos.
+.audit-bar .cds--tab--list {
+  padding-inline-end: 272px;
+}
+.audit-search {
+  position: absolute;
+  top: $spacing-02;
+  right: 0;
+  width: 260px;
+  z-index: 2;
 }
 .logs-panel-empty {
   @include type-style('helper-text-01');
