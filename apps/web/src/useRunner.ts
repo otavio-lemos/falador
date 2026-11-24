@@ -47,6 +47,12 @@ export interface AgentStep {
   dryRun?: boolean;
 }
 
+export interface ExecChunkEntry {
+  stream: 'stdout' | 'stderr';
+  text: string;
+  ts: number;
+}
+
 export interface Execution {
   id: string;
   ts: number;
@@ -54,14 +60,20 @@ export interface Execution {
   step: number;
   tool: string;
   host: string;
+  bastion?: string;
   transport: string;
   command: string;
   output: string;
+  stdout: string;
+  stderr: string;
+  chunks?: ExecChunkEntry[];
+  status: 'running' | 'done';
   exitCode: number | null;
   durationMs?: number;
   dryRun?: boolean;
   ok?: boolean;
   truncated?: boolean;
+  sshTransportError?: boolean;
 }
 
 export interface Thought {
@@ -302,48 +314,151 @@ export function useRunner() {
                 ev.args && typeof ev.args === 'object' && typeof (ev.args as Record<string, unknown>).command === 'string'
                   ? String((ev.args as Record<string, unknown>).command)
                   : '';
-              setExecutions((x) => [
-                ...x.slice(-99),
-                {
-                  id: `${String(ev.nodeId ?? '')}:${typeof ev.step === 'number' ? ev.step : 0}`,
+              const stepExecId = `${String(ev.nodeId ?? '')}:${typeof ev.step === 'number' ? ev.step : 0}`;
+              const outStr = typeof ev.output === 'string' ? ev.output : '';
+              setExecutions((x) => {
+                const idx = x.findIndex((item) => item.id === stepExecId);
+                const nextItem: Execution = {
+                  id: stepExecId,
                   ts: Date.now(),
                   nodeId: String(ev.nodeId ?? ''),
                   step: typeof ev.step === 'number' ? ev.step : 0,
                   tool: String(ev.tool ?? ''),
                   host: typeof ev.host === 'string' ? ev.host : 'local',
+                  ...(typeof ev.bastion === 'string' && ev.bastion ? { bastion: ev.bastion } : {}),
                   transport: typeof ev.transport === 'string' ? ev.transport : 'local',
                   command: cmd,
-                  output: typeof ev.output === 'string' ? ev.output : '',
+                  output: outStr,
+                  stdout: outStr,
+                  stderr: '',
+                  status: 'done',
                   exitCode: typeof ev.exitCode === 'number' ? ev.exitCode : null,
                   ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : {}),
                   ...(typeof ev.dryRun === 'boolean' ? { dryRun: ev.dryRun } : {}),
                   ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : {}),
                   ...(typeof ev.truncated === 'boolean' ? { truncated: ev.truncated } : {}),
-                },
-              ]);
+                };
+                if (idx >= 0) {
+                  const copy = [...x];
+                  copy[idx] = { ...copy[idx], ...nextItem };
+                  return copy;
+                }
+                return [...x.slice(-99), nextItem];
+              });
             }
+          } else if (ev.type === 'exec_start') {
+            const nodeId = String(ev.nodeId ?? '');
+            const ts = typeof ev.ts === 'number' ? ev.ts : Date.now();
+            const id = String(ev.id ?? `${nodeId}:exec:${ts}`);
+            const transport = typeof ev.transport === 'string' ? ev.transport : 'local';
+            const nextExec: Execution = {
+              id,
+              ts,
+              nodeId,
+              step: 0,
+              tool: transport === 'ssh' ? 'exec_ssh' : 'exec_local',
+              host: typeof ev.host === 'string' ? ev.host : 'local',
+              ...(typeof ev.bastion === 'string' && ev.bastion ? { bastion: ev.bastion } : {}),
+              transport,
+              command: String(ev.command ?? ''),
+              output: '',
+              stdout: '',
+              stderr: '',
+              chunks: [],
+              status: 'running',
+              exitCode: null,
+              dryRun: ev.dryRun === true,
+            };
+            setExecutions((x) => {
+              const idx = x.findIndex((item) => item.id === id);
+              if (idx >= 0) {
+                const copy = [...x];
+                copy[idx] = { ...copy[idx], ...nextExec };
+                return copy;
+              }
+              return [...x.slice(-99), nextExec];
+            });
+          } else if (ev.type === 'exec_chunk') {
+            const id = String(ev.id ?? '');
+            const stream: 'stdout' | 'stderr' = ev.stream === 'stderr' ? 'stderr' : 'stdout';
+            const text = typeof ev.text === 'string' ? ev.text : '';
+            const ts = typeof ev.ts === 'number' ? ev.ts : Date.now();
+            if (!id || !text) return;
+            setExecutions((x) => {
+              const idx = x.findIndex((item) => item.id === id);
+              if (idx < 0) return x;
+              const cur = x[idx];
+              const nextStdout = stream === 'stdout' ? `${cur.stdout}${text}` : cur.stdout;
+              const nextStderr = stream === 'stderr' ? `${cur.stderr}${text}` : cur.stderr;
+              const nextChunks = [...(cur.chunks ?? []), { stream, text, ts }];
+              const copy = [...x];
+              copy[idx] = {
+                ...cur,
+                stdout: nextStdout,
+                stderr: nextStderr,
+                output: `${cur.output}${text}`,
+                chunks: nextChunks,
+              };
+              return copy;
+            });
+          } else if (ev.type === 'exec_end') {
+            const id = String(ev.id ?? '');
+            if (!id) return;
+            setExecutions((x) => {
+              const idx = x.findIndex((item) => item.id === id);
+              if (idx < 0) return x;
+              const cur = x[idx];
+              const exitCode = typeof ev.exitCode === 'number' ? ev.exitCode : null;
+              const sshTransportError = cur.transport === 'ssh' && exitCode === 255;
+              const copy = [...x];
+              copy[idx] = {
+                ...cur,
+                status: 'done',
+                exitCode,
+                ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : {}),
+                ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : {}),
+                ...(typeof ev.truncated === 'boolean' ? { truncated: ev.truncated } : {}),
+                ...(sshTransportError ? { sshTransportError: true } : {}),
+              };
+              return copy;
+            });
           } else if (ev.type === 'execution') {
             const nodeId = String(ev.nodeId ?? '');
             const ts = typeof ev.ts === 'number' ? ev.ts : Date.now();
-            setExecutions((x) => [
-              ...x.slice(-99),
-              {
-                id: String(ev.id ?? `${nodeId}:exec:${ts}:${x.length}`),
+            const outStr = typeof ev.output === 'string' ? ev.output : '';
+            setExecutions((x) => {
+              const id = String(ev.id ?? `${nodeId}:exec:${ts}:${x.length}`);
+              const idx = x.findIndex((item) => item.id === id);
+              const prev = idx >= 0 ? x[idx] : undefined;
+              const nextItem: Execution = {
+                id,
                 ts,
                 nodeId,
-                step: typeof ev.step === 'number' ? ev.step : 0,
-                tool: String(ev.tool ?? 'exec.command'),
-                host: typeof ev.host === 'string' ? ev.host : 'local',
-                transport: typeof ev.transport === 'string' ? ev.transport : 'local',
-                command: String(ev.command ?? ''),
-                output: typeof ev.output === 'string' ? ev.output : '',
-                exitCode: typeof ev.exitCode === 'number' ? ev.exitCode : null,
-                ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : {}),
-                ...(typeof ev.dryRun === 'boolean' ? { dryRun: ev.dryRun } : {}),
-                ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : {}),
-                ...(typeof ev.truncated === 'boolean' ? { truncated: ev.truncated } : {}),
-              },
-            ]);
+                step: typeof ev.step === 'number' ? ev.step : (prev?.step ?? 0),
+                tool: String(ev.tool ?? prev?.tool ?? 'exec.command'),
+                host: typeof ev.host === 'string' ? ev.host : (prev?.host ?? 'local'),
+                ...(typeof ev.bastion === 'string' && ev.bastion ? { bastion: ev.bastion } : (prev?.bastion ? { bastion: prev.bastion } : {})),
+                transport: typeof ev.transport === 'string' ? ev.transport : (prev?.transport ?? 'local'),
+                command: String(ev.command ?? prev?.command ?? ''),
+                output: outStr || prev?.output || '',
+                stdout: prev?.stdout || outStr,
+                stderr: prev?.stderr || '',
+                ...(prev?.chunks ? { chunks: prev.chunks } : {}),
+                status: 'done',
+                exitCode: typeof ev.exitCode === 'number' ? ev.exitCode : (prev?.exitCode ?? null),
+                ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : (prev?.durationMs !== undefined ? { durationMs: prev.durationMs } : {})),
+                ...(typeof ev.dryRun === 'boolean' ? { dryRun: ev.dryRun } : (prev?.dryRun !== undefined ? { dryRun: prev.dryRun } : {})),
+                ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : (prev?.ok !== undefined ? { ok: prev.ok } : {})),
+                ...(typeof ev.truncated === 'boolean' ? { truncated: ev.truncated } : (prev?.truncated !== undefined ? { truncated: prev.truncated } : {})),
+                ...(ev.sshTransportError === true || prev?.sshTransportError ? { sshTransportError: true } : {}),
+              };
+              if (idx >= 0) {
+                const copy = [...x];
+                copy[idx] = nextItem;
+                return copy;
+              }
+              return [...x.slice(-99), nextItem];
+            });
           } else if (ev.type === 'chat_sent') {
             setChatMessages((m) => [
               ...m.slice(-100),
@@ -353,7 +468,12 @@ export function useRunner() {
             setAudit((a) => [...a.slice(-999), ev as unknown as AuditEvent]);
           }
         },
-        () => { if (genRef.current === myGen && ctlRef.current === myCtl) setRunning(false); },
+        () => {
+          if (genRef.current === myGen && ctlRef.current === myCtl) {
+            setRunning(false);
+            setExecutions((x) => x.map((item) => (item.status === 'running' ? { ...item, status: 'done' } : item)));
+          }
+        },
         undefined,
         flowName,
         (msg) => { if (genRef.current === myGen && ctlRef.current === myCtl) setLastRunError(msg); },

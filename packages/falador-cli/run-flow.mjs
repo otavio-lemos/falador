@@ -164,10 +164,11 @@ async function main() {
         __registerChatInput: (fn) => { chatSenders.set(n.id, fn); },
       };
     }
-    if (n.type === 'exec.command' && !(flow.bindings[n.id]?.__onExecution)) {
+    if (n.type === 'exec.command') {
       flow.bindings[n.id] = {
         ...(flow.bindings[n.id] ?? {}),
-        __onExecution: (ev) => line({ type: 'execution', ...ev }),
+        ...(!(flow.bindings[n.id]?.__onExecution) ? { __onExecution: (ev) => line({ type: 'execution', ...ev }) } : {}),
+        ...(!(flow.bindings[n.id]?.__onExecChunk) ? { __onExecChunk: (ev) => line({ ...ev }) } : {}),
       };
     }
   }

@@ -576,7 +576,8 @@ function startRun(flow, runSeconds, flowName, testMode) {
             ev.args && typeof ev.args === 'object' && typeof ev.args.command === 'string'
               ? String(ev.args.command)
               : '';
-          sessionBuffer.execucoes.push({
+          const idx = sessionBuffer.execucoes.findIndex((item) => item.id === `${String(ev.nodeId ?? '')}:${typeof ev.step === 'number' ? ev.step : 0}`);
+          const entry = {
             id: `${String(ev.nodeId ?? '')}:${typeof ev.step === 'number' ? ev.step : 0}`,
             ts: new Date().toISOString(),
             nodeId: String(ev.nodeId ?? ''),
@@ -587,13 +588,87 @@ function startRun(flow, runSeconds, flowName, testMode) {
             command: cmd,
             output: typeof ev.output === 'string' ? ev.output : '',
             exitCode: typeof ev.exitCode === 'number' ? ev.exitCode : null,
+            status: 'done',
             ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : {}),
             ...(typeof ev.dryRun === 'boolean' ? { dryRun: ev.dryRun } : {}),
             ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : {}),
             ...(typeof ev.truncated === 'boolean' ? { truncated: ev.truncated } : {}),
-          });
+          };
+          if (idx >= 0) sessionBuffer.execucoes[idx] = { ...sessionBuffer.execucoes[idx], ...entry };
+          else sessionBuffer.execucoes.push(entry);
           if (sessionBuffer.execucoes.length > 500) sessionBuffer.execucoes.shift();
         }
+      }
+      if (ev.type === 'exec_start') {
+        const id = String(ev.id ?? `${ev.nodeId ?? ''}:${ev.ts ?? Date.now()}`);
+        const entry = {
+          id,
+          ts: new Date(typeof ev.ts === 'number' ? ev.ts : Date.now()).toISOString(),
+          nodeId: String(ev.nodeId ?? ''),
+          step: 0,
+          tool: ev.transport === 'ssh' ? 'exec_ssh' : 'exec_local',
+          host: typeof ev.host === 'string' ? ev.host : 'local',
+          ...(typeof ev.bastion === 'string' && ev.bastion ? { bastion: ev.bastion } : {}),
+          transport: typeof ev.transport === 'string' ? ev.transport : 'local',
+          command: String(ev.command ?? ''),
+          output: '',
+          stdout: '',
+          stderr: '',
+          exitCode: null,
+          dryRun: ev.dryRun === true,
+          status: 'running',
+        };
+        const idx = sessionBuffer.execucoes.findIndex((item) => item.id === id);
+        if (idx >= 0) sessionBuffer.execucoes[idx] = { ...sessionBuffer.execucoes[idx], ...entry };
+        else sessionBuffer.execucoes.push(entry);
+        if (sessionBuffer.execucoes.length > 500) sessionBuffer.execucoes.shift();
+      }
+      if (ev.type === 'exec_chunk') {
+        const id = String(ev.id ?? '');
+        const target = sessionBuffer.execucoes.find((item) => item.id === id);
+        if (target && typeof ev.text === 'string') {
+          const stream = ev.stream === 'stderr' ? 'stderr' : 'stdout';
+          target[stream] = `${target[stream] ?? ''}${ev.text}`;
+          const prefix = stream === 'stderr' ? '[stderr] ' : '';
+          target.output = `${target.output ?? ''}${prefix}${ev.text}`;
+        }
+      }
+      if (ev.type === 'exec_end') {
+        const id = String(ev.id ?? '');
+        const target = sessionBuffer.execucoes.find((item) => item.id === id);
+        if (target) {
+          target.status = 'done';
+          target.exitCode = typeof ev.exitCode === 'number' ? ev.exitCode : null;
+          if (typeof ev.durationMs === 'number') target.durationMs = ev.durationMs;
+          if (typeof ev.ok === 'boolean') target.ok = ev.ok;
+          if (typeof ev.truncated === 'boolean') target.truncated = ev.truncated;
+        }
+      }
+      if (ev.type === 'execution') {
+        const id = String(ev.id ?? `${ev.nodeId ?? ''}:exec:${ev.ts ?? Date.now()}`);
+        const idx = sessionBuffer.execucoes.findIndex((item) => item.id === id);
+        const entry = {
+          id,
+          ts: new Date(typeof ev.ts === 'number' ? ev.ts : Date.now()).toISOString(),
+          nodeId: String(ev.nodeId ?? ''),
+          step: typeof ev.step === 'number' ? ev.step : 0,
+          tool: String(ev.tool ?? 'exec.command'),
+          host: typeof ev.host === 'string' ? ev.host : 'local',
+          ...(typeof ev.bastion === 'string' && ev.bastion ? { bastion: ev.bastion } : {}),
+          transport: typeof ev.transport === 'string' ? ev.transport : 'local',
+          command: String(ev.command ?? ''),
+          output: typeof ev.output === 'string' ? ev.output : '',
+          exitCode: typeof ev.exitCode === 'number' ? ev.exitCode : null,
+          status: 'done',
+          ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : {}),
+          ...(typeof ev.dryRun === 'boolean' ? { dryRun: ev.dryRun } : {}),
+          ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : {}),
+          ...(typeof ev.truncated === 'boolean' ? { truncated: ev.truncated } : {}),
+          ...(ev.sshTransportError === true ? { sshTransportError: true } : {}),
+        };
+        if (idx >= 0) sessionBuffer.execucoes[idx] = { ...sessionBuffer.execucoes[idx], ...entry };
+        else sessionBuffer.execucoes.push(entry);
+        if (sessionBuffer.execucoes.length > 500) sessionBuffer.execucoes.shift();
       }
       // undici keep-alive: o child do runner pode não sair sozinho no fim do run
       // (lição §4) — emitido run_stopped/summary, encerra o child e libera o next run.
