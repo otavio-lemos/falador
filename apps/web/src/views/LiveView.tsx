@@ -1494,6 +1494,7 @@ export function LiveView({
                   <div className={`stage-dd-ctrl ${isDual ? 'stage-dd-ctrl--triple' : 'stage-dd-ctrl--dual'}`}>
                     <Dropdown
                       id={`stage-inst-${grp.key}`}
+                      className="stage-inst-select"
                       size="sm"
                       titleText={`${grp.label} instância`}
                       hideLabel
@@ -1504,7 +1505,9 @@ export function LiveView({
                       onChange={({ selectedItem }) => selectedItem && setSelectedByGroup((prev) => ({ ...prev, [grp.label]: selectedItem.id }))}
                     />
                     <Dropdown
-                      id={`stage-${s.key}`} size="sm" titleText={grp.label} hideLabel label={grp.label}
+                      id={`stage-${s.key}`}
+                      className="stage-main-select"
+                      size="sm" titleText={grp.label} hideLabel label={grp.label}
                       items={items} itemToString={(it) => (it ? it.label : '')}
                       selectedItem={items.find((i) => i.id === selectedId) ?? items[0]}
                       onChange={({ selectedItem }) => selectedItem && selectedItem.id !== '—' && onUpdateStage(s.nodeId, s.param, selectedItem.id)}
@@ -1512,6 +1515,7 @@ export function LiveView({
                     {s.secondaryParam && (
                       <Dropdown
                         id={`stage-${s.key}-sec`}
+                        className={`stage-sec-select ${s.secondaryParam === 'transport' ? 'stage-sec-select--ssh' : ''}`}
                         size="sm"
                         titleText={s.secondaryLabel ?? 'Idioma'}
                         hideLabel

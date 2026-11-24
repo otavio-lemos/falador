@@ -493,37 +493,38 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 // Faixa de etapas logo abaixo do cabeçalho (100% da largura, sem sidebar)
 .live2-stages-bar {
   flex-shrink: 0;
-  padding: $spacing-03 $spacing-05;
+  padding: $spacing-02 $spacing-04;
   background: $bg-app;
   border-bottom: 1px solid $border-1;
+  overflow-x: hidden; // sem barra de rolagem horizontal feia
 }
 
 .live2-stages {
   display: flex;
-  flex-wrap: nowrap;
-  gap: $spacing-03;
+  flex-wrap: wrap; // acomoda todos os nós na mesma tela sem barra de rolagem
+  gap: $spacing-02;
   width: 100%;
 }
 
 .stage-dd {
-  flex: 1 1 190px;
-  min-width: 170px;
-  border-top: 3px solid var(--accent);
-  padding-top: $spacing-02;
+  flex: 0 1 auto;
+  min-width: 0;
+  border-top: 2px solid var(--accent);
+  padding-top: $spacing-01;
   display: flex;
   flex-direction: column;
-  gap: $spacing-02;
+  gap: 2px;
   overflow: visible;
 }
 
 .stage-dd--dual {
-  flex: 1.5 1 260px;
-  min-width: 240px;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .stage-dd--triple {
-  flex: 2.1 1 350px;
-  min-width: 320px;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .stage-dd-label {
@@ -533,6 +534,8 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-size: 0.7rem;
+  line-height: 1rem;
 }
 
 .stage-dd-ctrl {
@@ -540,25 +543,149 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   align-items: center;
   gap: $spacing-01;
   min-width: 0;
+  position: relative;
 }
 
 .stage-dd-ctrl--dual {
-  display: grid;
-  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.2fr);
-  gap: $spacing-02;
+  display: flex;
+  align-items: center;
+  gap: $spacing-01;
+  min-width: 0;
 }
 
 .stage-dd-ctrl--triple {
-  display: grid;
-  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.25fr) minmax(0, 0.95fr);
-  gap: $spacing-02;
+  display: flex;
+  align-items: center;
+  gap: $spacing-01;
+  min-width: 0;
 }
 
 .stage-dd-ctrl .cds--dropdown__wrapper,
 .stage-dd-ctrl .cds--dropdown {
-  flex: 1;
   min-width: 0;
-  width: 100%;
+}
+
+// Dropdown de instância (número): ultra-compacto, tamanho mínimo possível
+.stage-dd-ctrl .stage-inst-select {
+  flex: 0 0 44px !important;
+  width: 44px !important;
+  min-width: 44px !important;
+  max-width: 44px !important;
+
+  .cds--list-box__field {
+    padding-inline-start: 4px !important;
+    padding-inline-end: 18px !important;
+    justify-content: center;
+  }
+
+  .cds--list-box__label {
+    text-align: center !important;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    font-size: 0.8125rem;
+  }
+
+  .cds--list-box__menu-icon {
+    right: 2px !important;
+    width: 14px;
+    height: 14px;
+    svg {
+      width: 12px;
+      height: 12px;
+    }
+  }
+
+  .cds--list-box__menu {
+    min-inline-size: 44px !important;
+    inline-size: max-content !important;
+  }
+}
+
+// Dropdown principal da etapa (modo / modelo / etc.)
+.stage-dd-ctrl .stage-main-select {
+  flex: 1 1 auto;
+  min-width: 65px;
+  max-width: 130px;
+
+  .cds--list-box__field {
+    padding-inline: 6px 22px !important;
+  }
+
+  .cds--list-box__label {
+    font-size: 0.8125rem;
+  }
+}
+
+// Dropdown secundário da etapa (transporte / idioma)
+.stage-dd-ctrl .stage-sec-select {
+  flex: 0 1 auto;
+  min-width: 55px;
+  max-width: 90px;
+
+  .cds--list-box__field {
+    padding-inline: 6px 20px !important;
+  }
+
+  .cds--list-box__label {
+    font-size: 0.8125rem;
+  }
+}
+
+// Dropdown de SSH / Transporte: menor possível cabendo 'SSH' e 'Local'
+.stage-dd-ctrl .stage-sec-select--ssh {
+  flex: 0 0 66px !important;
+  width: 66px !important;
+  min-width: 66px !important;
+  max-width: 66px !important;
+
+  .cds--list-box__field {
+    padding-inline-start: 6px !important;
+    padding-inline-end: 20px !important;
+  }
+
+  .cds--list-box__label {
+    font-weight: 600;
+    font-size: 0.8125rem;
+  }
+
+  .cds--list-box__menu-icon {
+    right: 2px !important;
+    width: 14px;
+    height: 14px;
+    svg {
+      width: 12px;
+      height: 12px;
+    }
+  }
+
+  .cds--list-box__menu {
+    min-inline-size: 66px !important;
+    inline-size: max-content !important;
+  }
+}
+
+// No menu aberto do dropdown das etapas: exibe o nome por completo sem reticências
+.stage-dd-ctrl .cds--list-box__menu {
+  inline-size: max-content !important;
+  min-inline-size: 100% !important;
+  max-inline-size: min(480px, 90vw) !important;
+  z-index: 9999 !important;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5) !important;
+}
+
+.stage-dd-ctrl .cds--list-box__menu-item {
+  inline-size: auto !important;
+  white-space: nowrap !important;
+}
+
+.stage-dd-ctrl .cds--list-box__menu-item__option {
+  display: block !important;
+  inline-size: auto !important;
+  max-inline-size: none !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  white-space: nowrap !important;
+  padding-inline-end: 28px !important;
 }
 
 .live2-body {
