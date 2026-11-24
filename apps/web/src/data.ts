@@ -148,7 +148,7 @@ export interface ParamDoc {
 
 const BACKENDS = [
   { val: 'sck', label: 'Aplicações — ScreenCaptureKit (automático)' },
-  { val: 'sounddevice', label: 'Microfone — padrão do sistema (PortAudio)' },
+  { val: 'sounddevice', label: 'Microfone — PortAudio (entrada do sistema)' },
   { val: 'chat', label: 'Chat — entrada de texto interativa' },
   { val: 'ffmpeg', label: 'ffmpeg — avfoundation (legado)' },
 ];
@@ -162,7 +162,7 @@ export const LANGS = [
 
 export const PARAM_HELP: Record<string, Record<string, ParamDoc>> = {
   'capture.ffmpeg': {
-    backend: { help: 'modo de entrada: Aplicações (sck), Microfone (sounddevice) ou Chat (chat)', def: 'sck', control: 'dropdown', options: BACKENDS },
+    backend: { help: 'modo de entrada: Aplicações (sck), Microfone (sounddevice) ou Chat (chat)', def: 'chat', control: 'dropdown', options: BACKENDS },
     input: { help: 'sck: nome do app da call (Teams/zoom.us/Chrome); sounddevice: device (BlackHole/Microfone); ffmpeg: índice :N', def: ':0' },
     placeholder: { help: 'texto exibido no campo de chat quando em modo Chat', def: 'Digite sua mensagem ou comando…', control: 'text' },
     initialMessage: { help: 'mensagem inicial opcional enviada automaticamente no modo Chat', def: '', control: 'textarea' },
@@ -172,7 +172,7 @@ export const PARAM_HELP: Record<string, Record<string, ParamDoc>> = {
     pythonPath: { help: 'python do .venv (backend sounddevice)', def: '.venv/bin/python' },
     sidecarPath: { help: 'capture-sidecar.py (backend sounddevice)', def: 'services/capture-sidecar.py' },
     sckPath: { help: 'binário capture-sck (backend sck)', def: 'services/capture-sck' },
-    isDefault: { help: 'marca este Input como padrão (controlado pelo botão de microfone na topbar)', def: 'false', control: 'toggle' },
+    isDefault: { help: 'marca este Input como padrão (controlado pelo botão Microfone/Voz na topbar; fica logo abaixo do seletor de backend)', def: 'false', control: 'toggle' },
   },
   'input.chat': {
     placeholder: { help: 'texto exibido no campo de prompt da interface', def: 'Digite sua mensagem ou comando…', control: 'text' },

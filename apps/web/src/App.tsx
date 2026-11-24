@@ -34,13 +34,12 @@ function modeFromFlow(f: Flow): InputMode {
   const defId = resolveDefaultNodeId(f, 'capture.ffmpeg');
   const cap = (defId ? f.nodes.find((n) => n.id === defId) : undefined) ?? f.nodes.find((n) => n.type === 'capture.ffmpeg');
   if (cap) {
-    const backend = String(cap.params?.backend ?? 'sck');
+    const backend = String(cap.params?.backend ?? 'chat');
     if (backend === 'chat' || cap.params?.muted === true || cap.enabled === false) return 'chat';
     if (backend === 'sounddevice') return 'mic';
     return 'apps';
   }
-  if (f.nodes.some((n) => n.type === 'input.chat')) return 'chat';
-  return 'apps';
+  return 'chat';
 }
 
 function outputModeFromFlow(f: Flow): OutputMode {
@@ -75,8 +74,8 @@ export function App() {
   const [theme, setTheme] = useState<'g100' | 'white'>(() => {
     try { return localStorage.getItem('falador.theme') === 'white' ? 'white' : 'g100'; } catch { return 'g100'; }
   });
-  const [inputMode, setInputMode] = useState<InputMode>(() => readSavedInputMode() ?? 'apps');
-  const lastVoiceModeRef = useRef<'apps' | 'mic'>(inputMode === 'mic' ? 'mic' : 'apps');
+  const [inputMode, setInputMode] = useState<InputMode>(() => readSavedInputMode() ?? 'chat');
+  const lastVoiceModeRef = useRef<'apps' | 'mic'>('mic');
   const [outputMode, setOutputMode] = useState<OutputMode>(() => readSavedOutputMode() ?? 'write');
   const [inputResetTick, setInputResetTick] = useState(0);
   const [outputResetTick, setOutputResetTick] = useState(0);

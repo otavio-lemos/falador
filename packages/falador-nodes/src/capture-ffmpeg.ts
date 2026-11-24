@@ -2,7 +2,8 @@
 // SAÍDA: out (pcm16k) chunks crus de N ms (default 80 ms ⇒ 2560 bytes @16k).
 //
 // Backends (params.backend):
-//   'ffmpeg' (default histórico): avfoundation, input ':N' (índice de ÁUDIO do
+//   'chat' (default): modo texto interativo via __registerChatInput (sem áudio; emite out_text e parcs).
+//   'ffmpeg': avfoundation, input ':N' (índice de ÁUDIO do
 //     ffmpeg — liste com `ffmpeg -f avfoundation -list_devices true -i ""`).
 //     ⚠ ffmpeg 9.0.2/macOS 27 perde ~75% dos samples (medido 2026-11-19, AGENTS §4).
 //   'sounddevice': services/capture-sidecar.py (PortAudio) — captura 100%.
@@ -13,7 +14,6 @@
 //     input = NOME do app da call (ex. 'Teams', 'zoom.us', 'Chrome'); vazio = todos.
 //     Filtro por app = TTS de outro processo NÃO entra → sem eco digital.
 //     Requer permissão de Gravação de Tela (TCC). macOS 13+ (audio-only na prática).
-//   'chat': modo texto interativo via __registerChatInput (sem áudio; emite out_text e parcs).
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -40,11 +40,11 @@ export const captureFfmpeg: NodeTypeDef = {
     'chunkMs',
     'ffmpegPath',
     'backend',
+    'isDefault',
     'pythonPath',
     'sidecarPath',
     'sckPath',
     'muted',
-    'isDefault',
     'placeholder',
     'initialMessage',
   ],
@@ -88,8 +88,8 @@ export const captureFfmpeg: NodeTypeDef = {
     return errs;
   },
   create: (ctx: NodeCtx): NodeRuntime => {
-    const backend = (ctx.params.backend as string | undefined) ?? 'sck';
-    const input = (ctx.params.input as string | undefined) ?? (backend === 'sck' ? '' : ':0');
+    const backend = (ctx.params.backend as string | undefined) ?? 'chat';
+    const input = (ctx.params.input as string | undefined) ?? ((backend === 'chat' || backend === 'sck') ? '' : ':0');
     const muted = ctx.params.muted === true;
     const initialMessage =
       typeof ctx.params.initialMessage === 'string' ? ctx.params.initialMessage.trim() : '';

@@ -148,7 +148,7 @@ export function deriveStages(flow: Flow): Stage[] {
     if (n.enabled === false) continue;
     const p = n.params as Record<string, unknown>;
     if (n.type === 'capture.ffmpeg') {
-      const backend = String(p.backend ?? 'sck');
+      const backend = String(p.backend ?? 'chat');
       const mode: 'apps' | 'mic' | 'chat' =
         backend === 'chat' || p.muted === true
           ? 'chat'
