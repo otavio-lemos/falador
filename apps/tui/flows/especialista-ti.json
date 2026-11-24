@@ -1,7 +1,7 @@
 {
   "version": 1,
   "stopWhenSourcesDone": false,
-  "description": "Assistente Especialista em Implantação/Configuração/Suporte/Análise de TI: agente Qwen3-Coder-30B-A3B com loop infinito até atingir objetivo. Conecta via SSH (direto ou via bastion/jump host), usa ferramentas (exec, mcp, web_search, crawler, workflow, rag), executa comandos com aprovação humana OBRIGATÓRIA a cada passo, auditoria completa, console dedicado em popup exibindo tudo que digita/recebe, output do console realimenta o agente. Input via Chat (padrão) ou voz via ASR.",
+  "description": "Especialista em Implantação/Configuração/Suporte/Análise de TI: agente Qwen3-Coder-30B-A3B com loop infinito até atingir objetivo. Conecta via SSH (direto ou via bastion/jump host), usa ferramentas (exec, mcp, web_search, crawler, workflow, rag), executa comandos com aprovação humana OBRIGATÓRIA a cada passo, auditoria completa, console dedicado em popup exibindo tudo que digita/recebe, output do console realimenta o agente. Input via Chat (padrão) ou voz via ASR.",
   "nodes": [
     {
       "id": "input",
