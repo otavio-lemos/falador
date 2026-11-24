@@ -15,6 +15,7 @@ import {
   type ToolProvider,
 } from '../../falador-graph/src/index.ts';
 import { payloadText } from './sse.ts';
+import { redactSecrets } from './redact.ts';
 
 export const DEFAULT_READONLY_PREFIXES: readonly string[] = [
   'uname',
@@ -60,6 +61,38 @@ const HARD_DENY_BINARIES = new Set([
   'pkill',
   'iptables',
   'nft',
+]);
+
+export const INTERACTIVE_DENY_BINARIES = new Set([
+  'vim',
+  'vi',
+  'nvim',
+  'nano',
+  'emacs',
+  'pico',
+  'ed',
+  'top',
+  'htop',
+  'btop',
+  'atop',
+  'iotop',
+  'iftop',
+  'less',
+  'more',
+  'most',
+  'man',
+  'watch',
+  'tmux',
+  'screen',
+  'ssh',
+  'sftp',
+  'ftp',
+  'telnet',
+  'psql',
+  'mysql',
+  'sqlite3',
+  'redis-cli',
+  'mongosh',
 ]);
 
 const FORBIDDEN_METACHARS: readonly string[] = [
@@ -329,6 +362,61 @@ export function validateCommand(input: unknown, policy: ExecPolicy): ValidateRes
     };
   }
 
+  // Denylist determinística de binários interativos (sem TTY)
+  if (INTERACTIVE_DENY_BINARIES.has(bin)) {
+    return {
+      ok: false,
+      code: 'EXEC_POLICY_DENIED',
+      reason: `Binário interativo bloqueado (sem TTY): ${bin}`,
+      command,
+    };
+  }
+
+  // Flags interativas/infinitas em argv (para antes de '--')
+  if ((bin === 'docker' || bin === 'kubectl') && argv[1]?.toLowerCase() === 'exec') {
+    for (const arg of argv.slice(2)) {
+      if (arg === '--') break;
+      if (
+        arg === '-i' ||
+        arg === '-t' ||
+        arg === '-it' ||
+        arg === '-ti' ||
+        arg === '--interactive' ||
+        arg === '--tty' ||
+        arg.startsWith('--interactive=') ||
+        arg.startsWith('--tty=') ||
+        /^-[a-zA-Z]*[it][a-zA-Z]*$/.test(arg)
+      ) {
+        return {
+          ok: false,
+          code: 'EXEC_POLICY_DENIED',
+          reason: `Flag interativa bloqueada em ${bin} exec: ${arg}`,
+          command,
+        };
+      }
+    }
+  }
+
+  if (bin === 'tail' || bin === 'journalctl') {
+    for (const arg of argv.slice(1)) {
+      if (arg === '--') break;
+      if (
+        arg === '-f' ||
+        arg === '-F' ||
+        arg === '--follow' ||
+        arg.startsWith('--follow=') ||
+        /^-[a-zA-Z]*[fF][a-zA-Z]*$/.test(arg)
+      ) {
+        return {
+          ok: false,
+          code: 'EXEC_POLICY_DENIED',
+          reason: `Flag de streaming infinito bloqueada em ${bin}: ${arg}`,
+          command,
+        };
+      }
+    }
+  }
+
   // 4. Allowlist de prefixo com fronteira de palavra
   const normalized = command.replace(/\s+/g, ' ').trim();
   const prefixes = Array.isArray(policy.allowedPrefixes) ? policy.allowedPrefixes : [];
@@ -457,7 +545,12 @@ class TailBuffer {
 function writeAuditEntry(auditLogPath: string, entry: AuditEntry, ctx: NodeCtx): void {
   try {
     mkdirSync(dirname(auditLogPath), { recursive: true });
-    appendFileSync(auditLogPath, `${JSON.stringify(entry)}\n`, 'utf8');
+    const safeEntry: AuditEntry = {
+      ...entry,
+      command: redactSecrets(entry.command).text,
+      ...(typeof entry.reason === 'string' ? { reason: redactSecrets(entry.reason).text } : {}),
+    };
+    appendFileSync(auditLogPath, `${JSON.stringify(safeEntry)}\n`, 'utf8');
   } catch (err: unknown) {
     ctx.log('warn', `exec.command falha ao gravar audit log em ${auditLogPath}: ${(err as Error)?.message ?? String(err)}`);
   }
@@ -496,23 +589,28 @@ function formatReport(opts: {
   stderr: string;
   reason?: string;
 }): string {
+  const safeCommand = redactSecrets(opts.command).text;
+  const safeStdout = redactSecrets(opts.stdout).text;
+  const safeStderr = redactSecrets(opts.stderr).text;
+  const safeReason = opts.reason !== undefined ? redactSecrets(opts.reason).text : undefined;
+
   const lines: string[] = [];
   if (opts.dryRun) {
-    lines.push(`[DRY-RUN] Comando validado (${opts.transport} @ ${opts.host}): ${opts.command}`);
-    if (opts.reason) lines.push(`Motivo: ${opts.reason}`);
+    lines.push(`[DRY-RUN] Comando validado (${opts.transport} @ ${opts.host}): ${safeCommand}`);
+    if (safeReason) lines.push(`Motivo: ${safeReason}`);
     lines.push('Nenhuma execução real foi disparada (dryRun=true).');
     return lines.join('\n');
   }
 
   const status = opts.timedOut ? 'TIMEOUT' : `exit=${opts.exitCode ?? 'null'}`;
-  lines.push(`[EXEC ${opts.transport} @ ${opts.host}] ${opts.command} (${status}, ${opts.durationMs} ms)`);
-  if (opts.stdout.trim()) {
+  lines.push(`[EXEC ${opts.transport} @ ${opts.host}] ${safeCommand} (${status}, ${opts.durationMs} ms)`);
+  if (safeStdout.trim()) {
     lines.push('--- stdout ---');
-    lines.push(opts.stdout.trimEnd());
+    lines.push(safeStdout.trimEnd());
   }
-  if (opts.stderr.trim()) {
+  if (safeStderr.trim()) {
     lines.push('--- stderr ---');
-    lines.push(opts.stderr.trimEnd());
+    lines.push(safeStderr.trimEnd());
   }
   return lines.join('\n');
 }
@@ -677,8 +775,8 @@ export const execCommand: NodeTypeDef = {
         try {
           onExecution?.({
             nodeId: ctx.id,
-            command: deniedCommand,
-            output: `EXEC_POLICY_DENIED: ${validation.reason}`,
+            command: redactSecrets(deniedCommand).text,
+            output: redactSecrets(`EXEC_POLICY_DENIED: ${validation.reason}`).text,
             host: deniedHost,
             ok: false,
             dryRun,
@@ -733,8 +831,8 @@ export const execCommand: NodeTypeDef = {
         try {
           onExecution?.({
             nodeId: ctx.id,
-            command,
-            output: report,
+            command: redactSecrets(command).text,
+            output: redactSecrets(report).text,
             host,
             ok: true,
             exitCode: 0,
@@ -770,7 +868,7 @@ export const execCommand: NodeTypeDef = {
         const tExecEndMs = Date.now();
         const report = 'Execução cancelada (signal abortado).';
         try {
-          onExecution?.({ nodeId: ctx.id, command, output: report, host, ok: false, exitCode: null, durationMs: tExecEndMs - tExecStartMs, dryRun: false, ts: Date.now() });
+          onExecution?.({ nodeId: ctx.id, command: redactSecrets(command).text, output: redactSecrets(report).text, host, ok: false, exitCode: null, durationMs: tExecEndMs - tExecStartMs, dryRun: false, ts: Date.now() });
         } catch { /* callback do host */ }
         return {
           kind: 'ok',
@@ -914,8 +1012,8 @@ export const execCommand: NodeTypeDef = {
       try {
         onExecution?.({
           nodeId: ctx.id,
-          command,
-          output: report,
+          command: redactSecrets(command).text,
+          output: redactSecrets(report).text,
           host,
           ok: __ok,
           exitCode: execResult.exitCode,

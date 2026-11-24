@@ -842,6 +842,128 @@ describe('ADR-007 Fase B — exec.command (validador adversarial + execução se
       `'grep' '-E' 'erro 502' '/var/log/nginx/error.log'`,
     );
   });
+
+  test('E15: INTERACTIVE_DENY_BINARIES e flags interativas/infinitas são bloqueados com EXEC_POLICY_DENIED', () => {
+    const policy: ExecPolicy = {
+      transport: 'local',
+      mode: 'allowlist',
+      allowedPrefixes: [
+        'vim', 'top', 'htop', 'less', 'ssh', 'psql', 'tmux', 'nano',
+        'docker exec', 'kubectl exec', 'tail', 'journalctl',
+      ],
+      allowedHosts: [],
+    };
+
+    for (const cmd of ['vim /etc/hosts', 'top', 'htop', 'less /var/log/syslog', 'ssh user@host', 'psql -U postgres', 'tmux ls', 'nano a.txt']) {
+      const res = validateCommand(cmd, policy);
+      assert.equal(res.ok, false, `Deveria bloquear comando interativo: ${cmd}`);
+      if (!res.ok) assert.equal(res.code, 'EXEC_POLICY_DENIED');
+    }
+
+    for (const cmd of [
+      'docker exec -it app sh',
+      'docker exec -ti app sh',
+      'docker exec -i app sh',
+      'docker exec --tty app sh',
+      'kubectl exec -it pod -- bash',
+      'kubectl exec --interactive pod -- ls',
+      'tail -f /var/log/syslog',
+      'tail -Fn 20 /var/log/syslog',
+      'journalctl --follow -u nginx',
+      'journalctl -fu nginx',
+    ]) {
+      const res = validateCommand(cmd, policy);
+      assert.equal(res.ok, false, `Deveria bloquear flag interativa/infinita: ${cmd}`);
+      if (!res.ok) assert.equal(res.code, 'EXEC_POLICY_DENIED');
+    }
+
+    // Equivalentes não-interativos passam
+    for (const cmd of ['docker exec app ls -la', 'kubectl exec pod -- uptime', 'tail -n 20 /var/log/syslog', 'journalctl -u nginx -n 50']) {
+      const res = validateCommand(cmd, policy);
+      assert.equal(res.ok, true, `Deveria permitir comando não-interativo: ${cmd}`);
+    }
+  });
+
+  test('E16: exec.command mascara segredos em report, onExecution e audit log', async () => {
+    const tmp = makeTempAuditPath();
+    const execEvents: Array<Record<string, unknown>> = [];
+    const outputs: string[] = [];
+    try {
+      const src: NodeTypeDef = {
+        type: 'test.src_secret',
+        sourceOnly: true,
+        inputs: [],
+        outputs: [{ name: 'out', type: 'phrase' }],
+        create: (ctx) => ({
+          async start() {
+            await ctx.emit('out', { command: 'echo ghp_abcdefghijklmnopqrstuvwxyz123456', reason: 'TOKEN=sk-proj-abcdefghijklmnopqrstuvwxyz123456' });
+          },
+          async onInput() {},
+          async stop() {},
+        }),
+      };
+      const sinkNode: NodeTypeDef = {
+        type: 'test.sink_secret',
+        sink: true,
+        inputs: [{ name: 'in', type: 'phrase' }],
+        outputs: [],
+        create: () => ({
+          async start() {},
+          async onInput(_p, msg) {
+            if (!msg.control && typeof msg.payload === 'string') outputs.push(msg.payload);
+          },
+          async stop() {},
+        }),
+      };
+
+      const reg = createRegistry().register(src).register(execCommand).register(sinkNode);
+      const flow: FlowSpec = {
+        version: 1,
+        stopWhenSourcesDone: true,
+        nodes: [
+          { id: 'src', type: 'test.src_secret' },
+          {
+            id: 'exec',
+            type: 'exec.command',
+            params: {
+              transport: 'local',
+              mode: 'allowlist',
+              dryRun: false,
+              allowedPrefixes: ['echo'],
+              auditLogPath: tmp.file,
+            },
+          },
+          { id: 'sink', type: 'test.sink_secret' },
+        ],
+        edges: [
+          { from: 'src.out', to: 'exec.in' },
+          { from: 'exec.out', to: 'sink.in' },
+        ],
+        bindings: {
+          exec: { __onExecution: (ev: Record<string, unknown>) => execEvents.push(ev) },
+        },
+      };
+
+      const rg = await runGraph(flow, reg);
+      await rg.done;
+
+      assert.equal(outputs.length, 1);
+      assert.ok(!outputs[0].includes('ghp_abcdefghijklmnopqrstuvwxyz123456'));
+      assert.ok(outputs[0].includes('[REDACTED:github_token]'));
+
+      assert.equal(execEvents.length, 1);
+      assert.ok(!String(execEvents[0].command).includes('ghp_abcdefghijklmnopqrstuvwxyz123456'));
+      assert.ok(!String(execEvents[0].output).includes('ghp_abcdefghijklmnopqrstuvwxyz123456'));
+
+      const lines = readAuditLines(tmp.file);
+      assert.equal(lines.length, 1);
+      assert.ok(!String(lines[0].command).includes('ghp_abcdefghijklmnopqrstuvwxyz123456'));
+      assert.ok(!String(lines[0].reason).includes('sk-proj-abcdefghijklmnopqrstuvwxyz123456'));
+      assert.ok(String(lines[0].command).includes('[REDACTED:github_token]'));
+    } finally {
+      tmp.cleanup();
+    }
+  });
 });
 
 describe('ADR-007 Integração — llm.omlx + RAG automático (context/docs.json)', () => {

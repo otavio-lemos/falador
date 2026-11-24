@@ -21,13 +21,15 @@ import { omlxAuthHeaders, payloadText, postJsonBytes } from './sse.ts';
 import { inheritTrace } from './trace.ts';
 import { parsePlanItems, preview, type AuditEvent, type PlanItem } from './audit.ts';
 import { validateGoal } from './goal-validator.ts';
+import { redactSecrets, redactUnknown } from './redact.ts';
 
 const DEFAULT_BASE = 'http://127.0.0.1:8080';
 const DEFAULT_MODEL = 'LiquidAI--LFM3-1.7B-MLX-4bit';
 const DEFAULT_TEMPERATURE = 0.1;
 const DEFAULT_MAX_TOKENS = 512;
 const DEFAULT_MAX_STEPS = 5;
-const MAX_STEPS_CAP = 12;
+const MAX_STEPS_CAP = 50;
+const DEFAULT_CHECKPOINT_EVERY_STEPS = 15;
 const DEFAULT_MAX_TOOL_OUTPUT_CHARS = 8000;
 const DEFAULT_APPROVAL_POLICY = 'always';
 const DEFAULT_HISTORY_MAX = 4;
@@ -269,6 +271,7 @@ export const agentTools: NodeTypeDef = {
     'historyCharBudget',
     'validatorModel',
     'goalConfidenceThreshold',
+    'checkpointEverySteps',
   ],
   bindingNames: ['__gate', '__onAgentStep', '__registerReset', '__onResetHistory', '__onThought', '__onAudit'],
   inputs: [
@@ -284,13 +287,16 @@ export const agentTools: NodeTypeDef = {
         errs.push({ path: `params.${k}`, code: 'INVALID_PARAM', message: `${k} deve ser string` });
       }
     }
-    for (const k of ['temperature', 'maxTokens', 'maxSteps', 'maxToolOutputChars', 'historyMax', 'historyCharBudget']) {
+    for (const k of ['temperature', 'maxTokens', 'maxSteps', 'maxToolOutputChars', 'historyMax', 'historyCharBudget', 'checkpointEverySteps']) {
       if (p[k] !== undefined && (typeof p[k] !== 'number' || Number.isNaN(p[k]))) {
         errs.push({ path: `params.${k}`, code: 'INVALID_PARAM', message: `${k} deve ser número` });
       }
     }
     if (typeof p.maxSteps === 'number' && p.maxSteps < 1) {
       errs.push({ path: 'params.maxSteps', code: 'INVALID_PARAM', message: 'maxSteps deve ser >= 1' });
+    }
+    if (typeof p.checkpointEverySteps === 'number' && p.checkpointEverySteps < 0) {
+      errs.push({ path: 'params.checkpointEverySteps', code: 'INVALID_PARAM', message: 'checkpointEverySteps deve ser >= 0' });
     }
     if (typeof p.maxToolOutputChars === 'number' && p.maxToolOutputChars <= 0) {
       errs.push({ path: 'params.maxToolOutputChars', code: 'INVALID_PARAM', message: 'maxToolOutputChars deve ser > 0' });
@@ -344,6 +350,10 @@ export const agentTools: NodeTypeDef = {
     const validatorModel = (ctx.params.validatorModel as string | undefined)?.trim() || undefined;
     const goalConfidenceThreshold =
       (ctx.params.goalConfidenceThreshold as number | undefined) ?? DEFAULT_GOAL_CONFIDENCE_THRESHOLD;
+    const checkpointEverySteps = Math.max(
+      0,
+      Math.floor((ctx.params.checkpointEverySteps as number | undefined) ?? DEFAULT_CHECKPOINT_EVERY_STEPS),
+    );
 
     const gate = ctx.bindings.__gate as AgentGateHolder | undefined;
     const onAgentStep = ctx.bindings.__onAgentStep as ((ev: AgentStepEvent) => void) | undefined;
@@ -369,14 +379,22 @@ export const agentTools: NodeTypeDef = {
     function emitAudit(ev: Omit<AuditEvent, 'ts' | 'nodeId'>): void {
       if (typeof onAudit !== 'function') return;
       try {
-        onAudit({ ts: Date.now(), nodeId: ctx.id, ...ev });
+        const safeEv: Omit<AuditEvent, 'ts' | 'nodeId'> = {
+          ...ev,
+          ...(typeof ev.text === 'string' ? { text: redactSecrets(ev.text).text } : {}),
+          ...(typeof ev.outputPreview === 'string' ? { outputPreview: redactSecrets(ev.outputPreview).text } : {}),
+          ...(typeof ev.goal === 'string' ? { goal: redactSecrets(ev.goal).text } : {}),
+          ...(ev.args !== undefined ? { args: redactUnknown(ev.args) as Record<string, unknown> } : {}),
+        };
+        onAudit({ ts: Date.now(), nodeId: ctx.id, ...safeEv });
       } catch {
         /* callback do host não derruba o nó */
       }
     }
 
     function pushEvidence(entry: string): void {
-      const capped = entry.length > 4000 ? entry.slice(0, 4000) + '\n[…evidência cortada…]' : entry;
+      const safe = redactSecrets(entry).text;
+      const capped = safe.length > 4000 ? safe.slice(0, 4000) + '\n[…evidência cortada…]' : safe;
       evidence.push(capped);
       let total = evidence.reduce((s, e) => s + e.length, 0);
       while (evidence.length > 1 && total > EVIDENCE_CHAR_BUDGET) {
@@ -387,7 +405,12 @@ export const agentTools: NodeTypeDef = {
     function emitStep(ev: AgentStepEvent): void {
       if (typeof onAgentStep !== 'function') return;
       try {
-        onAgentStep(ev);
+        const safeEv: AgentStepEvent = {
+          ...ev,
+          args: redactUnknown(ev.args) as Record<string, unknown>,
+          ...(typeof ev.output === 'string' ? { output: redactSecrets(ev.output).text } : {}),
+        };
+        onAgentStep(safeEv);
       } catch {
         /* callback do host não derruba o nó */
       }
@@ -600,6 +623,7 @@ export const agentTools: NodeTypeDef = {
               // Plano com itens pendentes SEMPRE bloqueia a conclusão (independente de validador).
               const pendingItems = (plan ?? []).filter((p) => p.status !== 'verified');
               if (pendingItems.length > 0) {
+                messages.push({ role: 'assistant', content: finalText });
                 messages.push({
                   role: 'user',
                   content: `O plano ainda tem itens PENDENTES (não verificados). Não declare conclusão antes de verificar cada um com evidência real:\n${pendingItems.map((p) => `- [${p.status}] ${p.id}: ${p.description} (verificação: ${p.verification})`).join('\n')}\nExecute as verificações, atualize o plano com update_plan e só então conclua.`,
@@ -621,6 +645,15 @@ export const agentTools: NodeTypeDef = {
                 return;
               }
 
+              if (plan === null) {
+                messages.push({ role: 'assistant', content: finalText });
+                messages.push({
+                  role: 'user',
+                  content: 'Antes de declarar conclusão, chame update_plan com um plano verificável (itens com critério de verificação e evidência real).',
+                });
+                continue;
+              }
+
               // 2. Avaliador INDEPENDENTE (outro modelo) julga objetivo + evidência + plano
               const validation = await validateGoal({
                 baseUrl,
@@ -636,6 +669,7 @@ export const agentTools: NodeTypeDef = {
               // 3. Achou atingido com confiança ⇒ confirmação HUMANA final obrigatória
               if (validation.achieved && validation.confidence >= goalConfidenceThreshold) {
                 if (!gate) {
+                  messages.push({ role: 'assistant', content: finalText });
                   messages.push({
                     role: 'user',
                     content: 'A conclusão exige confirmação humana, mas o gate não está configurado. Continue coletando evidência ou explique o que falta.',
@@ -670,6 +704,7 @@ export const agentTools: NodeTypeDef = {
                   completed = true;
                   return;
                 }
+                messages.push({ role: 'assistant', content: finalText });
                 messages.push({
                   role: 'user',
                   content: 'O humano REJEITOU a confirmação de conclusão do objetivo. Continue trabalhando: endereçe o que falta ou apresente nova evidência antes de tentar concluir de novo.',
@@ -678,6 +713,7 @@ export const agentTools: NodeTypeDef = {
               }
 
               // 4. Não atingido ⇒ gaps/nextActions do avaliador realimentam o loop
+              messages.push({ role: 'assistant', content: finalText });
               messages.push({
                 role: 'user',
                 content: `Avaliador independente: objetivo NÃO atingido (confiança ${validation.confidence.toFixed(2)}).\nGaps: ${validation.gaps.join('; ') || '(não especificados)'}\nPróximas ações sugeridas: ${validation.nextActions.join('; ') || '(não especificadas)'}\nContinue a execução com base nisso.`,
@@ -859,7 +895,8 @@ export const agentTools: NodeTypeDef = {
 
               ctx.metrics.counter('agent.tools.toolCalls', 1);
               const rawOutput = typeof result.output === 'string' ? result.output : String(result.output ?? '');
-              const truncated = truncateToolOutput(rawOutput, maxToolOutputChars);
+              const redactedOutput = redactSecrets(rawOutput).text;
+              const truncated = truncateToolOutput(redactedOutput, maxToolOutputChars);
               const safeOutput = sanitizeToolOutput(truncated);
               const wrapped = `<tool_output name="${toolName}" ok="${String(result.ok)}">\n${safeOutput}\n</tool_output>`;
 
@@ -870,7 +907,7 @@ export const agentTools: NodeTypeDef = {
               });
 
               // Evidência REAL para o avaliador independente (budget mantém a cauda)
-              pushEvidence(`Tool: ${toolName}\nArgs: ${JSON.stringify(args)}\nResult: ${rawOutput}`);
+              pushEvidence(`Tool: ${toolName}\nArgs: ${JSON.stringify(args)}\nResult: ${redactedOutput}`);
 
               const resultHost = typeof result.meta?.host === 'string'
                 ? result.meta.host
@@ -889,8 +926,17 @@ export const agentTools: NodeTypeDef = {
                 dryRun: result.dryRun,
                 host: resultHost,
                 transport: resultTransport,
-                outputPreview: preview(rawOutput),
-                ...(result.ok ? {} : { errorType: typeof result.meta?.errorType === 'string' ? result.meta.errorType : 'tool_failed' }),
+                outputPreview: preview(redactedOutput),
+                ...(result.ok
+                  ? {}
+                  : {
+                      errorType:
+                        typeof result.meta?.code === 'string'
+                          ? result.meta.code
+                          : typeof result.meta?.errorType === 'string'
+                            ? result.meta.errorType
+                            : 'tool_failed',
+                    }),
                 ...(typeof result.meta?.query === 'string'
                   ? { rag: {
                       query: result.meta.query,
@@ -919,6 +965,21 @@ export const agentTools: NodeTypeDef = {
             }
 
             prevStepSignatures = currentStepSignatures;
+
+            if (gate && checkpointEverySteps > 0 && step > 0 && step % checkpointEverySteps === 0 && step < maxSteps) {
+              const cpPreview = JSON.stringify({ tool: 'agent.checkpoint', step, maxSteps, goal: userGoal });
+              const cpRes = await requestGateApproval(gate, cpPreview, {
+                tool: 'agent.checkpoint',
+                args: { step, maxSteps, goal: userGoal },
+                step,
+              });
+              if (cpRes.cancelled || isAborted()) return;
+              if (cpRes.value === null) {
+                emitAudit({ op: 'gate', step, tool: 'agent.checkpoint', gate: 'rejected', ok: false, errorType: 'checkpoint_rejected' });
+                break;
+              }
+              emitAudit({ op: 'gate', step, tool: 'agent.checkpoint', gate: 'approved', ok: true });
+            }
           }
 
           // Esgotou maxSteps sem resposta final: 1 última chamada sem tools pedindo síntese
