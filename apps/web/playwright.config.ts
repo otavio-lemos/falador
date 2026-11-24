@@ -24,7 +24,9 @@ export default defineConfig({
     command: 'node ../web-server.mjs',
     url: `http://127.0.0.1:${PORT}/api/catalog`,
     env: { ...process.env, FALADOR_WEB_PORT: String(PORT) },
-    reuseExistingServer: !process.env.CI && !process.env.FALADOR_WEB_PORT,
+    // FALADOR_WEB_REUSE=1 permite testar contra um host já subido em porta isolada
+    // (útil quando :8787 é o host de produção do dono, com dist antigo).
+    reuseExistingServer: !process.env.CI && (!process.env.FALADOR_WEB_PORT || process.env.FALADOR_WEB_REUSE === '1'),
     timeout: 60_000,
     stdout: 'ignore',
     stderr: 'pipe',

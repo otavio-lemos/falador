@@ -510,7 +510,7 @@ function startRun(flow, runSeconds, flowName, testMode) {
   sessionBuffer = createEmptySession(flowName || flow?.name || 'sessao');
   let resolveExit;
   const exitPromise = new Promise((r) => { resolveExit = r; });
-  const runEntry = { child, clients, stopRequested: false, exitPromise, testMode: !!testMode, runId: null };
+  const runEntry = { child, clients, stopRequested: false, exitPromise, testMode: !!testMode, runId: null, sse: null };
   currentRun = runEntry;
   let clientStopTimer = null;
   const sses = (res) => {
@@ -534,6 +534,7 @@ function startRun(flow, runSeconds, flowName, testMode) {
       clientStopTimer.unref?.();
     });
   };
+  runEntry.sse = sses;
   let buf = '';
   child.stdout.on('data', (d) => {
     buf += d.toString();
@@ -931,6 +932,14 @@ async function handleApi(req, res, pathname) {
     }
     return json(res, 200, { ok: true, name: safe.name }), true;
   }
+  if (pathname === '/api/events' && req.method === 'GET') {
+    // janela do console ANEXA ao run atual; nunca inicia um novo run
+    if (!currentRun || typeof currentRun.sse !== 'function') {
+      return json(res, 409, { error: 'nenhum run em andamento' }), true;
+    }
+    currentRun.sse(res);
+    return true;
+  }
   if (pathname === '/api/run' && req.method === 'POST') {
     const body = await readBody(req);
     if (!body.flow) {
@@ -981,6 +990,8 @@ async function handleApi(req, res, pathname) {
       });
     }
     currentRun.child.stdin?.write(JSON.stringify({ type: 'gate_action', nodeId: body.nodeId, text: body.text ?? null }) + '\n');
+    // todas as janelas (aba + console) removem o card do gate ao ser respondido
+    broadcast('runner', { type: 'gate_cancelled', nodeId: String(body.nodeId), reason: 'answered' });
     return json(res, 200, { ok: true }), true;
   }
   if (pathname === '/api/stop' && req.method === 'POST') {

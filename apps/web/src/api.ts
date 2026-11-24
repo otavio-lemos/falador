@@ -209,6 +209,48 @@ export async function gateAction(nodeId: string, text: string | null): Promise<v
   });
 }
 
+// SSE do host: "event: <nome>\ndata: <json>". Usado por openRun (dono do run)
+// e openEvents (console anexado ao run já existente).
+async function readSse(r: Response, onEvent: (ev: RunnerEvent) => void, onEnd: (code: number) => void): Promise<void> {
+  if (!r.body) { onEnd(-1); return; }
+  const reader = r.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf('\n\n')) >= 0) {
+      const frame = buf.slice(0, idx); buf = buf.slice(idx + 2);
+      let evName = 'message'; let data = '';
+      for (const line of frame.split('\n')) {
+        if (line.startsWith('event:')) evName = line.slice(6).trim();
+        else if (line.startsWith('data:')) data += line.slice(5).trim();
+      }
+      if (!data) continue;
+      let parsed: unknown; try { parsed = JSON.parse(data); } catch { continue; }
+      if (evName === 'runner') onEvent(parsed as RunnerEvent);
+      else if (evName === 'runner_stderr') onEvent({ type: 'runner_stderr', ...(parsed as Record<string, unknown>) });
+      else if (evName === 'ended') { onEnd((parsed as { code: number }).code ?? 0); return; }
+    }
+  }
+  onEnd(-1); // stream fechou sem 'ended'
+}
+
+// GET /api/events → anexa o console ao run atual, sem iniciar outro.
+export function openEvents(
+  onEvent: (ev: RunnerEvent) => void,
+  onEnd: (code: number) => void,
+): AbortController {
+  const ctl = new AbortController();
+  fetch('/api/events', { signal: ctl.signal }).then(async (r) => {
+    if (!r.ok) { onEnd(-1); return; }
+    await readSse(r, onEvent, onEnd);
+  }).catch(() => { if (!ctl.signal.aborted) onEnd(-1); });
+  return ctl;
+}
+
 // POST /api/run → SSE. Cada frame: "event: <nome>\ndata: <json>".
 // nome 'runner' = evento do motor; 'ended' = fim (code); 'attached' = conectou.
 export function openRun(
@@ -239,29 +281,7 @@ export function openRun(
     }
     if (!r.body) { onError?.('resposta do host sem corpo SSE'); onEnd(-1); return; }
     onOpen?.();
-    const reader = r.body.getReader();
-    const dec = new TextDecoder();
-    let buf = '';
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      let idx;
-      while ((idx = buf.indexOf('\n\n')) >= 0) {
-        const frame = buf.slice(0, idx); buf = buf.slice(idx + 2);
-        let evName = 'message'; let data = '';
-        for (const line of frame.split('\n')) {
-          if (line.startsWith('event:')) evName = line.slice(6).trim();
-          else if (line.startsWith('data:')) data += line.slice(5).trim();
-        }
-        if (!data) continue;
-        let parsed: unknown; try { parsed = JSON.parse(data); } catch { continue; }
-        if (evName === 'runner') onEvent(parsed as RunnerEvent);
-        else if (evName === 'runner_stderr') onEvent({ type: 'runner_stderr', ...(parsed as Record<string, unknown>) });
-        else if (evName === 'ended') { onEnd((parsed as { code: number }).code ?? 0); return; }
-      }
-    }
-    onEnd(-1); // stream fechou sem 'ended'
+    await readSse(r, onEvent, onEnd);
   }).catch((err: unknown) => {
     if (!ctl.signal.aborted) {
       const msg = err instanceof Error ? err.message : String(err);

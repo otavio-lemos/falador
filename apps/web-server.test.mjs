@@ -563,4 +563,71 @@ describe('apps/web-server.mjs — RAG genérico, reset-history e exportação p�
       else process.env.FALADOR_TTS_URL = prevTts;
     }
   });
+
+  test('console: /api/events anexa ao run existente sem iniciar outro e recebe gate respondido', async () => {
+    const tmpRoot = mkdtempSync(join(tmpdir(), 'falador-console-test-'));
+    const prevLogs = process.env.FALADOR_LOGS_DIR;
+    process.env.FALADOR_LOGS_DIR = join(tmpRoot, 'logs');
+    const { createWebServer } = await import('./web-server.mjs');
+    const server = createWebServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const flow = {
+      version: 1, stopWhenSourcesDone: false,
+      nodes: [
+        { id: 'chat', type: 'input.chat', params: {} },
+        { id: 'out', type: 'sink.captions', params: { mode: 'callback' } },
+      ],
+      edges: [{ from: 'chat.out', to: 'out.in', capacity: 4, overflow: 'block' }],
+    };
+    const ctls = [];
+    try {
+      const before = await fetch(`${baseUrl}/api/events`);
+      assert.equal(before.status, 409, 'sem run não há o que anexar');
+      await before.body?.cancel();
+
+      const ctl = new AbortController(); ctls.push(ctl);
+      const run = await fetch(`${baseUrl}/api/run`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ flow, flowName: 'console-test' }), signal: ctl.signal,
+      });
+      assert.equal(run.status, 200);
+      await run.body.getReader().read(); // attached
+
+      const consoleCtl = new AbortController(); ctls.push(consoleCtl);
+      const attached = await fetch(`${baseUrl}/api/events`, { signal: consoleCtl.signal });
+      assert.equal(attached.status, 200);
+      const reader = attached.body.getReader();
+      const first = await reader.read();
+      assert.match(new TextDecoder().decode(first.value), /event: attached/);
+
+      // /api/events nunca cria run: o dono do run continua único
+      const second = await fetch(`${baseUrl}/api/run`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ flow }),
+      });
+      assert.equal(second.status, 409);
+      await second.body?.cancel();
+
+      const gate = await fetch(`${baseUrl}/api/gate`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nodeId: 'gate-1', text: 'uptime' }),
+      });
+      assert.equal(gate.status, 200);
+      let sawClose = false;
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline && !sawClose) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        sawClose = new TextDecoder().decode(value).includes('gate_cancelled');
+      }
+      assert.ok(sawClose, 'console anexado deve ver o gate respondido para fechar o card nas duas janelas');
+    } finally {
+      for (const c of ctls) c.abort();
+      await fetch(`${baseUrl}/api/stop`, { method: 'POST' }).catch(() => {});
+      await new Promise((resolve) => server.close(() => resolve()));
+      if (prevLogs === undefined) delete process.env.FALADOR_LOGS_DIR;
+      else process.env.FALADOR_LOGS_DIR = prevLogs;
+      rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
 });

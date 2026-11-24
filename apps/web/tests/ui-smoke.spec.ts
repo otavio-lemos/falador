@@ -351,11 +351,16 @@ test('console modal, plan progress indicator, goal validation, gate history and 
   const body = events.map((ev) => `event: runner\ndata: ${JSON.stringify(ev)}\n\n`).join('')
     + 'event: ended\ndata: {"code":0}\n\n';
 
-  await page.route('**/api/gate', (route) =>
+  await page.context().route('**/api/gate', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }),
   );
   await page.route('**/api/run', (route) =>
     route.fulfill({ status: 200, contentType: 'text/event-stream', body }),
+  );
+  const gateFrame = 'event: runner\ndata: ' + JSON.stringify(events[events.length - 1]) + '\n\n'
+    + 'event: attached\ndata: {}\n\n';
+  await page.context().route('**/api/events', (route) =>
+    route.fulfill({ status: 200, contentType: 'text/event-stream', body: gateFrame }),
   );
 
   await page.getByRole('button', { name: 'Runner' }).click();
@@ -369,22 +374,24 @@ test('console modal, plan progress indicator, goal validation, gate history and 
   await expect(planPanel).toContainText('exec uptime');
   await expect(planPanel).toContainText('up 10 days');
 
-  // Card agent-step + botão "Abrir no Console"
+  // Botão do card agent-step abre UMA janela real de console (não modal grudado na aba).
   const stepCard = page.locator('.live-chat-entry--agent-step');
   await expect(stepCard).toContainText('exec_ssh');
+  const popupPromise = page.context().waitForEvent('page');
   await stepCard.getByRole('button', { name: 'Abrir no Console' }).click();
-  const execModal = page.getByRole('dialog', { name: 'Execuções do run' });
-  await expect(execModal).toBeVisible();
-  await expect(execModal.getByRole('tab', { name: 'exec_ssh · srv-01 · 0' })).toBeVisible();
-  await expect(execModal).toContainText('up 10 days');
-  await execModal.getByRole('button', { name: 'Close' }).click();
-  await expect(execModal).not.toBeVisible();
+  const consolePage = await popupPromise;
+  await expect(consolePage).toHaveURL(/\/console$/);
+  await expect(consolePage.getByRole('heading', { name: 'Console do Agente' })).toBeVisible();
+  const gateCard = consolePage.getByRole('region', { name: 'Aprovação pendente agente' });
+  await expect(gateCard).toContainText('systemctl start nginx');
 
-  // Botão Console do LogsPanel abre o mesmo Modal
+  // Botão Console do LogsPanel reaproveita a mesma janela.
   await page.locator('.live2 .logs-panel').getByRole('button', { name: 'Console' }).click();
-  await expect(execModal).toBeVisible();
-  await execModal.getByRole('button', { name: 'Close' }).click();
-  await expect(execModal).not.toBeVisible();
+  await expect.poll(() => page.context().pages().filter((p) => p.url().endsWith('/console')).length).toBe(1);
+
+  // Aprovação feita no console espelha o histórico na conversa (BroadcastChannel).
+  await gateCard.getByRole('button', { name: 'Aprovar e executar' }).click();
+  await expect(gateCard).toHaveCount(0);
 
   // Cards Validação de Objetivo na Conversa
   const validationCards = page.locator('.live-chat-entry--goal-validation');
@@ -408,142 +415,57 @@ test('console modal, plan progress indicator, goal validation, gate history and 
   await expect(gateEntry).toBeVisible();
   await gateEntry.getByRole('button', { name: 'Aprovar e Executar' }).click();
   await expect(gateEntry).toHaveCount(0);
-  const gateHistoryEntry = page.locator('.live-chat-entry--gate-history');
+  const gateHistoryEntry = page.locator('.live-chat-entry--gate-history').first();
   await expect(gateHistoryEntry).toBeVisible();
   await expect(gateHistoryEntry).toContainText('Aprovado');
   await expect(gateHistoryEntry).toContainText('systemctl start nginx');
 });
 
-test('console modal streams chunks with bastion header, stderr filter, and cancel button while running', async ({ page }) => {
-  await page.addInitScript(() => {
-    const origFetch = window.fetch.bind(window);
-    window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-      if (url === '/api/run') {
-        const enc = new TextEncoder();
-        let ctrl!: ReadableStreamDefaultController<Uint8Array>;
-        const stream = new ReadableStream<Uint8Array>({
-          start(c) {
-            ctrl = c;
-            const push = (ev: Record<string, unknown>) => {
-              c.enqueue(enc.encode(`event: runner\ndata: ${JSON.stringify(ev)}\n\n`));
-            };
-            push({ type: 'run_started', runId: 'run-stream-1' });
-            push({
-              type: 'exec_start',
-              id: 'exec1:1700000000000:1',
-              nodeId: 'exec1',
-              host: 'app-01',
-              bastion: 'jump1.corp,jump2.corp',
-              command: 'tail -n 20 /var/log/app.log',
-              dryRun: false,
-              transport: 'ssh',
-              ts: 1700000000000,
-            });
-            push({
-              type: 'exec_chunk',
-              id: 'exec1:1700000000000:1',
-              stream: 'stdout',
-              text: 'linha stdout ok\n',
-              ts: 1700000000100,
-            });
-            push({
-              type: 'exec_chunk',
-              id: 'exec1:1700000000000:1',
-              stream: 'stderr',
-              text: 'aviso stderr\n',
-              ts: 1700000000200,
-            });
-          },
-        });
-        (window as unknown as Record<string, () => void>).__pushExecEnd = () => {
-          ctrl.enqueue(
-            enc.encode(
-              `event: runner\ndata: ${JSON.stringify({
-                type: 'exec_end',
-                id: 'exec1:1700000000000:1',
-                exitCode: 0,
-                durationMs: 120,
-                ok: true,
-                truncated: false,
-                ts: 1700000000300,
-              })}\n\n`,
-            ),
-          );
-        };
-        (window as unknown as Record<string, () => void>).__pushExec2Start = () => {
-          ctrl.enqueue(
-            enc.encode(
-              `event: runner\ndata: ${JSON.stringify({
-                type: 'exec_start',
-                id: 'exec1:1700000000400:2',
-                nodeId: 'exec1',
-                host: 'app-02',
-                command: 'uptime',
-                dryRun: false,
-                transport: 'ssh',
-                ts: 1700000000400,
-              })}\n\n`,
-            ),
-          );
-        };
-        init?.signal?.addEventListener('abort', () => {
-          try { ctrl.close(); } catch { /* already closed */ }
-        });
-        return new Response(stream, {
-          status: 200,
-          headers: { 'Content-Type': 'text/event-stream' },
-        });
-      }
-      return origFetch(input, init);
-    };
-  });
-
-  await page.goto('/');
-  await page.getByRole('combobox', { name: 'Workflow' }).click();
-  await page.getByRole('option', { name: 'assistente-especialista-ti' }).click();
-
+test('console anexado ao run mostra stream, bastion, filtros e cancelamento', async ({ page }) => {
+  const ev = (type: string, extra: Record<string, unknown> = {}) =>
+    `event: runner\ndata: ${JSON.stringify({ type, ...extra })}\n\n`;
+  const id = 'exec1:1700000000000:1';
+  const body = ev('exec_start', {
+    id, nodeId: 'exec1', host: 'app-01', bastion: 'jump1.corp,jump2.corp',
+    command: 'tail -n 20 /var/log/app.log', dryRun: false, transport: 'ssh', ts: 1700000000000,
+  }) + ev('exec_chunk', { id, stream: 'stdout', text: 'linha stdout ok\n', ts: 1700000000100 })
+    + ev('exec_chunk', { id, stream: 'stderr', text: 'aviso stderr\n', ts: 1700000000200 })
+    + ev('exec_end', { id, exitCode: 0, durationMs: 120, ok: true, ts: 1700000000300 })
+    + ev('exec_start', {
+      id: 'exec1:1700000000400:2', nodeId: 'exec1', host: 'app-02', command: 'uptime',
+      dryRun: false, transport: 'ssh', ts: 1700000000400,
+    });
+  await page.route('**/api/events', (route) =>
+    route.fulfill({ status: 200, contentType: 'text/event-stream', body }));
   let stopCalled = false;
   await page.route('**/api/stop', async (route) => {
     stopCalled = true;
     await route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
   });
 
-  await page.getByRole('button', { name: 'Runner' }).click();
-  await page.getByRole('button', { name: 'Iniciar', exact: true }).click();
-  await page.locator('.live2 .logs-panel').getByRole('button', { name: 'Console' }).click();
+  await page.goto('/console');
+  const card = page.locator('.console-card').filter({ hasText: 'tail -n 20 /var/log/app.log' });
+  await expect(card).toContainText('EXEC ATIVO');
+  await expect(card).toContainText('Bastion: jump1.corp,jump2.corp');
+  const output = card.locator('.console-output');
+  await expect(output).toContainText('linha stdout ok');
+  await expect(output).toContainText('aviso stderr');
 
-  const execModal = page.getByRole('dialog', { name: 'Execuções do run' });
-  await expect(execModal).toBeVisible();
-  await expect(execModal).toContainText('Host: app-01');
-  await expect(execModal).toContainText('Bastion: jump1.corp,jump2.corp');
-  await expect(execModal).toContainText('EXEC ATIVO');
-  await expect(execModal).toContainText('Em execução');
-  await expect(execModal.getByRole('button', { name: 'Cancelar' })).toBeVisible();
+  await page.locator('.console-filters').getByRole('button', { name: 'stdout' }).click();
+  await expect(output).toContainText('linha stdout ok');
+  await expect(output).not.toContainText('aviso stderr');
+  await page.locator('.console-filters').getByRole('button', { name: 'stderr' }).click();
+  await expect(output).toContainText('aviso stderr');
+  await expect(output).not.toContainText('linha stdout ok');
+  await page.locator('.console-filters').getByRole('button', { name: 'all' }).click();
+  await expect(output).toContainText('linha stdout ok');
+  await expect(output).toContainText('aviso stderr');
 
-  const terminal = execModal.locator('.exec-terminal');
-  await expect(terminal).toContainText('linha stdout ok');
-  await expect(terminal).toContainText('[stderr] aviso stderr');
-
-  await execModal.getByRole('tab', { name: 'stdout' }).click();
-  await expect(terminal).toContainText('linha stdout ok');
-  await expect(terminal).not.toContainText('aviso stderr');
-
-  await execModal.getByRole('tab', { name: 'stderr' }).click();
-  await expect(terminal).toContainText('[stderr] aviso stderr');
-  await expect(terminal).not.toContainText('linha stdout ok');
-
-  await execModal.getByRole('tab', { name: 'Todos' }).click();
-  await expect(terminal).toContainText('linha stdout ok');
-  await expect(terminal).toContainText('[stderr] aviso stderr');
-
-  await page.evaluate(() => (window as unknown as Record<string, () => void>).__pushExecEnd());
-  await expect(execModal).toContainText('Concluído');
-  await expect(execModal.getByRole('button', { name: 'Cancelar' })).toHaveCount(0);
-
-  await page.evaluate(() => (window as unknown as Record<string, () => void>).__pushExec2Start());
-  await expect(execModal).toContainText('Host: app-02');
-  await execModal.getByRole('button', { name: 'Cancelar' }).click();
+  // exec_end fechou a 1ª exec; a 2ª ainda está rodando e pode ser cancelada da janela.
+  await expect(card).toContainText('saída 0');
+  const running = page.locator('.console-card').filter({ hasText: 'uptime' });
+  await expect(running).toContainText('executando');
+  await page.getByRole('button', { name: 'Cancelar' }).click();
   await expect.poll(() => stopCalled).toBe(true);
 });
 

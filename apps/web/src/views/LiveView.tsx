@@ -13,11 +13,6 @@ import {
   Tag,
   TextArea,
   TextInput,
-  Tabs,
-  TabList,
-  Tab,
-  TabPanels,
-  TabPanel,
   CodeSnippet,
   ProgressIndicator,
   ProgressStep,
@@ -26,8 +21,6 @@ import {
   StructuredListBody,
   StructuredListRow,
   StructuredListCell,
-  ContentSwitcher,
-  Switch,
   preview__IconIndicator as IconIndicator,
 } from '@carbon/react';
 import {
@@ -432,36 +425,34 @@ export function LiveView({
   const [docsOpen, setDocsOpen] = useState(false);
   const [uploadTags, setUploadTags] = useState('');
   const [exportOpen, setExportOpen] = useState(false);
-  const [execOpen, setExecOpen] = useState(false);
-  const [consoleWin, setConsoleWin] = useState<Window | null>(null);
-  const [execTab, setExecTab] = useState(0);
-  const [streamFilter, setStreamFilter] = useState<'all' | 'stdout' | 'stderr'>('all');
   const [gateHistory, setGateHistory] = useState<GateHistoryItem[]>([]);
-  // Popup do browser dedicado ao Console do Agente: abre quando o modal de execuções abre.
+  // Uma janela de browser real, reaproveitada. Nunca about:blank, nunca innerHTML.
+  const consoleWinRef = useRef<Window | null>(null);
+  const openConsole = () => {
+    const w = consoleWinRef.current;
+    if (w && !w.closed) { w.focus(); return; }
+    consoleWinRef.current = window.open('/console', 'falador-console', 'popup,width=900,height=700,scrollbars=yes,resizable=yes');
+  };
+
+  // A janela do Console aprova gates; a conversa espelha o histórico sem reenviar o POST.
   useEffect(() => {
-    if (!execOpen) {
-      try { consoleWin?.close(); } catch { /* já fechado */ }
-      setConsoleWin(null);
-      return;
-    }
-    const w = window.open('', 'falador-console', 'width=900,height=700,scrollbars=yes,resizable=yes');
-    if (!w) return;
-    w.document.title = 'Falador Console';
-    setConsoleWin(w);
-    const refresh = () => {
-      const items = runner.executions
-        .map((e) => {
-          const cmd = String(e.command ?? '').slice(0, 140).replace(/</g, '&lt;');
-          const status = e.status === 'running' ? 'Em execução' : e.ok === false ? 'Falhou' : e.exitCode != null ? `Saída: ${e.exitCode}` : 'Concluído';
-          return `<li>${e.tool || 'exec'} · ${e.host || 'local'} :: <b>${cmd}</b> — ${status}</li>`;
-        })
-        .join('');
-      w.document.body.innerHTML = `<h3 style="font-family:sans-serif;font-size:16px">Falador Console</h3><ul style="font-family:monospace;font-size:12px">${items || '<li>Nenhuma execução registrada.</li>'}</ul>`;
+    if (typeof BroadcastChannel === 'undefined') return;
+    const bc = new BroadcastChannel('falador-console');
+    bc.onmessage = (e: MessageEvent) => {
+      const m = e.data as { type?: string; nodeId?: string; text?: string | null; ts?: number };
+      if (m?.type !== 'gate_answered' || !m.nodeId) return;
+      const nodeId = m.nodeId;
+      const ts = m.ts ?? Date.now();
+      setGateHistory((prev) => [...prev, {
+        id: `gate-${nodeId}-${ts}-${prev.length}`,
+        nodeId,
+        status: m.text === null ? 'Rejeitado' : 'Aprovado',
+        command: m.text ?? '',
+        ts,
+      }]);
     };
-    refresh();
-    const t = setInterval(refresh, 500);
-    return () => { clearInterval(t); };
-  }, [execOpen, runner.executions, consoleWin]);
+    return () => bc.close();
+  }, []);
 
   const wasRunningRef = useRef(runner.running);
   useEffect(() => {
@@ -476,20 +467,6 @@ export function LiveView({
     try { return localStorage.getItem(WEBHOOK_STORAGE_KEY) ?? ''; } catch { return ''; }
   });
   const fileRef = useRef<HTMLInputElement>(null);
-  const execScrollRef = useRef<HTMLPreElement>(null);
-
-  useEffect(() => {
-    if (runner.executions.length > 0) {
-      setExecTab(runner.executions.length - 1);
-    }
-  }, [runner.executions.length]);
-
-  const activeExec = runner.executions[execTab];
-  useEffect(() => {
-    if (!execOpen) return;
-    const el = execScrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [execOpen, execTab, streamFilter, activeExec?.output, activeExec?.chunks?.length]);
 
   const lastOf = (set: Set<string>) => [...runner.captions].reverse().find((c) => set.has(c.nodeId));
   const transcription = lastOf(sinks.transcription)?.text ?? '';
@@ -1313,11 +1290,6 @@ export function LiveView({
       );
     }
     const isExecStep = m.kind === 'agent-step' && Boolean(m.tool && (m.tool.startsWith('exec_') || m.tool.includes('mcp')));
-    const execIdx = isExecStep
-      ? runner.executions.findIndex(
-          (e) => e.id === `${m.nodeId}:${m.step ?? 0}` || (e.nodeId === m.nodeId && e.step === m.step),
-        )
-      : -1;
     const isStructuredSearch = m.kind === 'agent-step' && Boolean(
       m.tool && (
         m.tool === 'rag.search' || m.tool === 'rag_search' ||
@@ -1366,16 +1338,13 @@ export function LiveView({
                 </Accordion>
               </div>
             )}
-            {(isExecStep || execIdx >= 0) && (
+            {isExecStep && (
               <div className="live-chat-step-actions">
                 <Button
                   kind="tertiary"
                   size="sm"
                   renderIcon={Terminal}
-                  onClick={() => {
-                    if (execIdx >= 0) setExecTab(execIdx);
-                    setExecOpen(true);
-                  }}
+                  onClick={openConsole}
                 >
                   Abrir no Console
                 </Button>
@@ -1773,7 +1742,7 @@ export function LiveView({
           try { localStorage.setItem(THOUGHTS_STORAGE_KEY, String(next)); } catch { /* ignore */ }
         }}
         hasAgent={hasAgent}
-        onOpenConsole={() => setExecOpen(true)}
+        onOpenConsole={openConsole}
         audit={runner.audit}
       />
 
@@ -1800,125 +1769,6 @@ export function LiveView({
         {exportResult && <p className="export-modal-result">{exportResult}</p>}
       </Modal>
 
-      <Modal
-        open={execOpen}
-        passiveModal
-        size="lg"
-        hasScrollingContent
-        modalHeading="Execuções do run"
-        onRequestClose={() => setExecOpen(false)}
-      >
-        {runner.executions.length === 0 ? (
-          <p>Nenhuma execução registrada.</p>
-        ) : (
-          <Tabs selectedIndex={execTab} onChange={({ selectedIndex }) => setExecTab(selectedIndex ?? 0)}>
-            <TabList aria-label="Execuções">
-              {runner.executions.map((e, i) => (
-                <Tab key={e.id + i}>
-                  {`${e.tool} · ${e.host} · ${e.status === 'running' ? 'executando' : (e.exitCode ?? 'null')}`}
-                </Tab>
-              ))}
-            </TabList>
-            <TabPanels>
-              {runner.executions.map((e, i) => {
-                const isRunning = e.status === 'running';
-                const isSuccess = !isRunning && e.ok !== false && (e.exitCode === 0 || e.dryRun === true);
-                const statusKind = isRunning ? 'in-progress' : isSuccess ? 'succeeded' : 'failed';
-                const statusLabel = isRunning
-                  ? 'Em execução'
-                  : isSuccess
-                    ? (e.dryRun ? 'Dry-run' : 'Concluído')
-                    : (e.sshTransportError ? 'Erro SSH (255)' : 'Falhou');
-                const prefixStderr = (txt: string) =>
-                  txt
-                    .split('\n')
-                    .map((line) => (line.length > 0 ? `[stderr] ${line}` : line))
-                    .join('\n');
-                const filteredChunks = (e.chunks ?? []).filter(
-                  (c) => streamFilter === 'all' || c.stream === streamFilter,
-                );
-                const hasChunks = (e.chunks?.length ?? 0) > 0;
-                const fallbackText =
-                  streamFilter === 'stdout'
-                    ? e.stdout
-                    : streamFilter === 'stderr'
-                      ? (e.stderr ? prefixStderr(e.stderr) : '')
-                      : e.output;
-                return (
-                  <TabPanel key={e.id + i}>
-                    <div className="logs-terminal-wrap">
-                      <div className="exec-modal-header">
-                        <div className="exec-modal-meta">
-                          <IconIndicator kind={statusKind} label={statusLabel} />
-                          <Tag type="cyan" size="sm">Host: {e.host}</Tag>
-                          {e.bastion && <Tag type="purple" size="sm">Bastion: {e.bastion}</Tag>}
-                          <Tag type={e.dryRun ? 'blue' : 'red'} size="sm">
-                            {e.dryRun ? 'DRY-RUN' : 'EXEC ATIVO'}
-                          </Tag>
-                        </div>
-                        <div className="exec-modal-controls">
-                          <ContentSwitcher
-                            size="sm"
-                            selectedIndex={streamFilter === 'all' ? 0 : streamFilter === 'stdout' ? 1 : 2}
-                            onChange={(data) => {
-                              const next = data.name;
-                              if (next === 'all' || next === 'stdout' || next === 'stderr') {
-                                setStreamFilter(next);
-                              }
-                            }}
-                          >
-                            <Switch name="all" text="Todos" />
-                            <Switch name="stdout" text="stdout" />
-                            <Switch name="stderr" text="stderr" />
-                          </ContentSwitcher>
-                          {isRunning && (
-                            <Button
-                              kind="danger--tertiary"
-                              size="sm"
-                              renderIcon={Stop}
-                              onClick={() => runner.stop()}
-                            >
-                              Cancelar
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                      <CodeSnippet type="multi" feedback="Copiado">
-                        {e.command}
-                      </CodeSnippet>
-                      <pre ref={i === execTab ? execScrollRef : undefined} className="logs-terminal exec-terminal">
-                        {hasChunks ? (
-                          filteredChunks.length > 0 ? (
-                            filteredChunks.map((c, ci) =>
-                              c.stream === 'stderr' ? (
-                                <span key={ci} className="exec-chunk-stderr">{prefixStderr(c.text)}</span>
-                              ) : (
-                                <span key={ci}>{c.text}</span>
-                              ),
-                            )
-                          ) : (
-                            <span className="exec-terminal-empty">(sem saída para o filtro)</span>
-                          )
-                        ) : (
-                          fallbackText ? (
-                            streamFilter === 'stderr' ? (
-                              <span className="exec-chunk-stderr">{fallbackText}</span>
-                            ) : (
-                              fallbackText
-                            )
-                          ) : (
-                            <span className="exec-terminal-empty">(sem saída)</span>
-                          )
-                        )}
-                      </pre>
-                    </div>
-                  </TabPanel>
-                );
-              })}
-            </TabPanels>
-          </Tabs>
-        )}
-      </Modal>
     </div>
   );
 }

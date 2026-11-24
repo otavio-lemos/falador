@@ -37,6 +37,7 @@ for (const flow of ['assistente-especialista-ti', 'assistente-entrevista']) {
 
     // o ponto central do último item do menu precisa ser o próprio item (não coberto/cortado)
     const lastItem = menu.locator('.cds--list-box__menu-item').last();
+    await lastItem.scrollIntoViewIfNeeded(); // a lista de modelos do omlx pode crescer e rolar
     const ib = (await lastItem.boundingBox())!;
     const hit = await page.evaluate(([x, y]) => {
       const el = document.elementFromPoint(x, y);

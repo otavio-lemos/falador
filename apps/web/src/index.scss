@@ -1184,6 +1184,43 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 }
 .exec-terminal-empty { color: $txt-2; font-style: italic; }
 
+// Console em janela própria: mesma sessão SSE da aba, com aprovação embutida.
+.console-view {
+  min-height: 100%;
+  padding: $spacing-05;
+  background: $bg-app;
+  color: $txt-1;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-05;
+}
+.console-head { display: flex; align-items: center; justify-content: space-between; gap: $spacing-05; flex-wrap: wrap; }
+.console-head h1 { @include type-style('heading-03'); margin: 0; }
+.console-head-status { display: flex; align-items: center; gap: $spacing-03; }
+.console-empty { color: $txt-2; }
+.console-card { padding: $spacing-05; background: $bg-card; border: 1px solid $border-1; display: flex; flex-direction: column; gap: $spacing-03; }
+.console-card-head { display: flex; align-items: center; gap: $spacing-03; flex-wrap: wrap; }
+.console-card-head h2 { @include type-style('heading-02'); margin: 0; }
+.console-gate { border-left: 3px solid var(--cds-support-info, #0090ff); }
+.console-list-head { justify-content: space-between; }
+.console-actions { display: flex; gap: $spacing-03; }
+.console-filters { display: flex; gap: $spacing-02; }
+.console-time { margin-left: auto; color: $txt-2; font-size: 12px; }
+.console-command { color: $txt-1; font-family: 'IBM Plex Mono', 'Menlo', monospace; font-size: 12px; word-break: break-word; }
+.console-plain, .console-output {
+  margin: 0;
+  overflow: auto;
+  max-height: 320px;
+  padding: $spacing-03;
+  background: #0b0e13;
+  color: #c6d0dc;
+  font-family: 'IBM Plex Mono', 'Menlo', monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 // ADR-006 / ADR-007 — latência breakdown, card de comando, export modal, upload com tags
 .live2-metrics-bar { display: flex; align-items: center; gap: $spacing-03; }
 .latency-trigger { background: none; border: none; padding: 0; cursor: pointer; }
