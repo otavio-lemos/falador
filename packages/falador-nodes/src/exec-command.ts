@@ -937,6 +937,7 @@ export const execCommand: NodeTypeDef = {
     'maxOutputBytes',
     'auditLogPath',
     'toolName',
+    'approvalLevel',
   ],
   inputs: [
     { name: 'in', type: 'phrase' },
@@ -954,6 +955,14 @@ export const execCommand: NodeTypeDef = {
     }
     if (p.mode !== undefined && p.mode !== 'readonly' && p.mode !== 'allowlist') {
       errs.push({ path: 'params.mode', code: 'INVALID_PARAM', message: "mode deve ser 'readonly' ou 'allowlist'" });
+    }
+    if (
+      p.approvalLevel !== undefined &&
+      p.approvalLevel !== 'ask_all' &&
+      p.approvalLevel !== 'non_readonly' &&
+      p.approvalLevel !== 'approve_all'
+    ) {
+      errs.push({ path: 'params.approvalLevel', code: 'INVALID_PARAM', message: "approvalLevel deve ser 'ask_all', 'non_readonly' ou 'approve_all'" });
     }
     if (p.dryRun !== undefined && typeof p.dryRun !== 'boolean') {
       errs.push({ path: 'params.dryRun', code: 'INVALID_PARAM', message: 'dryRun deve ser boolean' });
@@ -1104,6 +1113,11 @@ export const execCommand: NodeTypeDef = {
     const allowedHosts = (ctx.params.allowedHosts as string[] | undefined) ?? [];
     const defaultHost = ctx.params.defaultHost as string | undefined;
     const sshUser = ctx.params.sshUser as string | undefined;
+    // Nível de aprovação (governado pelo runner a partir do campo approvalLevel do fluxo).
+    const approvalLevel = ((ctx.params.approvalLevel as string | undefined) ?? 'non_readonly') as
+      | 'ask_all'
+      | 'non_readonly'
+      | 'approve_all';
     const sshPort = (ctx.params.sshPort as number | undefined) ?? 22;
     const jumpHosts = (ctx.params.jumpHosts as string[] | undefined) ?? [];
     const allowedJumpHosts = (ctx.params.allowedJumpHosts as string[] | undefined) ?? [];
@@ -1215,18 +1229,26 @@ export const execCommand: NodeTypeDef = {
       };
 
       let validation = validateCommand(input, callPolicy);
-      // Toda recusa de conteúdo/host vira PERGUNTA (nunca proibição permanente).
-      // Exceção: comando vazio/sem host não existe para executar — é erro de entrada.
-      const isHostMissing = !validation.ok && validation.reason.startsWith('Host SSH não informado');
-      const needsHumanApproval =
-        !validation.ok &&
+
+      // Nível de aprovação (global, aplicado pelo runner): governa QUANDO abrir o gate.
+      //   ask_all      → abre gate sempre (mesmo comando já na allowlist)
+      //   non_readonly → comportamento atual (allowlist livre; recusa/mutação abre gate)
+      //   approve_all  → não abre gate; executa como aprovado (decisão explícita do humano)
+      const hasCommand = Boolean(validation.command ?? payloadText(input)?.text);
+      const gateWanted =
+        approvalLevel !== 'approve_all' &&
         gateHolder !== undefined &&
-        Boolean(validation.command);
-      if (needsHumanApproval && !validation.ok) {
+        hasCommand &&
+        (approvalLevel === 'ask_all' || !validation.ok);
+
+      if (gateWanted) {
         const deniedCommand = validation.command ?? String(payloadText(input)?.text ?? '');
+        const isHostMissing = !validation.ok && validation.reason.startsWith('Host SSH não informado');
         const prompt = isHostMissing
           ? `Host SSH não informado. Digite o host (ex: 192.168.64.7) ou o comando completo com host para executar:\n${deniedCommand}`
-          : `Comando fora da allowlist. Aprovar execução desta vez?\n${deniedCommand}`;
+          : validation.ok
+            ? `Nivel A (perguntar tudo) - executar?\n${deniedCommand}`
+            : `Comando fora da allowlist. Aprovar execução desta vez?\n${deniedCommand}`;
         let approvedText: string | null = null;
         try {
           approvedText = await gateHolder.request(prompt, {
@@ -1261,6 +1283,10 @@ export const execCommand: NodeTypeDef = {
           validation = validateCommand(merged, callPolicy, { approved: true });
           ctx.metrics.counter('exec.command.approved', 1);
         }
+      } else if (approvalLevel === 'approve_all' && !validation.ok) {
+        // Nível C: pré-aprovado; dispensa as barreiras de conteúdo (allowlist/mutação).
+        validation = validateCommand(input, callPolicy, { approved: true });
+        ctx.metrics.counter('exec.command.auto_approved', 1);
       }
       if (!validation.ok) {
         const deniedHost = validation.host ?? (transport === 'ssh' ? (defaultHost ?? 'unknown') : 'local');

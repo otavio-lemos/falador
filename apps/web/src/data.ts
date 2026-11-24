@@ -236,13 +236,13 @@ export const PARAM_HELP: Record<string, Record<string, ParamDoc>> = {
     maxSteps: { help: 'limite rígido de passos de tool_calls por turno (máx 12)', def: '5', control: 'slider', min: 1, max: 12, step: 1 },
     maxToolOutputChars: { help: 'orçamento máximo de caracteres por retorno de tool (tail)', def: '8000', control: 'slider', min: 500, max: 32000, step: 500, unit: 'chars' },
     approvalPolicy: {
-      help: 'política de aprovação humana antes de invocar tools',
+      help: 'política de aprovação humana antes de invocar tools (o seletor A/B/C do Runner sobrescreve no Run)',
       def: 'always',
       control: 'dropdown',
       options: [
-        { val: 'always', label: 'always — aprovar toda chamada (seguro)' },
-        { val: 'non_readonly', label: 'non_readonly — aprovar mutáveis ou sensíveis' },
-        { val: 'never', label: 'never — executar sem gate humano' },
+        { val: 'always', label: 'A · perguntar tudo (toda chamada abre gate)' },
+        { val: 'non_readonly', label: 'B · só destrutivos/alteração/sensíveis' },
+        { val: 'never', label: 'C · aprovar tudo (sem gate)' },
       ],
     },
     d1Model: { help: 'modelo d1 opcional para triagem de risco (ex.: d1-2B-MLX-4bit)', def: '' },

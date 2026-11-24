@@ -246,6 +246,7 @@ export function rfToFlow(nodes: FNode[], edges: Edge[], prev: Flow): Flow {
     version: prev.version ?? 1,
     stopWhenSourcesDone: prev.stopWhenSourcesDone ?? false,
     description: prev.description ?? '',
+    ...(prev.approvalLevel ? { approvalLevel: prev.approvalLevel } : {}),
     nodes: nodes.map((n) => ({
       id: n.id, type: n.data.type, params: n.data.params,
       ...(n.data.enabled === false ? { enabled: false } : {}),

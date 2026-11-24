@@ -854,6 +854,17 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   border: 0;
   padding: 0;
 }
+.live-chat-head-row {
+  display: flex;
+  align-items: center;
+  gap: $spacing-02;
+  flex-wrap: wrap;
+}
+.approval-level-wrap {
+  margin-inline-start: auto;
+  inline-size: 260px;
+  flex-shrink: 0;
+}
 .live-chat-log {
   display: flex;
   flex: 1;

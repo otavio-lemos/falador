@@ -391,6 +391,12 @@ export function App() {
     setLiveFlow(next);
     if (runner.running) startWithContext(next);
   };
+  const onSetApprovalLevel = (level: string) => {
+    if (!liveFlow) return;
+    const next: Flow = { ...liveFlow, approvalLevel: level };
+    setLiveFlow(next);
+    if (runner.running) startWithContext(next);
+  };
   const onRegenerate = () => { if (liveFlow && runner.running) startWithContext(liveFlow); };
   const onExit = () => { runner.stop(); };
   const onReset = async () => {
@@ -506,7 +512,7 @@ export function App() {
               contextDocs={contextDocs} onUploadDoc={onUploadDoc} onRemoveDoc={onRemoveDoc}
               onStart={startWithContext}
               flows={flows} currentFlow={currentFlow} onSwitchFlow={onSwitchLiveFlow}
-              onUpdateStage={onUpdateStage} onRegenerate={onRegenerate}
+              onUpdateStage={onUpdateStage} onSetApprovalLevel={onSetApprovalLevel} onRegenerate={onRegenerate}
               onServiceStatus={handleServiceStatus}
               onNotify={(msg) => setToast(msg)}
               onGoBuilder={() => setView('builder')}

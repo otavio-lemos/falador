@@ -69,6 +69,28 @@ async function main() {
   const { readFileSync } = await import('node:fs');
   const flow = JSON.parse(readFileSync(flowPath, 'utf-8'));
 
+  // Nível de aprovação global do fluxo (A/B/C) → params dos nós em runtime.
+  // O grafo SALVO não muda (igual aos perfis).
+  //   A (ask_all)      → agent.tools: 'always'      · exec.command: 'ask_all'
+  //   B (non_readonly) → agent.tools: 'non_readonly' · exec.command: 'non_readonly'
+  //   C (approve_all)  → agent.tools: 'never'       · exec.command: 'approve_all'
+  const APPROVAL_LEVELS = {
+    ask_all: { agent: 'always', exec: 'ask_all' },
+    non_readonly: { agent: 'non_readonly', exec: 'non_readonly' },
+    approve_all: { agent: 'never', exec: 'approve_all' },
+  };
+  const approvalLevel =
+    typeof flow.approvalLevel === 'string' && APPROVAL_LEVELS[flow.approvalLevel]
+      ? flow.approvalLevel
+      : 'non_readonly';
+  for (const n of flow.nodes ?? []) {
+    if (n.type === 'agent.tools') {
+      n.params = { ...(n.params ?? {}), approvalPolicy: APPROVAL_LEVELS[approvalLevel].agent };
+    } else if (n.type === 'exec.command') {
+      n.params = { ...(n.params ?? {}), approvalLevel: APPROVAL_LEVELS[approvalLevel].exec };
+    }
+  }
+
   // binding automático: todo sink.collect no fluxo coleta para o runner
   const collected = new Map(); // nodeId -> { received: [] }
   for (const n of flow.nodes ?? []) {

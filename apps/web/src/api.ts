@@ -17,6 +17,8 @@ export interface Flow {
   version?: number;
   stopWhenSourcesDone?: boolean;
   description?: string;
+  /** Nível de aprovação global do Run: 'ask_all' (A) | 'non_readonly' (B) | 'approve_all' (C). */
+  approvalLevel?: string;
   nodes: FlowNode[];
   edges: FlowEdge[];
 }
