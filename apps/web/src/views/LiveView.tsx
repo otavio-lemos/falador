@@ -530,22 +530,24 @@ export function LiveView({
       return;
     }
     if (gateInfo.isCommand) {
-      const wasEdited = cmdDraft.trim() !== gateInfo.command.trim();
+      // fallback: usa o comando do gate quando nada digitado (evita EXEC_POLICY_DENIED "Comando vazio")
+      const cmd = cmdDraft.trim() !== '' ? cmdDraft : gateInfo.command;
+      const wasEdited = cmd.trim() !== gateInfo.command.trim();
       setGateHistory((prev) => [
         ...prev,
         {
           id: `gate-${gate.nodeId}-${Date.now()}-${prev.length}`,
           nodeId: gate.nodeId,
           status: wasEdited ? 'Editado' : 'Aprovado',
-          command: cmdDraft,
+          command: cmd,
           tool: gateInfo.tool,
           host: gateInfo.host,
           ts: Date.now(),
         },
       ]);
       const payload = gateInfo.host && gateInfo.host !== 'local'
-        ? JSON.stringify({ command: cmdDraft, host: gateInfo.host, ...(gateInfo.reason ? { reason: gateInfo.reason } : {}) })
-        : cmdDraft;
+        ? JSON.stringify({ command: cmd, host: gateInfo.host, ...(gateInfo.reason ? { reason: gateInfo.reason } : {}) })
+        : cmd;
       runner.gate(gate.nodeId, payload);
       return;
     }
