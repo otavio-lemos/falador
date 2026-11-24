@@ -989,7 +989,10 @@ async function handleApi(req, res, pathname) {
         text: body.text.trim(),
       });
     }
-    currentRun.child.stdin?.write(JSON.stringify({ type: 'gate_action', nodeId: body.nodeId, text: body.text ?? null }) + '\n');
+    currentRun.child.stdin?.write(JSON.stringify({
+      type: 'gate_action', nodeId: body.nodeId, text: body.text ?? null,
+      ...(typeof body.rejectionText === 'string' && body.rejectionText.trim() ? { rejectionText: body.rejectionText.trim() } : {}),
+    }) + '\n');
     // todas as janelas (aba + console) removem o card do gate ao ser respondido
     broadcast('runner', { type: 'gate_cancelled', nodeId: String(body.nodeId), reason: 'answered' });
     return json(res, 200, { ok: true }), true;

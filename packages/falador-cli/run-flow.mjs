@@ -279,6 +279,16 @@ async function main() {
       try {
         const m = JSON.parse(l);
         if (m.type === 'gate_action' && gates.has(m.nodeId)) {
+          // Rejeitar com mensagem: o texto escrito é lido pelo agente (chat_input)
+          // e registrado no stream, mas a ação recusada não é executada.
+          if (m.text === null && typeof m.rejectionText === 'string' && m.rejectionText.trim()) {
+            const feedback = m.rejectionText.trim();
+            line({ type: 'gate_rejected', nodeId: m.nodeId, text: feedback });
+            for (const [id, fn] of chatSenders.entries()) {
+              Promise.resolve(fn(feedback)).catch(() => {});
+              line({ type: 'chat_sent', nodeId: id, text: feedback });
+            }
+          }
           gates.get(m.nodeId)(typeof m.text === 'string' ? m.text : null);
           gates.delete(m.nodeId);
         } else if (m.type === 'reset_history') {

@@ -902,9 +902,10 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 }
 .live-chat-entry-head time { white-space: nowrap; font-variant-numeric: tabular-nums; color: $txt-2; }
 .live-chat-entry-text {
-  @include type-style('body-01');
+  @include type-style('body-compact-01');
   color: $txt-1;
-  line-height: 1.5;
+  line-height: 1.35;
+  font-size: 12px;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -948,10 +949,23 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   padding: $spacing-01;
   .cds--form-item { flex: 1; }
 }
+// Botões de decisão na lateral direita do card, nunca abaixo do texto.
+.live-chat-entry--gate { position: relative; }
+.live-chat-entry--gate .live-chat-block-body { padding-right: 132px; }
 .live-chat-gate-actions {
-  flex-wrap: wrap;
-  margin-top: $spacing-03;
+  position: absolute;
+  right: $spacing-03;
+  top: 3rem;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: $spacing-02;
+  width: 124px;
+  margin: 0;
+  .cds--btn { width: 100%; max-width: none; min-height: 28px; padding-block: 2px; font-size: 11px; }
 }
+.cmd-gate-textarea textarea,
+.live-chat-entry--gate textarea { min-height: 44px !important; font-size: 12px !important; }
 
 // ---- logs dos serviços residentes (altura fixa controlada SOMENTE pelo usuário) ----
 .logs-panel {
@@ -1187,31 +1201,36 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 // Console em janela própria: mesma sessão SSE da aba, com aprovação embutida.
 .console-view {
   min-height: 100%;
-  padding: $spacing-05;
+  padding: $spacing-03;
   background: $bg-app;
   color: $txt-1;
   display: flex;
   flex-direction: column;
-  gap: $spacing-05;
+  gap: $spacing-03;
+  font-size: 12px;
 }
-.console-head { display: flex; align-items: center; justify-content: space-between; gap: $spacing-05; flex-wrap: wrap; }
-.console-head h1 { @include type-style('heading-03'); margin: 0; }
-.console-head-status { display: flex; align-items: center; gap: $spacing-03; }
-.console-empty { color: $txt-2; }
-.console-card { padding: $spacing-05; background: $bg-card; border: 1px solid $border-1; display: flex; flex-direction: column; gap: $spacing-03; }
-.console-card-head { display: flex; align-items: center; gap: $spacing-03; flex-wrap: wrap; }
-.console-card-head h2 { @include type-style('heading-02'); margin: 0; }
+.console-head { display: flex; align-items: center; justify-content: space-between; gap: $spacing-03; flex-wrap: wrap; }
+.console-head h1 { @include type-style('heading-04'); margin: 0; }
+.console-head-status { display: flex; align-items: center; gap: $spacing-02; }
+.console-empty { color: $txt-2; font-size: 12px; }
+.console-card { padding: $spacing-03; background: $bg-card; border: 1px solid $border-1; display: flex; flex-direction: column; gap: $spacing-02; }
+.console-card-head { display: flex; align-items: center; gap: $spacing-02; flex-wrap: wrap; }
+.console-card-head h2 { @include type-style('productive-heading-01'); margin: 0; }
 .console-gate { border-left: 3px solid var(--cds-support-info, #0090ff); }
 .console-list-head { justify-content: space-between; }
-.console-actions { display: flex; gap: $spacing-03; }
+.console-gate-row { display: flex; align-items: flex-start; gap: $spacing-03; }
+.console-gate-main { flex: 1; min-width: 0; }
+.console-gate-main .cds--text-input__field-wrapper { max-width: none; }
+.console-gate-main input { font-size: 12px !important; height: 32px !important; }
+.console-actions { display: flex; flex-direction: column; gap: $spacing-02; flex-shrink: 0; width: 132px; .cds--btn { width: 100%; max-width: none; min-height: 28px; padding-block: 2px; font-size: 11px; } }
 .console-filters { display: flex; gap: $spacing-02; }
 .console-time { margin-left: auto; color: $txt-2; font-size: 12px; }
 .console-command { color: $txt-1; font-family: 'IBM Plex Mono', 'Menlo', monospace; font-size: 12px; word-break: break-word; }
 .console-plain, .console-output {
   margin: 0;
   overflow: auto;
-  max-height: 320px;
-  padding: $spacing-03;
+  max-height: 160px;
+  padding: $spacing-02;
   background: #0b0e13;
   color: #c6d0dc;
   font-family: 'IBM Plex Mono', 'Menlo', monospace;

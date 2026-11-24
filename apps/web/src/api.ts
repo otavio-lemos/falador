@@ -202,10 +202,10 @@ export async function clearLogs(names?: string[]): Promise<ClearLogsResult> {
   }
   return r.json();
 }
-export async function gateAction(nodeId: string, text: string | null): Promise<void> {
+export async function gateAction(nodeId: string, text: string | null, rejectionText?: string): Promise<void> {
   await fetch('/api/gate', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ nodeId, text }),
+    body: JSON.stringify({ nodeId, text, ...(rejectionText ? { rejectionText } : {}) }),
   });
 }
 

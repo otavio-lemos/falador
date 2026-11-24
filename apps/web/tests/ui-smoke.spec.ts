@@ -465,7 +465,7 @@ test('console anexado ao run mostra stream, bastion, filtros e cancelamento', as
   await expect(card).toContainText('saída 0');
   const running = page.locator('.console-card').filter({ hasText: 'uptime' });
   await expect(running).toContainText('executando');
-  await page.getByRole('button', { name: 'Cancelar' }).click();
+  await page.getByRole('button', { name: 'PARAR' }).click();
   await expect.poll(() => stopCalled).toBe(true);
 });
 

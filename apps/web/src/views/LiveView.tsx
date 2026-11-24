@@ -51,7 +51,7 @@ import {
   ErrorFilled,
 } from '@carbon/icons-react';
 import type { Runner, Gate, AgentStep, Caption, AuditEvent } from '../useRunner';
-import { exportSession, type Flow, type ContextDoc, type ServiceStatusMap } from '../api';
+import { exportSession, gateAction, type Flow, type ContextDoc, type ServiceStatusMap } from '../api';
 import {
   deriveStages,
   deriveStageGroups,
@@ -439,14 +439,14 @@ export function LiveView({
     if (typeof BroadcastChannel === 'undefined') return;
     const bc = new BroadcastChannel('falador-console');
     bc.onmessage = (e: MessageEvent) => {
-      const m = e.data as { type?: string; nodeId?: string; text?: string | null; ts?: number };
+      const m = e.data as { type?: string; nodeId?: string; text?: string | null; ts?: number; status?: GateHistoryItem['status'] };
       if (m?.type !== 'gate_answered' || !m.nodeId) return;
       const nodeId = m.nodeId;
       const ts = m.ts ?? Date.now();
       setGateHistory((prev) => [...prev, {
         id: `gate-${nodeId}-${ts}-${prev.length}`,
         nodeId,
-        status: m.text === null ? 'Rejeitado' : 'Aprovado',
+        status: m.status ?? (m.text === null ? 'Rejeitado' : 'Aprovado'),
         command: m.text ?? '',
         ts,
       }]);
@@ -584,7 +584,7 @@ export function LiveView({
           ts: Date.now(),
         },
       ]);
-      runner.gate(gate.nodeId, null);
+      void gateAction(gate.nodeId, null, cmdDraft);
       setCmdDraft('');
       return;
     }
@@ -600,7 +600,7 @@ export function LiveView({
         ts: Date.now(),
       },
     ]);
-    runner.gate(gate.nodeId, null);
+    void gateAction(gate.nodeId, null, gateInfo.isCommand ? cmdDraft : editing ? draft : '');
     setEditing(false);
   };
   const startEdit = () => { setDraft(suggestion); setEditing(true); };
@@ -904,7 +904,7 @@ export function LiveView({
               <TextArea
                 id="ask-user-gate-input"
                 labelText="Sua resposta"
-                rows={3}
+                rows={2}
                 className="cmd-gate-textarea"
                 placeholder="Digite sua resposta para o agente continuar..."
                 value={cmdDraft}
@@ -917,7 +917,7 @@ export function LiveView({
               <TextArea
                 id="cmd-gate-input"
                 labelText="Comando (editável antes da execução)"
-                rows={3}
+                rows={2}
                 className="cmd-gate-textarea"
                 value={cmdDraft}
                 onChange={(e) => setCmdDraft(e.target.value)}
@@ -928,7 +928,7 @@ export function LiveView({
               id="edit-chat-suggestion"
               labelText="Editar sugestão"
               hideLabel
-              rows={3}
+              rows={2}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
             />
@@ -941,14 +941,20 @@ export function LiveView({
                 <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
                   Responder
                 </Button>
+                <Button kind="tertiary" size="sm" renderIcon={Edit} onClick={() => document.getElementById('ask-user-gate-input')?.focus()}>
+                  Editar
+                </Button>
                 <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>
-                  Cancelar
+                  Rejeitar
                 </Button>
               </>
             ) : gateInfo.isCommand ? (
               <>
                 <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
                   Aprovar e Executar
+                </Button>
+                <Button kind="tertiary" size="sm" renderIcon={Edit} onClick={() => document.getElementById('cmd-gate-input')?.focus()}>
+                  Editar
                 </Button>
                 <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>
                   Rejeitar

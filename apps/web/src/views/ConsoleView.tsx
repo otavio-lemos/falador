@@ -19,6 +19,7 @@ export function ConsoleView() {
   const [connected, setConnected] = useState(false);
   const [retry, setRetry] = useState(0);
   const ctlRef = useRef<AbortController | null>(null);
+  const gateInputRef = useRef<HTMLInputElement | null>(null);
 
   // A janela é persistente: se abrir antes do run ou o run terminar, volta a anexar sozinha.
   useEffect(() => {
@@ -93,16 +94,20 @@ export function ConsoleView() {
     return () => { ctl.abort(); if (ctlRef.current === ctl) ctlRef.current = null; };
   }, [retry]);
 
-  const anyRunning = execs.some((e) => e.status === 'running');
-  const approve = async (gate: Gate, text: string | null) => {
-    const answer = text && text.trim() ? text : null;
-    try { await gateAction(gate.nodeId, answer); } catch { /* host sem run */ }
+  const answerGate = async (gate: Gate, text: string | null, rejectionText?: string, status?: 'Aprovado' | 'Editado' | 'Rejeitado') => {
+    try { await gateAction(gate.nodeId, text, rejectionText); } catch { /* host sem run */ }
     setGates((g) => g.filter((x) => x.nodeId !== gate.nodeId));
-    // A aba da conversa registra o mesmo histórico de aprovação sem duplicar o POST.
+    // A aba da conversa registra o mesmo histórico sem duplicar o POST.
     const bc = new BroadcastChannel('falador-console');
-    bc.postMessage({ type: 'gate_answered', nodeId: gate.nodeId, text: answer, ts: Date.now() });
+    bc.postMessage({ type: 'gate_answered', nodeId: gate.nodeId, text: text ?? rejectionText ?? null, status, ts: Date.now() });
     bc.close();
   };
+  const approve = (gate: Gate, draft: string) => {
+    const text = draft.trim() ? draft : gateCommand(gate);
+    const status = text.trim() === gateCommand(gate).trim() ? 'Aprovado' : 'Editado';
+    return answerGate(gate, text, undefined, status);
+  };
+  const reject = (gate: Gate, draft: string) => answerGate(gate, null, draft, 'Rejeitado');
 
   const visibleText = (e: Execution): string => {
     if (filter === 'all') return e.output;
@@ -117,8 +122,8 @@ export function ConsoleView() {
           <h1>Console do Agente</h1>
           <div className="console-head-status">
             <Tag type={connected ? 'green' : 'gray'} size="sm">{connected ? 'Conectado ao run' : 'Sem run em andamento'}</Tag>
-            {anyRunning && <Button kind="danger--tertiary" size="sm" onClick={() => void stopRun()}>Cancelar</Button>}
-            <Button kind="tertiary" size="sm" onClick={() => setRetry((n) => n + 1)}>Reconectar</Button>
+            <Button kind="danger" size="sm" onClick={() => void stopRun()}>PARAR</Button>
+            <Button kind="ghost" size="sm" onClick={() => setRetry((n) => n + 1)}>Reconectar</Button>
           </div>
         </header>
         {!connected && <p className="console-empty">Inicie um fluxo na aba principal. Esta janela acompanha o mesmo run.</p>}
@@ -129,16 +134,22 @@ export function ConsoleView() {
               <h2>Aprovar e executar</h2>
               <Tag type="cyan" size="sm">{g.nodeId}</Tag>
             </div>
-            <pre className="console-plain">{g.text}</pre>
-            <TextInput
-              id={`console-gate-${g.nodeId}`}
-              labelText="Comando / resposta (editável)"
-              value={drafts[g.nodeId] ?? gateCommand(g)}
-              onChange={(e) => setDrafts((d) => ({ ...d, [g.nodeId]: e.target.value }))}
-            />
-            <div className="console-actions">
-              <Button kind="primary" size="sm" onClick={() => void approve(g, drafts[g.nodeId] ?? gateCommand(g))}>Aprovar e executar</Button>
-              <Button kind="danger--tertiary" size="sm" onClick={() => void approve(g, null)}>Negar</Button>
+            <div className="console-gate-row">
+              <div className="console-gate-main">
+                <pre className="console-plain">{g.text}</pre>
+                <TextInput
+                  id={`console-gate-${g.nodeId}`}
+                  labelText="Comando / resposta (editável)"
+                  value={drafts[g.nodeId] ?? gateCommand(g)}
+                  onChange={(e) => setDrafts((d) => ({ ...d, [g.nodeId]: e.target.value }))}
+                  ref={gateInputRef}
+                />
+              </div>
+              <div className="console-actions">
+                <Button kind="primary" size="sm" onClick={() => void approve(g, drafts[g.nodeId] ?? gateCommand(g))}>Aprovar e executar</Button>
+                <Button kind="tertiary" size="sm" onClick={() => gateInputRef.current?.focus()}>Editar</Button>
+                <Button kind="danger--tertiary" size="sm" onClick={() => void reject(g, drafts[g.nodeId] ?? gateCommand(g))}>Rejeitar</Button>
+              </div>
             </div>
           </section>
         ))}

@@ -345,3 +345,38 @@ test('payloads grandes são truncados no results do summary (não estouram o hos
   assert.ok(value.length <= 241, `esperado truncamento em 240, veio ${value.length}`);
   assert.ok(value.endsWith('…'));
 });
+
+test('gate_action com rejectionText registra a mensagem recusada no stream', async () => {
+  const p = writeFlow({
+    version: 1,
+    stopWhenSourcesDone: true,
+    nodes: [
+      { id: 'src', type: 'source.tone', params: { count: 1, prefix: 'pedido' } },
+      { id: 'pipe', type: 'pipe.parcs' },
+      { id: 'gate', type: 'human.approve', params: { mode: 'manual' } },
+      { id: 'snk', type: 'sink.collect' },
+    ],
+    edges: [
+      { from: 'src.out', to: 'pipe.in' },
+      { from: 'pipe.out', to: 'gate.in' },
+      { from: 'gate.out', to: 'snk.phrase' },
+    ],
+  });
+  const result = await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [CLI, p], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '';
+    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('timeout gate_rejected')); }, 15000);
+    child.stdout.on('data', (d) => {
+      out += String(d);
+      if (out.includes('"type":"gate"') && !out.includes('"type":"gate_rejected"')) {
+        child.stdin.write(JSON.stringify({ type: 'gate_action', nodeId: 'gate', text: null, rejectionText: 'use outro host' }) + '\n');
+      }
+    });
+    child.on('close', (code) => { clearTimeout(timer); resolve({ code, out }); });
+  });
+  const events = parseNdjson(result.out);
+  assert.ok(events.some((e) => e.type === 'gate'), 'gate foi pedido');
+  const rejected = events.find((e) => e.type === 'gate_rejected');
+  assert.equal(rejected?.text, 'use outro host', 'texto da recusa precisa chegar ao stream');
+  assert.ok(!events.some((e) => e.type === 'execution'), 'recusa não executa comando');
+});
