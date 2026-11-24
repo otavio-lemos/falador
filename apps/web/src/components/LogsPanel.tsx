@@ -3,7 +3,7 @@
 // e retângulos coloridos identificando visualmente quais componentes do workflow escrevem em cada log.
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { Button, MultiSelect, Tab, TabList, TabPanel, TabPanels, Tabs } from '@carbon/react';
-import { ChevronDown, ChevronUp, Close, Maximize, Minimize, Terminal, TrashCan } from '@carbon/icons-react';
+import { ChevronDown, ChevronUp, Close, Terminal, TrashCan } from '@carbon/icons-react';
 import type { AuditEvent, Thought, Execution, Gate } from '../useRunner';
 import { clearLogs, fetchLogs, fetchServiceStatus, type ServiceStatusMap } from '../api';
 import { accentOf, serviceOfNode, shortNodeName } from '../data';
@@ -509,15 +509,6 @@ export function LogsPanel({
             )}
           </div>
         )}
-        <Button
-          kind="ghost"
-          size="sm"
-          hasIconOnly
-          renderIcon={logsExpanded ? Minimize : Maximize}
-          iconDescription={logsExpanded ? 'Restaurar altura' : 'Expandir painel'}
-          tooltipPosition="left"
-          onClick={toggleLogsExpanded}
-        />
         <Button
           kind="ghost"
           size="sm"
