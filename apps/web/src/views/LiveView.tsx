@@ -13,6 +13,8 @@ import {
   Tag,
   TextArea,
   TextInput,
+  Select,
+  SelectItem,
   CodeSnippet,
   ProgressIndicator,
   ProgressStep,
@@ -934,7 +936,7 @@ export function LiveView({
       kind="gate"
       nodeId={gate.nodeId}
       role={gateInfo.isAskUser ? 'Pergunta do Agente' : 'Aprovação'}
-      tag={gateInfo.isAskUser ? 'Pergunta Guiada' : gateInfo.isCommand ? 'Comando' : 'Revisão'}
+      tag={gateInfo.isAskUser ? undefined : (gateInfo.isCommand ? 'Comando' : 'Revisão')}
       tagType={gateInfo.isAskUser ? 'cyan' : gateInfo.isCommand ? 'teal' : 'purple'}
       accent={gateInfo.isAskUser ? 'var(--cds-support-info)' : 'var(--cds-support-warning, #f1c21b)'}
       icon={gateInfo.isAskUser ? <Chat size={18} /> : <Checkmark size={18} />}
@@ -958,11 +960,7 @@ export function LiveView({
               <p className="live-chat-entry-text" style={{ fontWeight: 500 }}>
                 {gateInfo.prompt || gate.text}
               </p>
-              {gateInfo.context && (
-                <p className="live-chat-entry-text" style={{ fontSize: '0.85rem', opacity: 0.8 }}>
-                  {gateInfo.context}
-                </p>
-              )}
+
               {gateInfo.options.length > 0 && (
                 <div className="live-chat-gate-options" role="group" aria-label="Opções sugeridas">
                   {gateInfo.options.map((opt, i) => (
@@ -973,34 +971,36 @@ export function LiveView({
                 </div>
               )}
               {(gateInfo.fields ?? []).length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                   {(gateInfo.fields ?? []).map((f) => (
-                    <div key={f.name}>
-                      {f.type === 'select' ? (
-                        <select
-                          value={fieldValues[f.name] ?? ''}
-                          onChange={(e) => setFieldValues((v) => ({ ...v, [f.name]: e.target.value }))}
-                          style={{ width: '100%', padding: '0.5rem' }}
-                        >
-                          <option value="">{f.placeholder ?? f.label}</option>
-                          {(f.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
-                        </select>
-                      ) : (
-                        <input
-                          type={f.type === 'password' ? 'password' : 'text'}
-                          placeholder={f.placeholder ?? f.label}
-                          value={fieldValues[f.name] ?? ''}
-                          onChange={(e) => setFieldValues((v) => ({ ...v, [f.name]: e.target.value }))}
-                          style={{ width: '100%', padding: '0.5rem' }}
-                        />
-                      )}
-                    </div>
+                    f.type === 'select' ? (
+                      <Select
+                        key={f.name}
+                        id={`field-${f.name}`}
+                        labelText={f.label}
+                        value={fieldValues[f.name] ?? ''}
+                        onChange={(e) => setFieldValues((v) => ({ ...v, [f.name]: e.target.value }))}
+                      >
+                        <SelectItem value="" text={f.placeholder ?? f.label} />
+                        {(f.options ?? []).map((o) => <SelectItem key={o} value={o} text={o} />)}
+                      </Select>
+                    ) : (
+                      <TextInput
+                        key={f.name}
+                        id={`field-${f.name}`}
+                        labelText={f.label}
+                        type={f.type === 'password' ? 'password' : 'text'}
+                        placeholder={f.placeholder ?? ''}
+                        value={fieldValues[f.name] ?? ''}
+                        onChange={(e) => setFieldValues((v) => ({ ...v, [f.name]: e.target.value }))}
+                      />
+                    )
                   ))}
                 </div>
               ) : (
                 <TextArea
                   id="ask-user-gate-input"
-                  labelText="Sua resposta"
+                  labelText=""
                   rows={2}
                   className="cmd-gate-textarea"
                   placeholder="Digite sua resposta para o agente continuar..."
@@ -1036,7 +1036,7 @@ export function LiveView({
           <div className="live2-actions live-chat-gate-actions">
             {gateInfo.isAskUser ? (
               <>
-                <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
+                <Button kind="primary" size="lg" renderIcon={Checkmark} className="approve-btn" onClick={approve} style={{ width: '100%' }}>
                   Responder
                 </Button>
               </>
