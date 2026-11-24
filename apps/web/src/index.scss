@@ -1096,3 +1096,31 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 .live-goal-validation {
   margin-top: $spacing-02;
 }
+
+// P1 — Console Modal (cabeçalho, filtro de stream e stderr acessível)
+.exec-modal-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-03;
+  padding: $spacing-02 0;
+  border-bottom: 1px solid $border-1;
+}
+.exec-modal-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: $spacing-02;
+}
+.exec-modal-controls {
+  display: flex;
+  align-items: center;
+  gap: $spacing-03;
+  .cds--content-switcher {
+    border-radius: 0;
+  }
+}
+.exec-chunk-stderr {
+  color: var(--cds-support-error, #ff8389);
+}

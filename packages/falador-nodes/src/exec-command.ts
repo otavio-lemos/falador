@@ -15,7 +15,7 @@ import {
   type ToolProvider,
 } from '../../falador-graph/src/index.ts';
 import { payloadText } from './sse.ts';
-import { redactSecrets } from './redact.ts';
+import { createLineRedactor, redactSecrets } from './redact.ts';
 
 export const DEFAULT_READONLY_PREFIXES: readonly string[] = [
   'uname',
@@ -111,10 +111,64 @@ const FORBIDDEN_METACHARS: readonly string[] = [
 ];
 
 const HOST_REGEX = /^[a-zA-Z0-9._-]+$/;
+const JUMP_HOST_REGEX = /^([a-zA-Z0-9._-]+@)?[a-zA-Z0-9._-]+(:[0-9]{1,5})?$/;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 32_768;
 const DEFAULT_AUDIT_LOG_PATH = 'logs/exec-audit.jsonl';
+const STREAM_THROTTLE_MS = 80;
+const STREAM_THROTTLE_BYTES = 4096;
+
+export interface HostPolicy {
+  env?: 'dev' | 'staging' | 'prod';
+  dryRun?: boolean;
+  mode?: 'readonly' | 'allowlist';
+  jumpHosts?: string[];
+  requireTypedConfirm?: boolean;
+}
+
+export type ExecChunkEvent =
+  | {
+      type: 'exec_start';
+      id: string;
+      nodeId: string;
+      host: string;
+      bastion?: string;
+      command: string;
+      dryRun: boolean;
+      transport: 'local' | 'ssh';
+      ts: number;
+    }
+  | {
+      type: 'exec_chunk';
+      id: string;
+      stream: 'stdout' | 'stderr';
+      text: string;
+      ts: number;
+    }
+  | {
+      type: 'exec_end';
+      id: string;
+      exitCode: number | null;
+      durationMs: number;
+      ok: boolean;
+      truncated: boolean;
+      ts: number;
+    };
+
+export interface SshArgvOptions {
+  host: string;
+  sshUser?: string;
+  sshPort?: number;
+  remoteCommand: string;
+  jumpHosts?: string[];
+  allowedJumpHosts?: string[];
+  sshConfigPath?: string;
+  identityFile?: string;
+  useSshAgent?: boolean;
+  strictHostKeyChecking?: 'yes' | 'accept-new';
+  connectTimeoutSec?: number;
+}
 
 export interface ExecPolicy {
   transport: 'local' | 'ssh';
@@ -139,6 +193,7 @@ export interface AuditEntry {
   nodeId: string;
   transport: 'local' | 'ssh';
   host: string;
+  bastion?: string;
   command: string;
   dryRun: boolean;
   decision: 'allowed' | 'dry_run' | 'denied';
@@ -146,6 +201,153 @@ export interface AuditEntry {
   exitCode?: number | null;
   durationMs?: number;
   timedOut?: boolean;
+  sshTransportError?: boolean;
+}
+
+export function validateJumpHost(hop: string): { ok: true } | { ok: false; reason: string } {
+  if (typeof hop !== 'string' || !hop.trim() || hop !== hop.trim()) {
+    return { ok: false, reason: `jumpHost inválido: ${String(hop)}` };
+  }
+  if (hop.startsWith('-')) {
+    return { ok: false, reason: `jumpHost inválido (inicia com hífen): ${hop}` };
+  }
+  if (/proxycommand/i.test(hop)) {
+    return { ok: false, reason: `ProxyCommand é proibido em jumpHost: ${hop}` };
+  }
+  if (!JUMP_HOST_REGEX.test(hop)) {
+    return { ok: false, reason: `jumpHost fora do padrão [user@]host[:port]: ${hop}` };
+  }
+  const colonIdx = hop.lastIndexOf(':');
+  if (colonIdx !== -1) {
+    const port = Number(hop.slice(colonIdx + 1));
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return { ok: false, reason: `Porta inválida em jumpHost: ${hop}` };
+    }
+  }
+  return { ok: true };
+}
+
+export function validateSshPath(p: string): { ok: true } | { ok: false; reason: string } {
+  if (typeof p !== 'string' || !p.trim()) {
+    return { ok: false, reason: 'Caminho SSH vazio' };
+  }
+  if (/[\0\r\n]/.test(p)) {
+    return { ok: false, reason: 'Caminho SSH contém caracteres de controle' };
+  }
+  if (p.startsWith('-')) {
+    return { ok: false, reason: `Caminho SSH inválido (inicia com hífen): ${p}` };
+  }
+  if (p.includes('..')) {
+    return { ok: false, reason: `Caminho SSH não pode conter '..': ${p}` };
+  }
+  return { ok: true };
+}
+
+export function resolveHostPolicy(
+  host: string,
+  base: { dryRun: boolean; mode: 'readonly' | 'allowlist'; jumpHosts?: string[] },
+  hostPolicies?: Record<string, HostPolicy>,
+): {
+  env?: 'dev' | 'staging' | 'prod';
+  dryRun: boolean;
+  mode: 'readonly' | 'allowlist';
+  jumpHosts?: string[];
+  requireTypedConfirm: boolean;
+} {
+  if (!hostPolicies) {
+    return {
+      dryRun: base.dryRun,
+      mode: base.mode,
+      jumpHosts: base.jumpHosts,
+      requireTypedConfirm: false,
+    };
+  }
+  if (!Object.prototype.hasOwnProperty.call(hostPolicies, host)) {
+    // Fail-closed: host não listado mantém dryRun=true e requireTypedConfirm=true
+    return {
+      dryRun: true,
+      mode: 'readonly',
+      jumpHosts: base.jumpHosts,
+      requireTypedConfirm: true,
+    };
+  }
+  const hp = hostPolicies[host] ?? {};
+  if (hp.env === 'prod') {
+    // Fail-closed: ambiente prod sempre força dryRun=true e requireTypedConfirm=true
+    return {
+      env: 'prod',
+      dryRun: true,
+      mode: hp.mode ?? base.mode,
+      jumpHosts: hp.jumpHosts ?? base.jumpHosts,
+      requireTypedConfirm: true,
+    };
+  }
+  return {
+    env: hp.env,
+    dryRun: hp.dryRun ?? base.dryRun,
+    mode: hp.mode ?? base.mode,
+    jumpHosts: hp.jumpHosts ?? base.jumpHosts,
+    requireTypedConfirm: hp.requireTypedConfirm ?? false,
+  };
+}
+
+export function buildSshArgv(opts: SshArgvOptions): string[] {
+  const strict = opts.strictHostKeyChecking ?? 'yes';
+  if (strict !== 'yes' && strict !== 'accept-new') {
+    throw new Error(`strictHostKeyChecking inválido: ${String(strict)} (aceito: 'yes' | 'accept-new')`);
+  }
+  const timeout = opts.connectTimeoutSec ?? 5;
+  if (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout < 1 || timeout > 30) {
+    throw new Error(`connectTimeoutSec inválido: ${String(timeout)} (aceito: 1..30)`);
+  }
+  if (opts.sshConfigPath !== undefined) {
+    const chk = validateSshPath(opts.sshConfigPath);
+    if (!chk.ok) throw new Error(chk.reason);
+  }
+  if (opts.identityFile !== undefined) {
+    const chk = validateSshPath(opts.identityFile);
+    if (!chk.ok) throw new Error(chk.reason);
+  }
+  const jumpHosts = opts.jumpHosts ?? [];
+  const allowedJumpHosts = opts.allowedJumpHosts ?? [];
+  for (const hop of jumpHosts) {
+    const chk = validateJumpHost(hop);
+    if (!chk.ok) throw new Error(chk.reason);
+    if (allowedJumpHosts.length > 0 && !allowedJumpHosts.includes(hop)) {
+      throw new Error(`jumpHost fora de allowedJumpHosts: ${hop}`);
+    }
+  }
+
+  const args: string[] = [
+    '-T',
+    '-o', 'BatchMode=yes',
+    '-o', 'ForwardAgent=no',
+    '-o', 'ClearAllForwardings=yes',
+    '-o', 'RequestTTY=no',
+    '-o', 'ServerAliveInterval=15',
+    '-o', 'ServerAliveCountMax=3',
+    '-o', `StrictHostKeyChecking=${strict}`,
+    '-o', `ConnectTimeout=${Math.round(timeout)}`,
+  ];
+
+  if (opts.identityFile) {
+    args.push('-o', 'IdentitiesOnly=yes', '-i', opts.identityFile);
+  } else if (opts.useSshAgent === false) {
+    args.push('-o', 'IdentitiesOnly=yes');
+  }
+
+  if (opts.sshConfigPath) {
+    args.push('-F', opts.sshConfigPath);
+  }
+
+  if (jumpHosts.length > 0) {
+    args.push('-J', jumpHosts.join(','));
+  }
+
+  const target = opts.sshUser ? `${opts.sshUser}@${opts.host}` : opts.host;
+  const port = opts.sshPort ?? 22;
+  args.push('-p', String(port), '--', target, opts.remoteCommand);
+  return args;
 }
 
 /**
@@ -556,20 +758,28 @@ function writeAuditEntry(auditLogPath: string, entry: AuditEntry, ctx: NodeCtx):
   }
 }
 
-function killProcessTree(child: ChildProcess): void {
+export function killProcessTree(child: ChildProcess): void {
   if (child.exitCode !== null || child.signalCode !== null) return;
-  try {
-    child.kill('SIGTERM');
-  } catch {
-    /* processo já encerrado */
-  }
+  const pid = child.pid;
+  const sendSig = (sig: NodeJS.Signals) => {
+    if (typeof pid === 'number' && pid > 0) {
+      try {
+        process.kill(-pid, sig);
+        return;
+      } catch {
+        /* fallback para processo individual se não for líder de process group */
+      }
+    }
+    try {
+      child.kill(sig);
+    } catch {
+      /* processo já encerrado */
+    }
+  };
+  sendSig('SIGTERM');
   const killTimer = setTimeout(() => {
     if (child.exitCode === null && child.signalCode === null) {
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        /* processo já encerrado */
-      }
+      sendSig('SIGKILL');
     }
   }, 1000);
   killTimer.unref?.();
@@ -580,11 +790,13 @@ function killProcessTree(child: ChildProcess): void {
 function formatReport(opts: {
   command: string;
   host: string;
+  bastion?: string;
   transport: 'local' | 'ssh';
   dryRun: boolean;
   exitCode: number | null;
   durationMs: number;
   timedOut: boolean;
+  sshTransportError?: boolean;
   stdout: string;
   stderr: string;
   reason?: string;
@@ -593,17 +805,25 @@ function formatReport(opts: {
   const safeStdout = redactSecrets(opts.stdout).text;
   const safeStderr = redactSecrets(opts.stderr).text;
   const safeReason = opts.reason !== undefined ? redactSecrets(opts.reason).text : undefined;
+  const hostLabel = opts.bastion ? `${opts.host} via ${opts.bastion}` : opts.host;
 
   const lines: string[] = [];
   if (opts.dryRun) {
-    lines.push(`[DRY-RUN] Comando validado (${opts.transport} @ ${opts.host}): ${safeCommand}`);
+    lines.push(`[DRY-RUN] Comando validado (${opts.transport} @ ${hostLabel}): ${safeCommand}`);
     if (safeReason) lines.push(`Motivo: ${safeReason}`);
     lines.push('Nenhuma execução real foi disparada (dryRun=true).');
     return lines.join('\n');
   }
 
-  const status = opts.timedOut ? 'TIMEOUT' : `exit=${opts.exitCode ?? 'null'}`;
-  lines.push(`[EXEC ${opts.transport} @ ${opts.host}] ${safeCommand} (${status}, ${opts.durationMs} ms)`);
+  const status = opts.timedOut
+    ? 'TIMEOUT'
+    : opts.sshTransportError
+      ? 'SSH_TRANSPORT_ERROR (exit=255)'
+      : `exit=${opts.exitCode ?? 'null'}`;
+  lines.push(`[EXEC ${opts.transport} @ ${hostLabel}] ${safeCommand} (${status}, ${opts.durationMs} ms)`);
+  if (opts.sshTransportError) {
+    lines.push('Falha de transporte SSH (exitCode=255): verifique conectividade, host key, bastion ou credenciais.');
+  }
   if (safeStdout.trim()) {
     lines.push('--- stdout ---');
     lines.push(safeStdout.trimEnd());
@@ -626,6 +846,14 @@ export const execCommand: NodeTypeDef = {
     'defaultHost',
     'sshUser',
     'sshPort',
+    'jumpHosts',
+    'allowedJumpHosts',
+    'sshConfigPath',
+    'identityFile',
+    'useSshAgent',
+    'strictHostKeyChecking',
+    'connectTimeoutSec',
+    'hostPolicies',
     'cwd',
     'timeoutMs',
     'maxOutputBytes',
@@ -640,7 +868,7 @@ export const execCommand: NodeTypeDef = {
     { name: 'out', type: 'phrase', required: false },
     { name: 'tool', type: 'tool', required: false },
   ],
-  bindingNames: ['__onExecution'],
+  bindingNames: ['__onExecution', '__onExecChunk'],
   validateParams: (p): ParamError[] => {
     const errs: ParamError[] = [];
     if (p.transport !== undefined && p.transport !== 'local' && p.transport !== 'ssh') {
@@ -667,6 +895,116 @@ export const execCommand: NodeTypeDef = {
         errs.push({ path: 'params.sshPort', code: 'INVALID_PARAM', message: 'sshPort deve ser inteiro entre 1 e 65535' });
       }
     }
+    const allowedJump = Array.isArray(p.allowedJumpHosts)
+      ? p.allowedJumpHosts.filter((x): x is string => typeof x === 'string')
+      : [];
+    if (p.allowedJumpHosts !== undefined) {
+      if (!Array.isArray(p.allowedJumpHosts) || p.allowedJumpHosts.some((x) => typeof x !== 'string')) {
+        errs.push({ path: 'params.allowedJumpHosts', code: 'INVALID_PARAM', message: 'allowedJumpHosts deve ser string[]' });
+      } else {
+        for (const hop of p.allowedJumpHosts) {
+          const chk = validateJumpHost(hop as string);
+          if (!chk.ok) {
+            errs.push({ path: 'params.allowedJumpHosts', code: 'INVALID_PARAM', message: chk.reason });
+          }
+        }
+      }
+    }
+    if (p.jumpHosts !== undefined) {
+      if (!Array.isArray(p.jumpHosts) || p.jumpHosts.some((x) => typeof x !== 'string')) {
+        errs.push({ path: 'params.jumpHosts', code: 'INVALID_PARAM', message: 'jumpHosts deve ser string[]' });
+      } else {
+        for (const hop of p.jumpHosts) {
+          const chk = validateJumpHost(hop as string);
+          if (!chk.ok) {
+            errs.push({ path: 'params.jumpHosts', code: 'INVALID_PARAM', message: chk.reason });
+          } else if (allowedJump.length > 0 && !allowedJump.includes(hop as string)) {
+            errs.push({ path: 'params.jumpHosts', code: 'INVALID_PARAM', message: `jumpHost fora de allowedJumpHosts: ${hop}` });
+          }
+        }
+      }
+    }
+    if (p.sshConfigPath !== undefined) {
+      if (typeof p.sshConfigPath !== 'string') {
+        errs.push({ path: 'params.sshConfigPath', code: 'INVALID_PARAM', message: 'sshConfigPath deve ser string' });
+      } else {
+        const chk = validateSshPath(p.sshConfigPath);
+        if (!chk.ok) errs.push({ path: 'params.sshConfigPath', code: 'INVALID_PARAM', message: chk.reason });
+      }
+    }
+    if (p.identityFile !== undefined) {
+      if (typeof p.identityFile !== 'string') {
+        errs.push({ path: 'params.identityFile', code: 'INVALID_PARAM', message: 'identityFile deve ser string' });
+      } else {
+        const chk = validateSshPath(p.identityFile);
+        if (!chk.ok) errs.push({ path: 'params.identityFile', code: 'INVALID_PARAM', message: chk.reason });
+      }
+    }
+    if (p.useSshAgent !== undefined && typeof p.useSshAgent !== 'boolean') {
+      errs.push({ path: 'params.useSshAgent', code: 'INVALID_PARAM', message: 'useSshAgent deve ser boolean' });
+    }
+    if (p.strictHostKeyChecking !== undefined) {
+      if (p.strictHostKeyChecking !== 'yes' && p.strictHostKeyChecking !== 'accept-new') {
+        errs.push({
+          path: 'params.strictHostKeyChecking',
+          code: 'INVALID_PARAM',
+          message: "strictHostKeyChecking deve ser 'yes' ou 'accept-new' ('no' é proibido)",
+        });
+      }
+    }
+    if (p.connectTimeoutSec !== undefined) {
+      if (
+        typeof p.connectTimeoutSec !== 'number' ||
+        !Number.isFinite(p.connectTimeoutSec) ||
+        p.connectTimeoutSec < 1 ||
+        p.connectTimeoutSec > 30
+      ) {
+        errs.push({
+          path: 'params.connectTimeoutSec',
+          code: 'INVALID_PARAM',
+          message: 'connectTimeoutSec deve ser número entre 1 e 30',
+        });
+      }
+    }
+    if (p.hostPolicies !== undefined) {
+      if (!p.hostPolicies || typeof p.hostPolicies !== 'object' || Array.isArray(p.hostPolicies)) {
+        errs.push({ path: 'params.hostPolicies', code: 'INVALID_PARAM', message: 'hostPolicies deve ser objeto Record<string, HostPolicy>' });
+      } else {
+        for (const [hostKey, rawHp] of Object.entries(p.hostPolicies as Record<string, unknown>)) {
+          if (!rawHp || typeof rawHp !== 'object' || Array.isArray(rawHp)) {
+            errs.push({ path: `params.hostPolicies.${hostKey}`, code: 'INVALID_PARAM', message: 'política de host deve ser objeto' });
+            continue;
+          }
+          const hp = rawHp as Record<string, unknown>;
+          if (hp.env !== undefined && hp.env !== 'dev' && hp.env !== 'staging' && hp.env !== 'prod') {
+            errs.push({ path: `params.hostPolicies.${hostKey}.env`, code: 'INVALID_PARAM', message: "env deve ser 'dev' | 'staging' | 'prod'" });
+          }
+          if (hp.dryRun !== undefined && typeof hp.dryRun !== 'boolean') {
+            errs.push({ path: `params.hostPolicies.${hostKey}.dryRun`, code: 'INVALID_PARAM', message: 'dryRun deve ser boolean' });
+          }
+          if (hp.mode !== undefined && hp.mode !== 'readonly' && hp.mode !== 'allowlist') {
+            errs.push({ path: `params.hostPolicies.${hostKey}.mode`, code: 'INVALID_PARAM', message: "mode deve ser 'readonly' | 'allowlist'" });
+          }
+          if (hp.requireTypedConfirm !== undefined && typeof hp.requireTypedConfirm !== 'boolean') {
+            errs.push({ path: `params.hostPolicies.${hostKey}.requireTypedConfirm`, code: 'INVALID_PARAM', message: 'requireTypedConfirm deve ser boolean' });
+          }
+          if (hp.jumpHosts !== undefined) {
+            if (!Array.isArray(hp.jumpHosts) || hp.jumpHosts.some((x) => typeof x !== 'string')) {
+              errs.push({ path: `params.hostPolicies.${hostKey}.jumpHosts`, code: 'INVALID_PARAM', message: 'jumpHosts deve ser string[]' });
+            } else {
+              for (const hop of hp.jumpHosts) {
+                const chk = validateJumpHost(hop as string);
+                if (!chk.ok) {
+                  errs.push({ path: `params.hostPolicies.${hostKey}.jumpHosts`, code: 'INVALID_PARAM', message: chk.reason });
+                } else if (allowedJump.length > 0 && !allowedJump.includes(hop as string)) {
+                  errs.push({ path: `params.hostPolicies.${hostKey}.jumpHosts`, code: 'INVALID_PARAM', message: `jumpHost fora de allowedJumpHosts: ${hop}` });
+                }
+              }
+            }
+          }
+        }
+      }
+    }
     if (p.timeoutMs !== undefined && (typeof p.timeoutMs !== 'number' || p.timeoutMs <= 0)) {
       errs.push({ path: 'params.timeoutMs', code: 'INVALID_PARAM', message: 'timeoutMs deve ser número positivo' });
     }
@@ -689,6 +1027,14 @@ export const execCommand: NodeTypeDef = {
     const defaultHost = ctx.params.defaultHost as string | undefined;
     const sshUser = ctx.params.sshUser as string | undefined;
     const sshPort = (ctx.params.sshPort as number | undefined) ?? 22;
+    const jumpHosts = (ctx.params.jumpHosts as string[] | undefined) ?? [];
+    const allowedJumpHosts = (ctx.params.allowedJumpHosts as string[] | undefined) ?? [];
+    const sshConfigPath = ctx.params.sshConfigPath as string | undefined;
+    const identityFile = ctx.params.identityFile as string | undefined;
+    const useSshAgent = (ctx.params.useSshAgent as boolean | undefined) ?? true;
+    const strictHostKeyChecking = (ctx.params.strictHostKeyChecking as 'yes' | 'accept-new' | undefined) ?? 'yes';
+    const connectTimeoutSec = (ctx.params.connectTimeoutSec as number | undefined) ?? 5;
+    const hostPolicies = ctx.params.hostPolicies as Record<string, HostPolicy> | undefined;
     const cwd = ctx.params.cwd as string | undefined;
     const rawTimeout = (ctx.params.timeoutMs as number | undefined) ?? DEFAULT_TIMEOUT_MS;
     const timeoutMs = Math.min(Math.max(50, rawTimeout), MAX_TIMEOUT_MS);
@@ -697,7 +1043,7 @@ export const execCommand: NodeTypeDef = {
     const customToolName = (ctx.params.toolName as string | undefined)?.trim();
     const resolvedToolName = customToolName || (transport === 'ssh' ? 'exec_ssh' : 'exec_local');
 
-    const policy: ExecPolicy = {
+    const basePolicy: ExecPolicy = {
       transport,
       mode,
       allowedPrefixes,
@@ -708,19 +1054,26 @@ export const execCommand: NodeTypeDef = {
 
     const defaultRunId = typeof ctx.bindings?.runId === 'string' ? ctx.bindings.runId : 'unknown';
     const onExecution = ctx.bindings?.__onExecution as ((ev: Record<string, unknown>) => void) | undefined;
+    const onExecChunk = ctx.bindings?.__onExecChunk as ((ev: ExecChunkEvent) => void) | undefined;
+    const emitChunkEvent = (ev: ExecChunkEvent) => {
+      try {
+        onExecChunk?.(ev);
+      } catch {
+        /* callback do host não derruba o nó */
+      }
+    };
 
-    const activeChildren = new Set<ChildProcess>();
-    let controlInterrupted = false;
+    let execSeq = 0;
+    const activeRuns = new Set<{ markInterrupted: () => void }>();
 
-    const killAllActive = () => {
-      for (const child of activeChildren) {
-        killProcessTree(child);
+    const interruptAllActive = () => {
+      for (const run of [...activeRuns]) {
+        run.markInterrupted();
       }
     };
 
     const onAbort = () => {
-      controlInterrupted = true;
-      killAllActive();
+      interruptAllActive();
     };
     ctx.signal.addEventListener('abort', onAbort, { once: true });
 
@@ -733,8 +1086,10 @@ export const execCommand: NodeTypeDef = {
         }
       | {
           kind: 'ok';
+          id: string;
           command: string;
           host: string;
+          bastion?: string;
           dryRun: boolean;
           exitCode: number | null;
           durationMs: number;
@@ -743,6 +1098,8 @@ export const execCommand: NodeTypeDef = {
           timedOut: boolean;
           truncated: boolean;
           interrupted: boolean;
+          sshTransportError: boolean;
+          requireTypedConfirm: boolean;
           report: string;
           errorMsg?: string;
         };
@@ -751,7 +1108,32 @@ export const execCommand: NodeTypeDef = {
       input: unknown,
       execOpts: { runId: string; signal?: AbortSignal },
     ): Promise<ExecRunOutcome> {
-      const validation = validateCommand(input, policy);
+      const preExtracted = extractCommand(input);
+      const preliminaryHost =
+        transport === 'ssh'
+          ? ((preExtracted.ok ? preExtracted.host : undefined) ?? defaultHost ?? '').trim()
+          : 'local';
+      const resolvedPolicy = resolveHostPolicy(
+        preliminaryHost || 'local',
+        { dryRun, mode, jumpHosts },
+        hostPolicies,
+      );
+      const effectiveDryRun = resolvedPolicy.dryRun;
+      const effectiveMode = resolvedPolicy.mode;
+      const effectiveJumpHosts = resolvedPolicy.jumpHosts ?? [];
+      const bastionLabel = effectiveJumpHosts.length > 0 ? effectiveJumpHosts.join(',') : undefined;
+      const effectivePrefixes =
+        effectiveMode === 'readonly' && mode !== 'readonly'
+          ? [...DEFAULT_READONLY_PREFIXES]
+          : allowedPrefixes;
+
+      const callPolicy: ExecPolicy = {
+        ...basePolicy,
+        mode: effectiveMode,
+        allowedPrefixes: effectivePrefixes,
+      };
+
+      const validation = validateCommand(input, callPolicy);
       if (!validation.ok) {
         const deniedHost = validation.host ?? (transport === 'ssh' ? (defaultHost ?? 'unknown') : 'local');
         const deniedCommand = validation.command ?? String(payloadText(input)?.text ?? '');
@@ -765,8 +1147,9 @@ export const execCommand: NodeTypeDef = {
             nodeId: ctx.id,
             transport,
             host: deniedHost,
+            ...(bastionLabel ? { bastion: bastionLabel } : {}),
             command: deniedCommand,
-            dryRun,
+            dryRun: effectiveDryRun,
             decision: 'denied',
             reason: validation.reason,
           },
@@ -778,8 +1161,9 @@ export const execCommand: NodeTypeDef = {
             command: redactSecrets(deniedCommand).text,
             output: redactSecrets(`EXEC_POLICY_DENIED: ${validation.reason}`).text,
             host: deniedHost,
+            ...(bastionLabel ? { bastion: bastionLabel } : {}),
             ok: false,
-            dryRun,
+            dryRun: effectiveDryRun,
             ts: Date.now(),
           });
         } catch { /* callback do host não derruba o nó */ }
@@ -792,9 +1176,24 @@ export const execCommand: NodeTypeDef = {
       }
 
       const { command, argv, host, reason } = validation;
-      const tExecStartMs = Date.now();
 
-      if (dryRun) {
+      if (transport === 'ssh') {
+        for (const hop of effectiveJumpHosts) {
+          const hopChk = validateJumpHost(hop);
+          if (!hopChk.ok) {
+            return { kind: 'denied', reason: hopChk.reason, command, host };
+          }
+          if (allowedJumpHosts.length > 0 && !allowedJumpHosts.includes(hop)) {
+            return { kind: 'denied', reason: `jumpHost fora de allowedJumpHosts: ${hop}`, command, host };
+          }
+        }
+      }
+
+      const tExecStartMs = Date.now();
+      const execId = `${ctx.id}:${tExecStartMs}:${++execSeq}`;
+      const safeCommand = redactSecrets(command).text;
+
+      if (effectiveDryRun) {
         const tExecEndMs = Date.now();
         const durationMs = tExecEndMs - tExecStartMs;
         ctx.metrics.counter('exec.command.dry_run', 1);
@@ -806,6 +1205,7 @@ export const execCommand: NodeTypeDef = {
             nodeId: ctx.id,
             transport,
             host,
+            ...(bastionLabel ? { bastion: bastionLabel } : {}),
             command,
             dryRun: true,
             decision: 'dry_run',
@@ -819,6 +1219,7 @@ export const execCommand: NodeTypeDef = {
         const report = formatReport({
           command,
           host,
+          bastion: bastionLabel,
           transport,
           dryRun: true,
           exitCode: 0,
@@ -828,12 +1229,41 @@ export const execCommand: NodeTypeDef = {
           stderr: '',
           reason,
         });
+        emitChunkEvent({
+          type: 'exec_start',
+          id: execId,
+          nodeId: ctx.id,
+          host,
+          ...(bastionLabel ? { bastion: bastionLabel } : {}),
+          command: safeCommand,
+          dryRun: true,
+          transport,
+          ts: tExecStartMs,
+        });
+        emitChunkEvent({
+          type: 'exec_chunk',
+          id: execId,
+          stream: 'stdout',
+          text: report,
+          ts: tExecEndMs,
+        });
+        emitChunkEvent({
+          type: 'exec_end',
+          id: execId,
+          exitCode: 0,
+          durationMs,
+          ok: true,
+          truncated: false,
+          ts: tExecEndMs,
+        });
         try {
           onExecution?.({
+            id: execId,
             nodeId: ctx.id,
-            command: redactSecrets(command).text,
-            output: redactSecrets(report).text,
+            command: safeCommand,
+            output: report,
             host,
+            ...(bastionLabel ? { bastion: bastionLabel } : {}),
             ok: true,
             exitCode: 0,
             durationMs,
@@ -843,8 +1273,10 @@ export const execCommand: NodeTypeDef = {
         } catch { /* callback do host */ }
         return {
           kind: 'ok',
+          id: execId,
           command,
           host,
+          ...(bastionLabel ? { bastion: bastionLabel } : {}),
           dryRun: true,
           exitCode: 0,
           durationMs,
@@ -853,12 +1285,13 @@ export const execCommand: NodeTypeDef = {
           timedOut: false,
           truncated: false,
           interrupted: false,
+          sshTransportError: false,
+          requireTypedConfirm: resolvedPolicy.requireTypedConfirm,
           report,
         };
       }
 
-      // Execução real controlada (shell: false sempre)
-      controlInterrupted = false;
+      // Execução real controlada (shell: false sempre, detached: true para process group kill)
       let callInterrupted = false;
       const stdoutBuf = new TailBuffer(maxOutputBytes);
       const stderrBuf = new TailBuffer(maxOutputBytes);
@@ -868,12 +1301,26 @@ export const execCommand: NodeTypeDef = {
         const tExecEndMs = Date.now();
         const report = 'Execução cancelada (signal abortado).';
         try {
-          onExecution?.({ nodeId: ctx.id, command: redactSecrets(command).text, output: redactSecrets(report).text, host, ok: false, exitCode: null, durationMs: tExecEndMs - tExecStartMs, dryRun: false, ts: Date.now() });
+          onExecution?.({
+            id: execId,
+            nodeId: ctx.id,
+            command: safeCommand,
+            output: report,
+            host,
+            ...(bastionLabel ? { bastion: bastionLabel } : {}),
+            ok: false,
+            exitCode: null,
+            durationMs: tExecEndMs - tExecStartMs,
+            dryRun: false,
+            ts: Date.now(),
+          });
         } catch { /* callback do host */ }
         return {
           kind: 'ok',
+          id: execId,
           command,
           host,
+          ...(bastionLabel ? { bastion: bastionLabel } : {}),
           dryRun: false,
           exitCode: null,
           durationMs: tExecEndMs - tExecStartMs,
@@ -882,18 +1329,88 @@ export const execCommand: NodeTypeDef = {
           timedOut: false,
           truncated: false,
           interrupted: true,
+          sshTransportError: false,
+          requireTypedConfirm: resolvedPolicy.requireTypedConfirm,
           report,
         };
       }
+
+      emitChunkEvent({
+        type: 'exec_start',
+        id: execId,
+        nodeId: ctx.id,
+        host,
+        ...(bastionLabel ? { bastion: bastionLabel } : {}),
+        command: safeCommand,
+        dryRun: false,
+        transport,
+        ts: tExecStartMs,
+      });
+
+      const createStreamEmitter = (streamName: 'stdout' | 'stderr') => {
+        const redactor = createLineRedactor();
+        let pending = '';
+        let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const flushPending = () => {
+          if (flushTimer) {
+            clearTimeout(flushTimer);
+            flushTimer = null;
+          }
+          if (!pending) return;
+          const text = pending;
+          pending = '';
+          emitChunkEvent({
+            type: 'exec_chunk',
+            id: execId,
+            stream: streamName,
+            text,
+            ts: Date.now(),
+          });
+        };
+
+        const appendRedacted = (text: string) => {
+          if (!text) return;
+          pending += text;
+          if (Buffer.byteLength(pending, 'utf8') >= STREAM_THROTTLE_BYTES) {
+            flushPending();
+          } else if (!flushTimer) {
+            flushTimer = setTimeout(flushPending, STREAM_THROTTLE_MS);
+            flushTimer.unref?.();
+          }
+        };
+
+        return {
+          push(raw: string) {
+            const { text } = redactor.push(raw);
+            appendRedacted(text);
+          },
+          end() {
+            const { text } = redactor.flush();
+            if (text) pending += text;
+            flushPending();
+          },
+        };
+      };
+
+      const stdoutEmitter = createStreamEmitter('stdout');
+      const stderrEmitter = createStreamEmitter('stderr');
 
       const execResult = await new Promise<{ exitCode: number | null; errorMsg?: string }>((resolve) => {
         let settled = false;
         let child: ChildProcess | null = null;
         let timer: ReturnType<typeof setTimeout> | null = null;
 
+        const runHandle = {
+          markInterrupted: () => {
+            callInterrupted = true;
+            if (child) killProcessTree(child);
+          },
+        };
+        activeRuns.add(runHandle);
+
         const onCallAbort = () => {
-          callInterrupted = true;
-          if (child) killProcessTree(child);
+          runHandle.markInterrupted();
         };
 
         const finish = (res: { exitCode: number | null; errorMsg?: string }) => {
@@ -903,7 +1420,7 @@ export const execCommand: NodeTypeDef = {
           if (execOpts.signal) {
             execOpts.signal.removeEventListener('abort', onCallAbort);
           }
-          if (child) activeChildren.delete(child);
+          activeRuns.delete(runHandle);
           resolve(res);
         };
 
@@ -911,36 +1428,36 @@ export const execCommand: NodeTypeDef = {
           if (transport === 'local') {
             child = spawn(argv[0], argv.slice(1), {
               shell: false,
+              detached: true,
               cwd,
               stdio: ['ignore', 'pipe', 'pipe'],
             });
           } else {
-            const target = sshUser ? `${sshUser}@${host}` : host;
             const remoteCommand = buildSshRemoteCommand(argv);
-            child = spawn(
-              'ssh',
-              [
-                '-o', 'BatchMode=yes',
-                '-o', 'ConnectTimeout=5',
-                '-o', 'StrictHostKeyChecking=yes',
-                '-o', 'IdentitiesOnly=yes',
-                '-p', String(sshPort),
-                '--',
-                target,
-                remoteCommand,
-              ],
-              {
-                shell: false,
-                stdio: ['ignore', 'pipe', 'pipe'],
-              },
-            );
+            const sshArgs = buildSshArgv({
+              host,
+              sshUser,
+              sshPort,
+              remoteCommand,
+              jumpHosts: effectiveJumpHosts,
+              allowedJumpHosts,
+              sshConfigPath,
+              identityFile,
+              useSshAgent,
+              strictHostKeyChecking,
+              connectTimeoutSec,
+            });
+            child = spawn('ssh', sshArgs, {
+              shell: false,
+              detached: true,
+              stdio: ['ignore', 'pipe', 'pipe'],
+            });
           }
         } catch (err: unknown) {
           finish({ exitCode: null, errorMsg: (err as Error)?.message ?? String(err) });
           return;
         }
 
-        activeChildren.add(child);
         if (execOpts.signal) {
           execOpts.signal.addEventListener('abort', onCallAbort, { once: true });
         }
@@ -953,8 +1470,14 @@ export const execCommand: NodeTypeDef = {
           killProcessTree(spawned);
         }, timeoutMs);
 
-        spawned.stdout?.on('data', (chunk: Buffer) => stdoutBuf.append(chunk));
-        spawned.stderr?.on('data', (chunk: Buffer) => stderrBuf.append(chunk));
+        spawned.stdout?.on('data', (chunk: Buffer) => {
+          stdoutBuf.append(chunk);
+          stdoutEmitter.push(chunk.toString('utf8'));
+        });
+        spawned.stderr?.on('data', (chunk: Buffer) => {
+          stderrBuf.append(chunk);
+          stderrEmitter.push(chunk.toString('utf8'));
+        });
 
         spawned.once('error', (err) => {
           finish({ exitCode: null, errorMsg: err.message });
@@ -965,7 +1488,11 @@ export const execCommand: NodeTypeDef = {
         });
       });
 
-      const interrupted = controlInterrupted || callInterrupted;
+      stdoutEmitter.end();
+      stderrEmitter.end();
+
+      const interrupted = callInterrupted;
+      const sshTransportError = transport === 'ssh' && execResult.exitCode === 255;
       const tExecEndMs = Date.now();
       const durationMs = tExecEndMs - tExecStartMs;
       const truncated = stdoutBuf.truncated || stderrBuf.truncated;
@@ -984,6 +1511,7 @@ export const execCommand: NodeTypeDef = {
           nodeId: ctx.id,
           transport,
           host,
+          ...(bastionLabel ? { bastion: bastionLabel } : {}),
           command,
           dryRun: false,
           decision: 'allowed',
@@ -991,6 +1519,7 @@ export const execCommand: NodeTypeDef = {
           exitCode: execResult.exitCode,
           durationMs,
           timedOut,
+          ...(sshTransportError ? { sshTransportError: true } : {}),
         },
         ctx,
       );
@@ -998,35 +1527,51 @@ export const execCommand: NodeTypeDef = {
       const report = formatReport({
         command,
         host,
+        bastion: bastionLabel,
         transport,
         dryRun: false,
         exitCode: execResult.exitCode,
         durationMs,
         timedOut,
+        sshTransportError,
         stdout: stdoutBuf.toString(),
         stderr: stderrText,
         reason,
       });
 
       const __ok = !timedOut && !interrupted && execResult.exitCode === 0 && !execResult.errorMsg;
+      emitChunkEvent({
+        type: 'exec_end',
+        id: execId,
+        exitCode: execResult.exitCode,
+        durationMs,
+        ok: __ok,
+        truncated,
+        ts: tExecEndMs,
+      });
       try {
         onExecution?.({
+          id: execId,
           nodeId: ctx.id,
-          command: redactSecrets(command).text,
-          output: redactSecrets(report).text,
+          command: safeCommand,
+          output: report,
           host,
+          ...(bastionLabel ? { bastion: bastionLabel } : {}),
           ok: __ok,
           exitCode: execResult.exitCode,
           durationMs,
           dryRun: false,
+          ...(sshTransportError ? { sshTransportError: true } : {}),
           ts: Date.now(),
         });
       } catch { /* callback do host */ }
 
       return {
         kind: 'ok',
+        id: execId,
         command,
         host,
+        ...(bastionLabel ? { bastion: bastionLabel } : {}),
         dryRun: false,
         exitCode: execResult.exitCode,
         durationMs,
@@ -1035,6 +1580,8 @@ export const execCommand: NodeTypeDef = {
         timedOut,
         truncated,
         interrupted,
+        sshTransportError,
+        requireTypedConfirm: resolvedPolicy.requireTypedConfirm,
         report,
         errorMsg: execResult.errorMsg,
       };
@@ -1121,10 +1668,13 @@ export const execCommand: NodeTypeDef = {
           meta: {
             command: outcome.command,
             host: outcome.host,
+            ...(outcome.bastion ? { bastion: outcome.bastion } : {}),
             transport,
             truncated: outcome.truncated,
             timedOut: outcome.timedOut,
             interrupted: outcome.interrupted,
+            ...(outcome.sshTransportError ? { sshTransportError: true } : {}),
+            ...(outcome.requireTypedConfirm ? { requireTypedConfirm: true } : {}),
           },
         };
       },
@@ -1137,11 +1687,10 @@ export const execCommand: NodeTypeDef = {
 
       onControl(c: ControlMsg) {
         if (c.kind === 'interrupt') {
-          controlInterrupted = true;
-          if (activeChildren.size > 0) {
-            ctx.metrics.counter('exec.command.killed', activeChildren.size);
+          if (activeRuns.size > 0) {
+            ctx.metrics.counter('exec.command.killed', activeRuns.size);
             ctx.log('info', `exec.command interrompido por controle (${c.reason ?? 'interrupt'})`);
-            killAllActive();
+            interruptAllActive();
           }
         }
       },
@@ -1173,13 +1722,16 @@ export const execCommand: NodeTypeDef = {
           meta: {
             ...msg.meta,
             exec: {
+              id: outcome.id,
               command: outcome.command,
               host: outcome.host,
+              ...(outcome.bastion ? { bastion: outcome.bastion } : {}),
               exitCode: outcome.exitCode,
               durationMs: outcome.durationMs,
               dryRun: outcome.dryRun,
               truncated: outcome.truncated,
               timedOut: outcome.timedOut,
+              ...(outcome.sshTransportError ? { sshTransportError: true } : {}),
             },
             trace: {
               ...prevTrace,
@@ -1193,9 +1745,8 @@ export const execCommand: NodeTypeDef = {
 
       async stop() {
         ctx.signal.removeEventListener('abort', onAbort);
-        if (activeChildren.size > 0) {
-          controlInterrupted = true;
-          killAllActive();
+        if (activeRuns.size > 0) {
+          interruptAllActive();
         }
       },
     };
