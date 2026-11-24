@@ -284,8 +284,8 @@
           "uname"
         ],
         "allowedHosts": [],
-        "defaultHost": "",
-        "sshUser": "",
+        "defaultHost": "192.168.64.7",
+        "sshUser": "root",
         "sshPort": 22,
         "timeoutMs": 60000,
         "maxOutputBytes": 65536,

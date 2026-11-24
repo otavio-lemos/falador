@@ -3,11 +3,12 @@
 // sidebar de Documentos/Runbooks (RAG BM25 com tags e chunks).
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-  Accordion,
-  AccordionItem,
   AILabel,
   AILabelContent,
   Button,
+  ButtonSet,
+  ContainedList,
+  ContainedListItem,
   Dropdown,
   Modal,
   Tag,
@@ -15,14 +16,6 @@ import {
   TextInput,
   Select,
   SelectItem,
-  CodeSnippet,
-  ProgressIndicator,
-  ProgressStep,
-  StructuredListWrapper,
-  StructuredListHead,
-  StructuredListBody,
-  StructuredListRow,
-  StructuredListCell,
   preview__IconIndicator as IconIndicator,
 } from '@carbon/react';
 import {
@@ -389,22 +382,18 @@ function ChatCard({
       <span className="live-chat-accent" aria-hidden="true" />
       <span className="live-chat-avatar" aria-hidden="true">{icon}</span>
       <div className="live-chat-block-body">
-        <span className="live-chat-entry-head">
-          <strong className="live-chat-entry-role">{role}</strong>
-          <Tag type={tagType} size="sm">{tag}</Tag>
-          {aiLabel && (
-            <AILabel kind="inline" size="mini" autoAlign>
-              <AILabelContent>
-                <p className="secondary">Gerado por IA</p>
-              </AILabelContent>
-            </AILabel>
-          )}
-          <span className="live-chat-entry-meta">
-            {meta}
-            {ts != null && <time>{new Date(ts).toLocaleTimeString()}</time>}
-          </span>
-        </span>
-        {body}
+        {ts != null && <time className="live-chat-entry-time">{new Date(ts).toLocaleTimeString()}</time>}
+        <strong className="live-chat-entry-role">{role}</strong>
+        {tag ? <Tag type={tagType} size="sm">{tag}</Tag> : null}
+        {aiLabel && (
+          <AILabel kind="inline" size="mini" autoAlign>
+            <AILabelContent>
+              <p className="secondary">Gerado por IA</p>
+            </AILabelContent>
+          </AILabel>
+        )}
+        {meta}
+        <span className="live-chat-entry-body">{body}</span>
       </div>
     </article>
   );
@@ -797,12 +786,14 @@ export function LiveView({
     for (const [key, s] of latestSteps) {
       const phase = s.phase === 'calling' ? 'chamando' : s.phase === 'rejected' ? 'rejeitada' : s.phase === 'repeated' ? 'repetida' : s.ok === false ? 'erro' : 'concluída';
       const isSearchTool = s.tool === 'rag.search' || s.tool === 'rag_search' || s.tool === 'tool.web_search' || s.tool === 'tool_web_search' || s.tool === 'tool.crawler' || s.tool === 'tool_crawler';
-      const args = (!isSearchTool && s.args && Object.keys(s.args).length > 0) ? `\n${JSON.stringify(s.args)}` : '';
+      const argStr = (!isSearchTool && s.args && Object.keys(s.args).length > 0)
+        ? ` · ${Object.entries(s.args).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : String(v)}`).join(' · ')}`
+        : '';
       const duration = typeof s.durationMs === 'number' ? ` · ${Math.round(s.durationMs)} ms` : '';
       items.push({
         id: `agent-step-${key}`, kind: 'agent-step', nodeId: s.nodeId,
         title: label(s.nodeId), subtitle: `Passo ${s.step} · ${phase}`,
-        text: `${s.tool}${duration}${s.dryRun ? ' · dry-run' : ''}${args}`, ts: s.ts,
+        text: `${s.tool}${duration}${s.dryRun ? ' · dry-run' : ''}${argStr}`, ts: s.ts,
         tag: `Passo ${s.step}`, nodeType: nodes.get(s.nodeId)?.type,
         tool: s.tool, step: s.step, agentStep: s,
       });
@@ -1039,7 +1030,7 @@ export function LiveView({
                       onChange={(e) => setCmdDraft(e.target.value)}
                       style={{ flex: 1 }}
                     />
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                    <ButtonSet className="gate-actions">
                       <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
                         Aprovar e Executar
                       </Button>
@@ -1049,7 +1040,7 @@ export function LiveView({
                       <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>
                         Rejeitar
                       </Button>
-                    </div>
+                    </ButtonSet>
                   </div>
                 </>
               ) : editing ? (
@@ -1063,22 +1054,22 @@ export function LiveView({
                     onChange={(e) => setDraft(e.target.value)}
                     style={{ flex: 1 }}
                   />
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                  <ButtonSet className="gate-actions">
                     <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={approve}>Enviar editada</Button>
                     <Button kind="ghost" size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
-                  </div>
+                  </ButtonSet>
                 </div>
               ) : (
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end' }}>
                   <div className="live-chat-entry-text" style={{ flex: 1 }}>{suggestion}</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                  <ButtonSet className="gate-actions">
                     <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
                       {hasTTS ? 'Aprovar & Falar' : 'Aprovar'}
                     </Button>
                     <Button kind="tertiary" size="sm" renderIcon={Edit} onClick={startEdit}>Editar</Button>
                     {hasLLM && <Button kind="tertiary" size="sm" renderIcon={Renew} onClick={onRegenerate}>Regerar</Button>}
                     <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>Rejeitar</Button>
-                  </div>
+                  </ButtonSet>
                 </div>
               )}
             </>
@@ -1271,28 +1262,19 @@ export function LiveView({
     const style = { ['--accent' as string]: accent };
     if (m.kind === 'thought') {
       return (
-        <div key={m.id} className="live-chat-thought" data-node-id={m.nodeId} style={style}>
-          <span className="live-chat-accent" aria-hidden="true" />
-          <span className="live-chat-avatar" aria-hidden="true">{icon}</span>
-          <div className="live-chat-block-body">
-            <Accordion>
-              <AccordionItem
-                title={(
-                  <span className="live-chat-entry-head">
-                    <strong className="live-chat-entry-role">{role}</strong>
-                    <Tag type={tagType} size="sm">{tag}</Tag>
-                    <span className="live-chat-entry-meta">
-                      {meta}
-                      <time>{new Date(m.ts).toLocaleTimeString()}</time>
-                    </span>
-                  </span>
-                )}
-              >
-                <div className="live-chat-thought-text">{m.text}</div>
-              </AccordionItem>
-            </Accordion>
-          </div>
-        </div>
+        <ChatCard
+          key={m.id}
+          kind="thought"
+          nodeId={m.nodeId}
+          role={role}
+          tag={tag}
+          tagType={tagType}
+          accent={accent}
+          icon={icon}
+          ts={m.ts}
+          meta={meta}
+          body={<span className="live-chat-entry-text" title={m.text}>{m.text}</span>}
+        />
       );
     }
     if (m.kind === 'goal-validation' && m.auditEvent) {
@@ -1314,58 +1296,11 @@ export function LiveView({
           aiLabel={true}
           ariaLabel="Validação de Objetivo"
           body={(
-            <div className="live-goal-validation">
-              <StructuredListWrapper isCondensed aria-label="Validação de Objetivo">
-                <StructuredListHead>
-                  <StructuredListRow head>
-                    <StructuredListCell head>Campo</StructuredListCell>
-                    <StructuredListCell head>Valor</StructuredListCell>
-                  </StructuredListRow>
-                </StructuredListHead>
-                <StructuredListBody>
-                  {v ? (
-                    <>
-                      <StructuredListRow>
-                        <StructuredListCell noWrap>Status</StructuredListCell>
-                        <StructuredListCell>
-                          <IconIndicator
-                            kind={v.achieved ? 'succeeded' : 'caution-major'}
-                            label={v.achieved ? 'Objetivo atingido' : 'Não atingido'}
-                          />
-                        </StructuredListCell>
-                      </StructuredListRow>
-                      <StructuredListRow>
-                        <StructuredListCell noWrap>Confiança</StructuredListCell>
-                        <StructuredListCell>{`${Math.round(v.confidence * 100)}%`}</StructuredListCell>
-                      </StructuredListRow>
-                      <StructuredListRow>
-                        <StructuredListCell noWrap>Lacunas</StructuredListCell>
-                        <StructuredListCell>{v.gaps.length > 0 ? v.gaps.join('; ') : 'Nenhuma'}</StructuredListCell>
-                      </StructuredListRow>
-                      <StructuredListRow>
-                        <StructuredListCell noWrap>Próximas ações</StructuredListCell>
-                        <StructuredListCell>{v.nextActions.length > 0 ? v.nextActions.join('; ') : 'Nenhuma'}</StructuredListCell>
-                      </StructuredListRow>
-                    </>
-                  ) : (
-                    <>
-                      <StructuredListRow>
-                        <StructuredListCell noWrap>Status</StructuredListCell>
-                        <StructuredListCell>
-                          <IconIndicator kind="failed" label="Limite de passos atingido" />
-                        </StructuredListCell>
-                      </StructuredListRow>
-                      {ev.text && (
-                        <StructuredListRow>
-                          <StructuredListCell noWrap>Resumo</StructuredListCell>
-                          <StructuredListCell>{ev.text}</StructuredListCell>
-                        </StructuredListRow>
-                      )}
-                    </>
-                  )}
-                </StructuredListBody>
-              </StructuredListWrapper>
-            </div>
+            <span className="live-chat-entry-text" title={m.text}>
+              {v
+                ? `${v.achieved ? 'atingido' : 'pendente'} · confiança ${Math.round(v.confidence * 100)}% · lacunas: ${v.gaps.length ? v.gaps.join('; ') : 'nenhuma'}`
+                : (ev.text || 'Limite de passos atingido')}
+            </span>
           )}
         />
       );
@@ -1387,17 +1322,9 @@ export function LiveView({
           onOpenAudit={() => openAuditFor(m.nodeId)}
           body={(
             <>
-              {(m.gateTool || m.gateHost) && (
-                <div className="live-chat-gate-tags">
-                  {m.gateTool && <Tag type="teal" size="sm">Tool: {m.gateTool}</Tag>}
-                  {m.gateHost && <Tag type="cyan" size="sm">Host: {m.gateHost}</Tag>}
-                </div>
-              )}
-              {m.text.includes('\n') || m.text.length > 160 ? (
-                <div className="live-chat-entry-text">{m.text}</div>
-              ) : (
-                <CodeSnippet type="single" hideCopyButton>{m.text}</CodeSnippet>
-              )}
+              {m.gateTool && <Tag type="teal" size="sm">Tool: {m.gateTool}</Tag>}
+              {m.gateHost && <Tag type="cyan" size="sm">Host: {m.gateHost}</Tag>}
+              <code className="live-chat-entry-code" title={m.text}>{m.text}</code>
             </>
           )}
         />
@@ -1428,42 +1355,19 @@ export function LiveView({
         onOpenAudit={m.kind === 'agent-step' || m.kind === 'decision' ? () => openAuditFor(m.nodeId) : undefined}
         body={(
           <>
-            <div className="live-chat-entry-text">
+            <span className="live-chat-entry-text" title={m.text}>
               {m.text}
               {m.live && <span className="live-cursor" />}
-            </div>
-            {isStructuredSearch && searchArgs && Object.keys(searchArgs).length > 0 && (
-              <div className="live-chat-structured-step" style={{ marginTop: '0.5rem' }}>
-                <Accordion size="sm">
-                  <AccordionItem
-                    title={
-                      m.tool?.includes('crawler')
-                        ? `Parâmetros do crawler: ${searchArgs.url ? String(searchArgs.url).slice(0, 50) : 'configuração'}`
-                        : `Parâmetros da consulta: ${searchArgs.query ? `"${String(searchArgs.query).slice(0, 50)}"` : 'detalhes'}`
-                    }
-                  >
-                    <div className="live-chat-structured-args" style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.8125rem' }}>
-                      {Object.entries(searchArgs).map(([k, v]) => (
-                        <div key={k}>
-                          <strong>{k}:</strong> <span style={{ fontFamily: 'var(--cds-code-font, monospace)' }}>{typeof v === 'object' ? JSON.stringify(v) : String(v)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </AccordionItem>
-                </Accordion>
-              </div>
-            )}
-            {isExecStep && (
-              <div className="live-chat-step-actions">
-                <Button
-                  kind="tertiary"
-                  size="sm"
-                  renderIcon={Terminal}
-                  onClick={openConsole}
-                >
-                  Abrir no Console
-                </Button>
-              </div>
+            </span>
+            {(isExecStep || (isStructuredSearch && searchArgs && Object.keys(searchArgs).length > 0)) && (
+              <Button
+                kind="ghost"
+                size="sm"
+                hasIconOnly
+                renderIcon={Terminal}
+                iconDescription="Abrir no Console"
+                onClick={openConsole}
+              />
             )}
           </>
         )}
@@ -1686,35 +1590,31 @@ export function LiveView({
                 <p className="live-chat-empty" style={{ marginTop: '-0.25rem' }}>{turnStatus.hint}</p>
                 {latestPlan && (
                   <div className="live-plan-panel">
-                    <Accordion size="sm">
-                      <AccordionItem
-                        open
-                        title={`Plano de execução (${latestPlan.filter((p) => p.status === 'verified').length}/${latestPlan.length} verificados)`}
-                      >
-                        <ProgressIndicator
-                          currentIndex={(() => {
-                            const idx = latestPlan.findIndex((p) => p.status === 'pending');
-                            return idx >= 0 ? idx : latestPlan.length;
-                          })()}
+                    <ContainedList
+                      size="sm"
+                      kind="on-page"
+                      label={`Plano de execução (${latestPlan.filter((p) => p.status === 'verified').length}/${latestPlan.length} verificados)`}
+                    >
+                      {latestPlan.map((p) => (
+                        <ContainedListItem
+                          key={p.id}
+                          action={
+                            <IconIndicator
+                              kind={p.status === 'verified' ? 'succeeded' : p.status === 'failed' ? 'failed' : 'in-progress'}
+                              label={p.status === 'verified' ? 'verificado' : p.status === 'failed' ? 'falhou' : 'pendente'}
+                              size={16}
+                            />
+                          }
                         >
-                          {latestPlan.map((p, idx) => {
-                            const firstPendingIdx = latestPlan.findIndex((x) => x.status === 'pending');
-                            return (
-                              <ProgressStep
-                                key={p.id}
-                                label={p.description}
-                                secondaryLabel={p.evidence ? `${p.verification} · ${p.evidence}` : p.verification}
-                                description={`Verificação: ${p.verification}${p.evidence ? ` | Evidência: ${p.evidence}` : ''}`}
-                                complete={p.status === 'verified'}
-                                invalid={p.status === 'failed'}
-                                current={p.status === 'pending' && idx === firstPendingIdx}
-                                disabled={p.status === 'pending' && firstPendingIdx >= 0 && idx > firstPendingIdx}
-                              />
-                            );
-                          })}
-                        </ProgressIndicator>
-                      </AccordionItem>
-                    </Accordion>
+                          <span className="live-plan-item">
+                            <strong>{p.description}</strong>
+                            <span className="live-plan-verify">
+                              {p.verification}{p.evidence ? ` · evidência: ${p.evidence}` : ''}
+                            </span>
+                          </span>
+                        </ContainedListItem>
+                      ))}
+                    </ContainedList>
                   </div>
                 )}
                 <div className="live-chat-log" ref={chatLogRef}>
