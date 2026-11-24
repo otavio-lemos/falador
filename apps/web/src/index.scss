@@ -928,12 +928,6 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   height: auto;
   padding-block: $spacing-02;
 }
-.live-chat-gate-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: $spacing-02;
-  margin-bottom: $spacing-02;
-}
 .live-chat-entry--gate .cds--text-area__wrapper,
 .live-chat-entry--gate .cmd-gate-textarea {
   margin-top: $spacing-02;
@@ -972,20 +966,31 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 .thoughts-item time { color: $txt-2; font-size: 11px; }
 .thoughts-item pre { white-space: pre-wrap; word-break: break-word; font-size: 11px; line-height: 1.4; margin: $spacing-02 0 0; }
 
-// Botões de decisão na lateral direita do card, nunca abaixo do texto.
-.live-chat-entry--gate { position: relative; }
-.live-chat-entry--gate .live-chat-block-body { padding-right: 132px; }
-.live-chat-gate-actions {
-  position: absolute;
-  right: $spacing-03;
-  top: 3rem;
+// Botões de decisão para fora do card, ao lado direito, nunca sobrepondo o corpo
+// nem colados ao carimbo de hora (pedido do dono 2026-11-24).
+.live-chat-gate-wrapper {
+  display: flex;
+  gap: $spacing-03;
+  align-items: flex-start;
+  width: 100%;
+}
+.live-chat-gate-actions-outside {
+  flex-shrink: 0;
+  width: 150px;
   display: flex;
   flex-direction: column;
-  align-items: stretch;
   gap: $spacing-02;
-  width: 124px;
-  margin: 0;
+  margin-top: 0;
   .cds--btn { width: 100%; max-width: none; min-height: 28px; padding-block: 2px; font-size: 11px; }
+}
+
+// Tags (Tool / Host / Risco) ficam dentro do corpo do card, abaixo do cabeçalho,
+// nunca na mesma linha do carimbo de hora.
+.live-chat-gate-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $spacing-02;
+  margin: $spacing-02 0;
 }
 .cmd-gate-textarea textarea,
 .live-chat-entry--gate textarea { min-height: 44px !important; font-size: 12px !important; }

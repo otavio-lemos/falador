@@ -574,8 +574,9 @@ export function LiveView({
         : (fields.length > 0
             ? JSON.stringify(fieldValues)
             : (cmdDraft as string));
+      // Remove entrada histórica anterior do mesmo nó (não deixa duplicados na conversa).
       setGateHistory((prev) => [
-        ...prev,
+        ...prev.filter((h) => h.nodeId !== gate.nodeId),
         {
           id: `gate-${gate.nodeId}-${Date.now()}-${prev.length}`,
           nodeId: gate.nodeId,
@@ -594,7 +595,7 @@ export function LiveView({
       const cmd = cmdDraft.trim() !== '' ? cmdDraft : gateInfo.command;
       const wasEdited = cmd.trim() !== gateInfo.command.trim();
       setGateHistory((prev) => [
-        ...prev,
+        ...prev.filter((h) => h.nodeId !== gate.nodeId),
         {
           id: `gate-${gate.nodeId}-${Date.now()}-${prev.length}`,
           nodeId: gate.nodeId,
@@ -613,49 +614,49 @@ export function LiveView({
     }
     const finalText = editing ? draft : suggestion;
     const wasEdited = editing && draft.trim() !== suggestion.trim();
-    setGateHistory((prev) => [
-      ...prev,
-      {
-        id: `gate-${gate.nodeId}-${Date.now()}-${prev.length}`,
-        nodeId: gate.nodeId,
-        status: wasEdited ? 'Editado' : 'Aprovado',
-        command: finalText,
-        ts: Date.now(),
-      },
-    ]);
-    runner.gate(gate.nodeId, finalText);
-    setEditing(false);
-  };
-  const rejectGate = () => {
-    if (!gate) return;
-    if (gateInfo.isAskUser) {
       setGateHistory((prev) => [
-        ...prev,
+        ...prev.filter((h) => h.nodeId !== gate.nodeId),
+        {
+          id: `gate-${gate.nodeId}-${Date.now()}-${prev.length}`,
+          nodeId: gate.nodeId,
+          status: wasEdited ? 'Editado' : 'Aprovado',
+          command: finalText,
+          ts: Date.now(),
+        },
+      ]);
+      runner.gate(gate.nodeId, finalText);
+      setEditing(false);
+    };
+    const rejectGate = () => {
+      if (!gate) return;
+      if (gateInfo.isAskUser) {
+        setGateHistory((prev) => [
+          ...prev.filter((h) => h.nodeId !== gate.nodeId),
+          {
+            id: `gate-${gate.nodeId}-${Date.now()}-${prev.length}`,
+            nodeId: gate.nodeId,
+            status: 'Rejeitado',
+            command: cmdDraft,
+            tool: 'ask_user',
+            ts: Date.now(),
+          },
+        ]);
+        void gateAction(gate.nodeId, null, cmdDraft);
+        setCmdDraft('');
+        return;
+      }
+      setGateHistory((prev) => [
+        ...prev.filter((h) => h.nodeId !== gate.nodeId),
         {
           id: `gate-${gate.nodeId}-${Date.now()}-${prev.length}`,
           nodeId: gate.nodeId,
           status: 'Rejeitado',
-          command: cmdDraft,
-          tool: 'ask_user',
+          command: gateInfo.isCommand ? cmdDraft : suggestion,
+          tool: gateInfo.tool,
+          host: gateInfo.host,
           ts: Date.now(),
         },
       ]);
-      void gateAction(gate.nodeId, null, cmdDraft);
-      setCmdDraft('');
-      return;
-    }
-    setGateHistory((prev) => [
-      ...prev,
-      {
-        id: `gate-${gate.nodeId}-${Date.now()}-${prev.length}`,
-        nodeId: gate.nodeId,
-        status: 'Rejeitado',
-        command: gateInfo.isCommand ? cmdDraft : suggestion,
-        tool: gateInfo.tool,
-        host: gateInfo.host,
-        ts: Date.now(),
-      },
-    ]);
     void gateAction(gate.nodeId, null, gateInfo.isCommand ? cmdDraft : editing ? draft : '');
     setEditing(false);
   };
@@ -929,148 +930,150 @@ export function LiveView({
 
   const openAuditFor = (nodeId: string) => setAuditFocus(nodeId ? { nodeId, token: Date.now() } : null);
 
-  // Aprovação/comando pendente: MESMO card de conversa (.live-chat-entry) usado por
-  // todas as ocorrências — nada de bloco próprio. Ações ficam dentro do card.
+  // Aprovação/comando pendente: card de conversa à esquerda, ações (Responder /
+  // Aprovar e Executar / Editar / Rejeitar) para fora, ao lado direito do card,
+  // nunca sobrepondo o corpo nem coladas ao carimbo de hora.
   const gateCard = hasGate && gate ? (
-    <ChatCard
-      kind="gate"
-      nodeId={gate.nodeId}
-      role={gateInfo.isAskUser ? 'Pergunta do Agente' : 'Aprovação'}
-      tag={gateInfo.isAskUser ? undefined : (gateInfo.isCommand ? 'Comando' : 'Revisão')}
-      tagType={gateInfo.isAskUser ? 'cyan' : gateInfo.isCommand ? 'teal' : 'purple'}
-      accent={gateInfo.isAskUser ? 'var(--cds-support-info)' : 'var(--cds-support-warning, #f1c21b)'}
-      icon={gateInfo.isAskUser ? <Chat size={18} /> : <Checkmark size={18} />}
-      ts={gate.ts}
-      ariaLabel={gateInfo.isAskUser ? 'Pergunta guiada pendente' : gateInfo.isCommand ? 'Aprovação de comando pendente' : 'Aprovação de resposta pendente'}
-      body={(
-        <>
-          <div className="live-chat-gate-tags">
-            {gateInfo.isCommand && gateInfo.tool && <Tag type="teal" size="sm">Tool: {gateInfo.tool}</Tag>}
-            {gateInfo.isCommand && gateInfo.host && <Tag type="cyan" size="sm">Host: {gateInfo.host}</Tag>}
-            {gateInfo.isCommand && gateInfo.decision && (
-              <Tag type={riskTagType(gateInfo.decision)} size="sm">Risco d1: {gateInfo.decision}</Tag>
-            )}
-            {gateInfo.isCommand && hasExec && (
-              <Tag type={execActive ? 'red' : 'blue'} size="sm">{execActive ? 'EXEC ATIVO' : 'DRY-RUN'}</Tag>
-            )}
-            {runner.testMode && <Tag type="magenta" size="sm">TESTE</Tag>}
-          </div>
+    <>
+      <div className="live-chat-gate-wrapper">
+        <ChatCard
+          kind="gate"
+          nodeId={gate.nodeId}
+          role={gateInfo.isAskUser ? 'Pergunta do Agente' : 'Aprovação'}
+          tag={gateInfo.isAskUser ? '' : (gateInfo.isCommand ? 'Comando' : 'Revisão')}
+          tagType={gateInfo.isAskUser ? 'cyan' : gateInfo.isCommand ? 'teal' : 'purple'}
+          accent={gateInfo.isAskUser ? 'var(--cds-support-info)' : 'var(--cds-support-warning, #f1c21b)'}
+          icon={gateInfo.isAskUser ? <Chat size={18} /> : <Checkmark size={18} />}
+          ts={gate.ts}
+          ariaLabel={gateInfo.isAskUser ? 'Pergunta guiada pendente' : gateInfo.isCommand ? 'Aprovação de comando pendente' : 'Aprovação de resposta pendente'}
+          body={(
+            <>
+              <div className="live-chat-gate-tags">
+                {gateInfo.isCommand && gateInfo.tool && <Tag type="teal" size="sm">Tool: {gateInfo.tool}</Tag>}
+                {gateInfo.isCommand && gateInfo.host && <Tag type="cyan" size="sm">Host: {gateInfo.host}</Tag>}
+                {gateInfo.isCommand && gateInfo.decision && (
+                  <Tag type={riskTagType(gateInfo.decision)} size="sm">Risco d1: {gateInfo.decision}</Tag>
+                )}
+                {runner.testMode && <Tag type="magenta" size="sm">TESTE</Tag>}
+              </div>
+              {gateInfo.isAskUser ? (
+                <>
+                  <p className="live-chat-entry-text" style={{ fontWeight: 500 }}>
+                    {gateInfo.prompt || gate.text}
+                  </p>
+
+                  {gateInfo.options.length > 0 && (
+                    <div className="live-chat-gate-options" role="group" aria-label="Opções sugeridas">
+                      {gateInfo.options.map((opt, i) => (
+                        <Button key={`${i}-${opt}`} kind="tertiary" size="sm" onClick={() => approve(opt)}>
+                          {opt}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
+                  {(gateInfo.fields ?? []).length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      {(gateInfo.fields ?? []).map((f) => (
+                        f.type === 'select' ? (
+                          <Select
+                            key={f.name}
+                            id={`field-${f.name}`}
+                            labelText={f.label}
+                            value={fieldValues[f.name] ?? ''}
+                            onChange={(e) => setFieldValues((v) => ({ ...v, [f.name]: e.target.value }))}
+                          >
+                            <SelectItem value="" text={f.placeholder ?? f.label} />
+                            {(f.options ?? []).map((o) => <SelectItem key={o} value={o} text={o} />)}
+                          </Select>
+                        ) : (
+                          <TextInput
+                            key={f.name}
+                            id={`field-${f.name}`}
+                            labelText={f.label}
+                            type={f.type === 'password' ? 'password' : 'text'}
+                            placeholder={f.placeholder ?? ''}
+                            value={fieldValues[f.name] ?? ''}
+                            onChange={(e) => setFieldValues((v) => ({ ...v, [f.name]: e.target.value }))}
+                          />
+                        )
+                      ))}
+                    </div>
+                  ) : (
+                    <TextArea
+                      id="ask-user-gate-input"
+                      labelText=""
+                      rows={2}
+                      className="cmd-gate-textarea"
+                      placeholder="Digite sua resposta para o agente continuar..."
+                      value={cmdDraft}
+                      onChange={(e) => setCmdDraft(e.target.value)}
+                    />
+                  )}
+                </>
+              ) : gateInfo.isCommand ? (
+                <>
+                  {gateInfo.reason && <p className="live-chat-entry-text">{gateInfo.reason}</p>}
+                  <TextArea
+                    id="cmd-gate-input"
+                    labelText="Comando (editável antes da execução)"
+                    rows={2}
+                    className="cmd-gate-textarea"
+                    value={cmdDraft}
+                    onChange={(e) => setCmdDraft(e.target.value)}
+                  />
+                </>
+              ) : editing ? (
+                <TextArea
+                  id="edit-chat-suggestion"
+                  labelText="Editar sugestão"
+                  hideLabel
+                  rows={2}
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                />
+              ) : (
+                <div className="live-chat-entry-text">{suggestion}</div>
+              )}
+            </>
+          )}
+        />
+        <div className="live-chat-gate-actions-outside">
           {gateInfo.isAskUser ? (
             <>
-              <p className="live-chat-entry-text" style={{ fontWeight: 500 }}>
-                {gateInfo.prompt || gate.text}
-              </p>
-
-              {gateInfo.options.length > 0 && (
-                <div className="live-chat-gate-options" role="group" aria-label="Opções sugeridas">
-                  {gateInfo.options.map((opt, i) => (
-                    <Button key={`${i}-${opt}`} kind="tertiary" size="sm" onClick={() => approve(opt)}>
-                      {opt}
-                    </Button>
-                  ))}
-                </div>
-              )}
-              {(gateInfo.fields ?? []).length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                  {(gateInfo.fields ?? []).map((f) => (
-                    f.type === 'select' ? (
-                      <Select
-                        key={f.name}
-                        id={`field-${f.name}`}
-                        labelText={f.label}
-                        value={fieldValues[f.name] ?? ''}
-                        onChange={(e) => setFieldValues((v) => ({ ...v, [f.name]: e.target.value }))}
-                      >
-                        <SelectItem value="" text={f.placeholder ?? f.label} />
-                        {(f.options ?? []).map((o) => <SelectItem key={o} value={o} text={o} />)}
-                      </Select>
-                    ) : (
-                      <TextInput
-                        key={f.name}
-                        id={`field-${f.name}`}
-                        labelText={f.label}
-                        type={f.type === 'password' ? 'password' : 'text'}
-                        placeholder={f.placeholder ?? ''}
-                        value={fieldValues[f.name] ?? ''}
-                        onChange={(e) => setFieldValues((v) => ({ ...v, [f.name]: e.target.value }))}
-                      />
-                    )
-                  ))}
-                </div>
-              ) : (
-                <TextArea
-                  id="ask-user-gate-input"
-                  labelText=""
-                  rows={2}
-                  className="cmd-gate-textarea"
-                  placeholder="Digite sua resposta para o agente continuar..."
-                  value={cmdDraft}
-                  onChange={(e) => setCmdDraft(e.target.value)}
-                />
-              )}
+              <Button kind="primary" size="lg" renderIcon={Checkmark} className="approve-btn" onClick={approve} style={{ width: '100%' }}>
+                Responder
+              </Button>
             </>
           ) : gateInfo.isCommand ? (
             <>
-              {gateInfo.reason && <p className="live-chat-entry-text">{gateInfo.reason}</p>}
-              <TextArea
-                id="cmd-gate-input"
-                labelText="Comando (editável antes da execução)"
-                rows={2}
-                className="cmd-gate-textarea"
-                value={cmdDraft}
-                onChange={(e) => setCmdDraft(e.target.value)}
-              />
+              <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
+                Aprovar e Executar
+              </Button>
+              <Button kind="tertiary" size="sm" renderIcon={Edit} onClick={() => document.getElementById('cmd-gate-input')?.focus()}>
+                Editar
+              </Button>
+              <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>
+                Rejeitar
+              </Button>
             </>
           ) : editing ? (
-            <TextArea
-              id="edit-chat-suggestion"
-              labelText="Editar sugestão"
-              hideLabel
-              rows={2}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-            />
+            <>
+              <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={approve}>Enviar editada</Button>
+              <Button kind="ghost" size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
+            </>
           ) : (
-            <div className="live-chat-entry-text">{suggestion}</div>
+            <>
+              <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
+                {hasTTS ? 'Aprovar & Falar' : 'Aprovar'}
+              </Button>
+              <Button kind="tertiary" size="sm" renderIcon={Edit} onClick={startEdit}>Editar</Button>
+              {hasLLM && <Button kind="tertiary" size="sm" renderIcon={Renew} onClick={onRegenerate}>Regerar</Button>}
+              <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>Rejeitar</Button>
+            </>
           )}
-          <div className="live2-actions live-chat-gate-actions">
-            {gateInfo.isAskUser ? (
-              <>
-                <Button kind="primary" size="lg" renderIcon={Checkmark} className="approve-btn" onClick={approve} style={{ width: '100%' }}>
-                  Responder
-                </Button>
-              </>
-            ) : gateInfo.isCommand ? (
-              <>
-                <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
-                  Aprovar e Executar
-                </Button>
-                <Button kind="tertiary" size="sm" renderIcon={Edit} onClick={() => document.getElementById('cmd-gate-input')?.focus()}>
-                  Editar
-                </Button>
-                <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>
-                  Rejeitar
-                </Button>
-              </>
-            ) : editing ? (
-              <>
-                <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={approve}>Enviar editada</Button>
-                <Button kind="ghost" size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
-              </>
-            ) : (
-              <>
-                <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
-                  {hasTTS ? 'Aprovar & Falar' : 'Aprovar'}
-                </Button>
-                <Button kind="tertiary" size="sm" renderIcon={Edit} onClick={startEdit}>Editar</Button>
-                {hasLLM && <Button kind="tertiary" size="sm" renderIcon={Renew} onClick={onRegenerate}>Regerar</Button>}
-                <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>Rejeitar</Button>
-              </>
-            )}
-          </div>
-        </>
-      )}
-    />
+        </div>
+      </div>
+    </>
   ) : null;
 
   const errorText = lastError
