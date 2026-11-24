@@ -122,9 +122,7 @@ export function solutionOfNodeType(type: string): string | null {
     type === 'decision.llm' ||
     type === 'goal.validator'
   ) return 'omlx';
-  if (type === 'asr.realtime') return 'asr';
-  if (type === 'asr.lfm3') return 'tts';
-  if (type === 'tts.sts') return 'tts';
+  if (type === 'asr.realtime' || type === 'asr.lfm3' || type === 'tts.sts') return 'mlx-audio';
   if (type === 'exec.command') return 'host';
   if (
     type === 'rag.search' ||

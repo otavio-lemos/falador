@@ -45,7 +45,7 @@ const BASE_SERVICES: BaseServiceConfig[] = [
   {
     id: 'asr',
     port: 8090,
-    displayName: 'asr',
+    displayName: 'mlx-audio',
     fallbackLabel: 'Transcription',
     fallbackColors: [
       { color: '#14b8a6', label: 'Transcription' },
@@ -64,7 +64,7 @@ const BASE_SERVICES: BaseServiceConfig[] = [
   {
     id: 'tts',
     port: 8091,
-    displayName: 'tts',
+    displayName: 'mlx-audio',
     fallbackLabel: 'TTS · Speech Translation',
     fallbackColors: [
       { color: '#d946ef', label: 'TTS' },
