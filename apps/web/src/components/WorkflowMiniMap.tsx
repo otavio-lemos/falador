@@ -4,6 +4,7 @@
 import { useMemo } from 'react';
 import type { Flow } from '../api';
 import { accentOf } from '../data';
+import { isRaia2Node } from '../flow-utils';
 import { nodeDisplayNames } from '../live-utils';
 
 interface Props {
@@ -33,80 +34,166 @@ export function WorkflowMiniMap({ flow, activeNodeIds, running }: Props) {
       .map((e) => ({ from: e.from.split('.')[0], to: e.to.split('.')[0] }))
       .filter((e) => idSet.has(e.from) && idSet.has(e.to) && e.from !== e.to);
 
-    // Atribui coluna (profundidade topológica) a cada nó
-    const depth = new Map<string, number>();
-    const indeg = new Map<string, number>();
-    const adj = new Map<string, string[]>();
-    for (const n of activeNodes) {
-      depth.set(n.id, 0);
-      indeg.set(n.id, 0);
-      adj.set(n.id, []);
+    const hasAgent = activeNodes.some((n) => n.type === 'agent.tools');
+    const raia1Nodes = activeNodes.filter((n) => !isRaia2Node(n, hasAgent));
+    const raia2Nodes = activeNodes.filter((n) => isRaia2Node(n, hasAgent));
+
+    const r1List = raia2Nodes.length === 0 ? activeNodes : raia1Nodes;
+    const r1Ids = new Set(r1List.map((n) => n.id));
+    const edges1 = edges.filter((e) => r1Ids.has(e.from) && r1Ids.has(e.to));
+
+    // Atribui coluna (profundidade topológica) a cada nó da Raia 1
+    const depth1 = new Map<string, number>();
+    const indeg1 = new Map<string, number>();
+    const adj1 = new Map<string, string[]>();
+    for (const n of r1List) {
+      depth1.set(n.id, 0);
+      indeg1.set(n.id, 0);
+      adj1.set(n.id, []);
     }
-    for (const e of edges) {
-      adj.get(e.from)!.push(e.to);
-      indeg.set(e.to, (indeg.get(e.to) ?? 0) + 1);
+    for (const e of edges1) {
+      adj1.get(e.from)!.push(e.to);
+      indeg1.set(e.to, (indeg1.get(e.to) ?? 0) + 1);
     }
-    const q: string[] = [];
-    for (const n of activeNodes) {
-      if ((indeg.get(n.id) ?? 0) === 0) q.push(n.id);
+    const q1: string[] = [];
+    for (const n of r1List) {
+      if ((indeg1.get(n.id) ?? 0) === 0) q1.push(n.id);
     }
-    const visited = new Set<string>();
-    while (q.length) {
-      const u = q.shift()!;
-      visited.add(u);
-      const du = depth.get(u) ?? 0;
-      for (const v of adj.get(u) ?? []) {
-        depth.set(v, Math.max(depth.get(v) ?? 0, du + 1));
-        const nextDeg = (indeg.get(v) ?? 1) - 1;
-        indeg.set(v, nextDeg);
-        if (nextDeg === 0) q.push(v);
+    const visited1 = new Set<string>();
+    while (q1.length) {
+      const u = q1.shift()!;
+      visited1.add(u);
+      const du = depth1.get(u) ?? 0;
+      for (const v of adj1.get(u) ?? []) {
+        depth1.set(v, Math.max(depth1.get(v) ?? 0, du + 1));
+        const nextDeg = (indeg1.get(v) ?? 1) - 1;
+        indeg1.set(v, nextDeg);
+        if (nextDeg === 0) q1.push(v);
       }
     }
-    // Fallback para nós desconectados/ciclos
-    for (const n of activeNodes) {
-      if (!visited.has(n.id)) depth.set(n.id, 0);
+    for (const n of r1List) {
+      if (!visited1.has(n.id)) depth1.set(n.id, 0);
     }
 
-    const byCol = new Map<number, typeof activeNodes>();
-    for (const n of activeNodes) {
-      const c = depth.get(n.id) ?? 0;
-      (byCol.get(c) ?? byCol.set(c, []).get(c)!).push(n);
+    const byCol1 = new Map<number, typeof r1List>();
+    for (const n of r1List) {
+      const c = depth1.get(n.id) ?? 0;
+      (byCol1.get(c) ?? byCol1.set(c, []).get(c)!).push(n);
     }
 
-    const cols = [...byCol.keys()].sort((a, b) => a - b);
-    const maxRows = Math.max(1, ...cols.map((c) => byCol.get(c)!.length));
+    const cols1 = [...byCol1.keys()].sort((a, b) => a - b);
+    const maxRows1 = Math.max(1, ...cols1.map((c) => byCol1.get(c)!.length));
     const nodeW = 86;
     const nodeH = 24;
-    const colGap = 24;
-    const rowGap = 10;
+    const colGap = 20;
+    const rowGap = 8;
     const padX = 10;
     const padY = 8;
 
-    const totalW = Math.max(180, padX * 2 + cols.length * nodeW + Math.max(0, cols.length - 1) * colGap);
-    const totalH = Math.max(56, padY * 2 + maxRows * nodeH + Math.max(0, maxRows - 1) * rowGap);
+    const raia1H = maxRows1 * nodeH + Math.max(0, maxRows1 - 1) * rowGap;
 
     const placed: PlacedNode[] = [];
     const byId = new Map<string, PlacedNode>();
 
-    cols.forEach((c, ci) => {
-      const list = byCol.get(c)!;
+    cols1.forEach((c) => {
+      const list = byCol1.get(c)!;
       const colH = list.length * nodeH + Math.max(0, list.length - 1) * rowGap;
-      const startY = (totalH - colH) / 2;
+      const startY = padY + (raia1H - colH) / 2;
       list.forEach((n, ri) => {
         const pn: PlacedNode = {
           id: n.id,
           label: names.get(n.id)?.label ?? n.id,
           accent: accentOf(n.type),
           off: n.enabled === false,
-          col: ci,
+          col: c,
           row: ri,
-          x: padX + ci * (nodeW + colGap),
+          x: padX + c * (nodeW + colGap),
           y: startY + ri * (nodeH + rowGap),
         };
         placed.push(pn);
         byId.set(n.id, pn);
       });
     });
+
+    let totalRaia2Rows = 0;
+    let maxColUsed = Math.max(0, ...cols1);
+
+    if (raia2Nodes.length > 0) {
+      const agentNode = r1List.find((n) => n.type === 'agent.tools') ?? r1List.find((n) => n.type.startsWith('llm.'));
+      const agentCol = agentNode ? (depth1.get(agentNode.id) ?? 2) : 2;
+      const startCol = Math.max(1, agentCol - 1);
+      const raia2StartY = padY + raia1H + 14;
+
+      const isCapability = (n: typeof raia2Nodes[0]) =>
+        n.type === 'goal.validator' ||
+        n.type === 'decision.llm' ||
+        n.type === 'human.approve' ||
+        n.id === 'decisor_d1' ||
+        n.id === 'gate_humano' ||
+        n.id === 'validador_objetivo';
+
+      const capRank = (n: typeof raia2Nodes[0]) => {
+        if (n.id === 'decisor_d1' || n.type === 'decision.llm') return 0;
+        if (n.id === 'gate_humano' || n.type === 'human.approve') return 1;
+        if (n.id === 'validador_objetivo' || n.type === 'goal.validator') return 2;
+        return 3;
+      };
+      const capNodes = raia2Nodes.filter(isCapability).sort((a, b) => capRank(a) - capRank(b));
+      const toolNodes = raia2Nodes.filter((n) => !isCapability(n));
+
+      let curR2Row = 0;
+      if (capNodes.length > 0) {
+        capNodes.forEach((n, i) => {
+          const colInRow = i % 3;
+          const r = curR2Row + Math.floor(i / 3);
+          const col = startCol + colInRow;
+          maxColUsed = Math.max(maxColUsed, col);
+          const pn: PlacedNode = {
+            id: n.id,
+            label: names.get(n.id)?.label ?? n.id,
+            accent: accentOf(n.type),
+            off: n.enabled === false,
+            col,
+            row: maxRows1 + r,
+            x: padX + col * (nodeW + colGap),
+            y: raia2StartY + r * (nodeH + rowGap),
+          };
+          placed.push(pn);
+          byId.set(n.id, pn);
+        });
+        curR2Row += Math.ceil(capNodes.length / 3);
+      }
+
+      if (toolNodes.length > 0) {
+        toolNodes.forEach((n, i) => {
+          const colInRow = i % 3;
+          const r = curR2Row + Math.floor(i / 3);
+          const col = startCol + colInRow;
+          maxColUsed = Math.max(maxColUsed, col);
+          const pn: PlacedNode = {
+            id: n.id,
+            label: names.get(n.id)?.label ?? n.id,
+            accent: accentOf(n.type),
+            off: n.enabled === false,
+            col,
+            row: maxRows1 + r,
+            x: padX + col * (nodeW + colGap),
+            y: raia2StartY + r * (nodeH + rowGap),
+          };
+          placed.push(pn);
+          byId.set(n.id, pn);
+        });
+        curR2Row += Math.ceil(toolNodes.length / 3);
+      }
+      totalRaia2Rows = curR2Row;
+    }
+
+    const totalCols = maxColUsed + 1;
+    const totalW = Math.max(180, padX * 2 + totalCols * nodeW + Math.max(0, totalCols - 1) * colGap);
+    const totalH = Math.max(
+      56,
+      padY * 2 + raia1H + (totalRaia2Rows > 0 ? 14 + totalRaia2Rows * nodeH + Math.max(0, totalRaia2Rows - 1) * rowGap : 0)
+    );
 
     return { placed, byId, edges, nodeW, nodeH, totalW, totalH };
   }, [flow]);

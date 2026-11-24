@@ -74,6 +74,7 @@ export const SHORT_NAMES: Record<string, string> = {
   'turn.detector': 'Turn Detector',
   'decision.llm': 'Decision',
   'human.approve': 'Approval',
+  'goal.validator': 'Validator',
   'exec.command': 'Command',
   'rag.search': 'RAG',
   'tool.mcp': 'MCP',
@@ -101,7 +102,8 @@ export function serviceOfNode(type: string): 'web' | 'asr' | 'omlx' | 'tts' {
     type === 'translate.llm' ||
     type === 'agent.tools' ||
     type === 'turn.detector' ||
-    type === 'decision.llm'
+    type === 'decision.llm' ||
+    type === 'goal.validator'
   ) {
     return 'omlx';
   }
@@ -245,6 +247,7 @@ export const PARAM_HELP: Record<string, Record<string, ParamDoc>> = {
     allowedPrefixes: { help: 'JSON array de prefixos de comando permitidos (ex.: ["df","uptime","journalctl"])', def: '["uname","uptime","df",...]', control: 'json' },
     allowedHosts: { help: 'JSON array obrigatório para SSH (vazio recusa SSH)', def: '[]', control: 'json' },
     defaultHost: { help: 'host SSH padrão quando payload não informar host', def: '' },
+    jumpHosts: { help: 'bastion / jump hosts para SSH (ex.: ["bastion.corp"])', def: '[]', control: 'json' },
     sshUser: { help: 'usuário SSH (se vazio usa ~/.ssh/config)', def: '' },
     sshPort: { help: 'porta SSH', def: '22' },
     cwd: { help: 'diretório de trabalho (apenas transport=local)', def: '' },

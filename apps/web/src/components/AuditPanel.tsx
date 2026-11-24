@@ -1,7 +1,7 @@
 // AuditPanel — aba Auditoria do Live (ADR-012).
 // Recebe a trilha REAL de eventos audit do runner (via SSE) e deriva as visões:
 // Decisões, Execuções, Gates, RAG, Plano e Latência. Nada fabricado.
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import {
   Table,
   TableHeader,
@@ -10,6 +10,8 @@ import {
   TableHead,
   TableCell,
   TableContainer,
+  TableExpandRow,
+  TableExpandedRow,
   TableToolbar,
   TableToolbarContent,
   TableToolbarSearch,
@@ -46,13 +48,23 @@ function truncateText(text: string, max = 120): string {
 
 function riskTag(risk?: string) {
   if (!risk) return null;
-  return <Tag type={risk === 'seguro' ? 'green' : 'magenta'} size="sm">{risk}</Tag>;
+  const isSafe = risk.toLowerCase().includes('segur');
+  return <IconIndicator kind={isSafe ? 'succeeded' : 'failed'} label={risk} size={16} />;
 }
 
 function gateTag(gate?: string) {
   if (!gate) return null;
-  const type = gate === 'approved' ? 'green' : gate === 'rejected' || gate === 'missing_gate' ? 'red' : gate === 'edited' ? 'cyan' : gate === 'pending' ? 'purple' : 'gray';
-  return <Tag type={type} size="sm">{gate}</Tag>;
+  const kind =
+    gate === 'approved'
+      ? 'succeeded'
+      : gate === 'rejected' || gate === 'missing_gate'
+      ? 'failed'
+      : gate === 'pending'
+      ? 'pending'
+      : gate === 'edited'
+      ? 'in-progress'
+      : 'informative';
+  return <IconIndicator kind={kind} label={gate} size={16} />;
 }
 
 function matches(filter: string, ...fields: Array<string | undefined>): boolean {
@@ -91,7 +103,7 @@ function DecisionsTable({ data, filter }: { data: AuditEvent[]; filter: string }
               <TableCell><CodeSnippet type="single" hideCopyButton>{truncateText(JSON.stringify(d.args ?? {}), 100)}</CodeSnippet></TableCell>
               <TableCell>{riskTag(d.risk) ?? '—'}</TableCell>
               <TableCell>{gateTag(d.gate) ?? '—'}</TableCell>
-              <TableCell>{typeof d.ok === 'boolean' ? <Tag type={d.ok ? 'green' : 'red'} size="sm">{d.ok ? '✓' : '✗'}</Tag> : '—'}</TableCell>
+              <TableCell>{typeof d.ok === 'boolean' ? <IconIndicator kind={d.ok ? 'succeeded' : 'failed'} label={d.ok ? 'ok' : 'falha'} size={16} /> : '—'}</TableCell>
               <TableCell>{fmtMs(d.durationMs)}</TableCell>
               <TableCell>{fmtTs(d.ts)}</TableCell>
             </TableRow>
@@ -104,43 +116,60 @@ function DecisionsTable({ data, filter }: { data: AuditEvent[]; filter: string }
 
 function ExecutionsTable({ data, filter }: { data: AuditEvent[]; filter: string }) {
   const rows = data.filter((e) => matches(filter, e.tool, e.host, String(e.args?.command ?? ''), e.outputPreview));
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   if (rows.length === 0) return <Empty label="Nenhuma execução registrada." />;
+
+  const toggle = (id: string) => {
+    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
   return (
     <TableContainer>
       <Table size="sm">
         <TableHeader>
           <TableRow>
+            <TableHead style={{ width: '2.5rem' }} />
             <TableHead>Tool</TableHead>
             <TableHead>Host</TableHead>
             <TableHead>Transport</TableHead>
             <TableHead>Comando</TableHead>
             <TableHead>Exit</TableHead>
             <TableHead>Duração</TableHead>
-            <TableHead>Output</TableHead>
             <TableHead>Modo</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rows.map((e) => (
-            <TableRow key={`${e.runId}-${e.seq}`}>
-              <TableCell>{e.tool}</TableCell>
-              <TableCell>{e.host ?? 'local'}</TableCell>
-              <TableCell>{e.transport ?? 'local'}</TableCell>
-              <TableCell><CodeSnippet type="single" hideCopyButton>{truncateText(String(e.args?.command ?? ''), 80)}</CodeSnippet></TableCell>
-              <TableCell>{e.exitCode != null ? <Tag type={e.exitCode === 0 ? 'green' : 'red'} size="sm">{e.exitCode}</Tag> : '—'}</TableCell>
-              <TableCell>{fmtMs(e.durationMs)}</TableCell>
-              <TableCell>
-                {e.outputPreview ? (
-                  <Accordion>
-                    <AccordionItem title="output">
+          {rows.map((e) => {
+            const rowId = `${e.runId}-${e.seq}`;
+            const isExp = Boolean(expanded[rowId]);
+            return (
+              <Fragment key={rowId}>
+                <TableExpandRow
+                  isExpanded={isExp}
+                  onExpand={() => toggle(rowId)}
+                  expandIconDescription={isExp ? 'Recolher saída' : 'Expandir saída'}
+                  aria-label={`Execução ${e.tool} em ${e.host ?? 'local'}`}
+                >
+                  <TableCell>{e.tool}</TableCell>
+                  <TableCell>{e.host ?? 'local'}</TableCell>
+                  <TableCell>{e.transport ?? 'local'}</TableCell>
+                  <TableCell><CodeSnippet type="single" hideCopyButton>{truncateText(String(e.args?.command ?? ''), 80)}</CodeSnippet></TableCell>
+                  <TableCell>{e.exitCode != null ? <IconIndicator kind={e.exitCode === 0 ? 'succeeded' : 'failed'} label={String(e.exitCode)} size={16} /> : '—'}</TableCell>
+                  <TableCell>{fmtMs(e.durationMs)}</TableCell>
+                  <TableCell>{e.dryRun === undefined ? '—' : <Tag type={e.dryRun ? 'cyan' : 'red'} size="sm">{e.dryRun ? 'dry-run' : 'exec ativo'}</Tag>}</TableCell>
+                </TableExpandRow>
+                <TableExpandedRow colSpan={8}>
+                  {e.outputPreview ? (
+                    <div style={{ padding: '0.5rem 0' }}>
                       <CodeSnippet type="multi" hideCopyButton>{e.outputPreview}</CodeSnippet>
-                    </AccordionItem>
-                  </Accordion>
-                ) : '—'}
-              </TableCell>
-              <TableCell>{e.dryRun === undefined ? '—' : <Tag type={e.dryRun ? 'cyan' : 'red'} size="sm">{e.dryRun ? 'dry-run' : 'exec ativo'}</Tag>}</TableCell>
-            </TableRow>
-          ))}
+                    </div>
+                  ) : (
+                    <p style={{ margin: 0, color: 'var(--cds-text-secondary)' }}>Sem saída registrada.</p>
+                  )}
+                </TableExpandedRow>
+              </Fragment>
+            );
+          })}
         </TableBody>
       </Table>
     </TableContainer>
@@ -151,14 +180,30 @@ function GatesList({ data, filter }: { data: AuditEvent[]; filter: string }) {
   const rows = data.filter((g) => matches(filter, g.nodeId, g.tool, g.text, g.gate));
   if (rows.length === 0) return <Empty label="Nenhum gate registrado." />;
   return (
-    <div className="audit-gates-list">
-      {rows.map((g) => (
-        <div key={`${g.runId}-${g.seq}`} className="audit-gate-field">
-          <strong>{fmtTs(g.ts)} · {g.nodeId}{g.tool ? ` · ${g.tool}` : ''}</strong> {gateTag(g.gate)}
-          {g.text ? <CodeSnippet type="single" hideCopyButton>{truncateText(g.text, 160)}</CodeSnippet> : null}
-        </div>
-      ))}
-    </div>
+    <StructuredListWrapper isCondensed aria-label="Lista de gates auditados">
+      <StructuredListHead>
+        <StructuredListRow head>
+          <StructuredListCell head>Hora</StructuredListCell>
+          <StructuredListCell head>Nó / Tool</StructuredListCell>
+          <StructuredListCell head>Status</StructuredListCell>
+          <StructuredListCell head>Detalhes</StructuredListCell>
+        </StructuredListRow>
+      </StructuredListHead>
+      <StructuredListBody>
+        {rows.map((g) => (
+          <StructuredListRow key={`${g.runId}-${g.seq}`}>
+            <StructuredListCell noWrap>{fmtTs(g.ts)}</StructuredListCell>
+            <StructuredListCell noWrap>
+              <strong>{g.nodeId}</strong>{g.tool ? ` · ${g.tool}` : ''}
+            </StructuredListCell>
+            <StructuredListCell>{gateTag(g.gate)}</StructuredListCell>
+            <StructuredListCell>
+              {g.text ? <CodeSnippet type="single" hideCopyButton>{truncateText(g.text, 160)}</CodeSnippet> : '—'}
+            </StructuredListCell>
+          </StructuredListRow>
+        ))}
+      </StructuredListBody>
+    </StructuredListWrapper>
   );
 }
 
@@ -206,7 +251,11 @@ function PlanView({ plan }: { plan: PlanItem[] | null }) {
               <TableCell>{p.description}</TableCell>
               <TableCell>{p.verification}</TableCell>
               <TableCell>
-                <Tag type={p.status === 'verified' ? 'green' : p.status === 'failed' ? 'red' : 'purple'} size="sm">{p.status}</Tag>
+                <IconIndicator
+                  kind={p.status === 'verified' ? 'succeeded' : p.status === 'failed' ? 'failed' : 'in-progress'}
+                  label={p.status}
+                  size={16}
+                />
               </TableCell>
               <TableCell>{p.evidence ? truncateText(p.evidence, 100) : '—'}</TableCell>
             </TableRow>

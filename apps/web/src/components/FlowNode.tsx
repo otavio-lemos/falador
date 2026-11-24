@@ -13,6 +13,9 @@ export const PORT_COLOR: Record<string, string> = {
   phrase:         '#f59e0b', // âmbar   — texto completo
   audio_chunk:    '#22c55e', // verde   — áudio processado
   tool:           '#0ea5e9', // azul    — conector de ferramenta (bidirecional)
+  decider:        '#f59e0b', // âmbar   — triagem de risco / d1
+  gate:           '#ec4899', // rosa    — aprovação humana
+  validator:      '#10b981', // esmeralda — validação de objetivo
 };
 const PORT_COLOR_DEFAULT = '#6b7280';
 
@@ -60,6 +63,20 @@ export const FlowNode = memo(({ data, selected }: NodeProps<FNode>) => {
               {data.params?.dryRun === false ? 'EXEC ATIVO' : 'DRY-RUN'}
             </Tag>
             <Tag type="cool-gray" size="sm">{String(data.params?.transport ?? 'local')}</Tag>
+            {data.params?.transport === 'ssh' && (
+              (() => {
+                const host = String(data.params?.defaultHost || data.params?.host || (Array.isArray(data.params?.allowedHosts) && data.params.allowedHosts[0]) || 'ssh');
+                const rawJumps = data.params?.jumpHosts ?? data.params?.jumpHost ?? data.params?.bastionHost;
+                const jump = rawJumps
+                  ? (Array.isArray(rawJumps) ? rawJumps.join(' → ') : String(rawJumps))
+                  : undefined;
+                return (
+                  <span className="fnode-latency" title={`Host: ${host}${jump ? ` (via ${jump})` : ''}`}>
+                    {host}{jump ? ` via ${jump}` : ''}
+                  </span>
+                );
+              })()
+            )}
           </div>
         )}
         {(isStreaming || latency != null || data.metrics) && (
