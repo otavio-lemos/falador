@@ -12,7 +12,7 @@ test('builder loads a real workflow and canvas', async ({ page }) => {
   // a aba Runner é o "live": só habilita com flow carregado
   await expect(page.getByRole('button', { name: 'Runner' })).toBeEnabled();
   // o flow default é carregado do /api/flows com nome real e contagem de nós
-  await expect(page.getByRole('heading', { name: 'assistente-entrevista' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'especialista-ti' })).toBeVisible();
   await expect(page.getByText(/9 nós[\s·]*9 conexões/)).toBeVisible();
   // paleta unificada Input com capture.ffmpeg único (sem input.chat)
   const inputCat = page.locator('.pal-cat').filter({ has: page.locator('.pal-cat-head', { hasText: 'Input' }) }).first();
@@ -242,7 +242,7 @@ test('unified Input and Output stages use instance selectors and sync with topba
   await expect(page.getByRole('button', { name: 'Usar chat' })).toHaveAttribute('aria-pressed', 'true');
   await expect.poll(() => page.evaluate(() => localStorage.getItem('falador.inputMode'))).toBe('mic');
 
-  // Output unificado com instâncias (assistente-entrevista tem 3 Outputs; padrão é Output 2)
+  // Output unificado com instâncias (entrevista tem 3 Outputs; padrão é Output 2)
   const outputStage = page.locator('.stage-dd').filter({ has: page.locator('.stage-dd-label', { hasText: 'Output' }) }).first();
   await expect(outputStage).toBeVisible();
   await expect(outputStage.getByRole('combobox')).toHaveCount(2);
@@ -278,7 +278,7 @@ test('unified Input and Output stages use instance selectors and sync with topba
 test('console modal, plan progress indicator, goal validation, gate history and audit validation tab', async ({ page }) => {
   // Verifica no Builder que agent.tools não exibe tag falsa DRY-RUN / EXEC ATIVO
   await page.getByRole('combobox', { name: 'Workflow' }).click();
-  await page.getByRole('option', { name: 'assistente-especialista-ti' }).click();
+  await page.getByRole('option', { name: 'especialista-ti' }).click();
   const agentNode = page.locator('.react-flow__node').filter({ hasText: 'agent.tools' });
   await expect(agentNode).toBeVisible();
   await expect(agentNode.getByText('DRY-RUN')).toHaveCount(0);
@@ -469,10 +469,10 @@ test('console anexado ao run mostra stream, bastion, filtros e cancelamento', as
   await expect.poll(() => stopCalled).toBe(true);
 });
 
-test('assistente-especialista-ti runner bar, 2-lane minimap with 14 nodes, ask_user gate and Carbon/a11y updates', async ({ page }) => {
-  // 1. Carrega assistente-especialista-ti e abre Runner
+test('especialista-ti runner bar, 2-lane minimap with 14 nodes, ask_user gate and Carbon/a11y updates', async ({ page }) => {
+  // 1. Carrega especialista-ti e abre Runner
   await page.getByRole('combobox', { name: 'Workflow' }).click();
-  await page.getByRole('option', { name: 'assistente-especialista-ti' }).click();
+  await page.getByRole('option', { name: 'especialista-ti' }).click();
 
   const canvas = page.locator('.react-flow');
   await expect(canvas).toBeVisible();

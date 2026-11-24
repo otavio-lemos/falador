@@ -5,7 +5,7 @@ import { test, expect } from '@playwright/test';
 
 test.use({ viewport: { width: 1920, height: 1000 } });
 
-for (const flow of ['assistente-especialista-ti', 'assistente-entrevista']) {
+for (const flow of ['especialista-ti', 'entrevista']) {
   test(`runner bar 1 linha + menu fora da faixa (${flow})`, async ({ page }) => {
     await page.goto('/');
     await page.getByRole('combobox', { name: 'Workflow' }).click();

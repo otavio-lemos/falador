@@ -137,7 +137,7 @@ test('C4: muted=true em capture.ffmpeg, tts.sts e sink.playback não spawna/emit
   });
   await pbNode.stop();
 
-  // 3. validateFlow sobre assistente-entrevista.json e agente-workflows.json com muted=true passa sem erros
+  // 3. validateFlow sobre entrevista.json e agente-workflows.json com muted=true passa sem erros
   const reg = createRegistry();
   registerFaladorNodes(reg);
 
@@ -156,7 +156,7 @@ test('C4: muted=true em capture.ffmpeg, tts.sts e sink.playback não spawna/emit
     return { ...raw, nodes, bindings };
   };
 
-  for (const rel of ['../../../apps/tui/flows/assistente-entrevista.json', '../../../apps/tui/flows/agente-workflows.json']) {
+  for (const rel of ['../../../apps/tui/flows/entrevista.json', '../../../apps/tui/flows/agente-workflows.json']) {
     const validated = validateFlow(loadWithRuntimeBindings(rel), reg);
     assert.ok(validated.nodes.size > 0, `${rel} deve validar com muted=true`);
   }

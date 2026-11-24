@@ -70,7 +70,7 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 export function App() {
-  const [view, setView] = useState<'builder' | 'live'>('builder');
+  const [view, setView] = useState<'builder' | 'live'>('live');
   const [theme, setTheme] = useState<'g100' | 'white'>(() => {
     try { return localStorage.getItem('falador.theme') === 'white' ? 'white' : 'g100'; } catch { return 'g100'; }
   });
@@ -117,7 +117,7 @@ export function App() {
     fetchCatalog().then(setCatalog).catch(() => setToast('Falha ao carregar catálogo'));
     fetchFlows().then((fs) => {
       setFlows(fs);
-      setCurrentFlow((cur) => cur || (fs.find((f) => f.name === 'assistente-entrevista') ?? fs[0])?.name || '');
+      setCurrentFlow((cur) => cur || (fs.find((f) => f.name === 'especialista-ti') ?? fs[0])?.name || '');
     }).catch(() => setToast('Falha ao listar flows'));
     fetchModels().then(setModels).catch(() => {});
     fetchApps().then(setApps).catch(() => {});

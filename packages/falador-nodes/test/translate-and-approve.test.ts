@@ -25,8 +25,8 @@ function reg() {
 }
 
 describe('translate.llm, human.approve e asr.lfm3', () => {
-  test('assistente-entrevista: asr.out -> turn.detector -> assistente.parcs valida e não força inglês', () => {
-    const raw = JSON.parse(readFileSync(fileURLToPath(new URL('../../../apps/tui/flows/assistente-entrevista.json', import.meta.url)), 'utf-8')) as FlowSpec;
+  test('entrevista: asr.out -> turn.detector -> agente.parcs valida e não força inglês', () => {
+    const raw = JSON.parse(readFileSync(fileURLToPath(new URL('../../../apps/tui/flows/entrevista.json', import.meta.url)), 'utf-8')) as FlowSpec;
     const bindings: Record<string, Record<string, unknown>> = {};
     for (const n of raw.nodes) {
       if (n.type === 'sink.captions') bindings[n.id] = { __onCaption: () => {} };

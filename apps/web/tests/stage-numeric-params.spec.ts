@@ -6,7 +6,7 @@ import { test, expect } from '@playwright/test';
 test('stage dropdown sends numeric params as numbers to /api/run', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('combobox', { name: 'Workflow' }).click();
-  await page.getByRole('option', { name: 'assistente-especialista-ti' }).click();
+  await page.getByRole('option', { name: 'especialista-ti' }).click();
   await page.getByRole('button', { name: 'Runner' }).click();
 
   let payload: { flow: { nodes: Array<{ id: string; params: Record<string, unknown> }> } } | null = null;
@@ -40,7 +40,7 @@ test('stage dropdown sends numeric params as numbers to /api/run', async ({ page
 test('exec stage "Exec ativo" grava dryRun boolean (não string "ativo")', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('combobox', { name: 'Workflow' }).click();
-  await page.getByRole('option', { name: 'assistente-especialista-ti' }).click();
+  await page.getByRole('option', { name: 'especialista-ti' }).click();
   await page.getByRole('button', { name: 'Runner' }).click();
 
   let payload: { flow: { nodes: Array<{ id: string; params: Record<string, unknown> }> } } | null = null;

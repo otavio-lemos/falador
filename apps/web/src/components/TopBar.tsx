@@ -222,7 +222,7 @@ export function TopBar(p: Props) {
             id="wf-edit-name"
             labelText="Nome do workflow"
             helperText="Identificador do arquivo (use letras, números e hífen)"
-            placeholder="ex.: assistente-entrevista"
+            placeholder="ex.: especialista-ti"
             value={draftName}
             onChange={(e) => setDraftName(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') confirmEdit(); }}

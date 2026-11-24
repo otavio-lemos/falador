@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// especialista.mjs — CLI dedicada ao workflow "assistente-especialista-ti"
+// especialista.mjs — CLI dedicada ao workflow "especialista-ti"
 // Renderiza em tempo real: conversa, pensamento, passos, comandos, output, gates.
 // Entrada: chat livre; quando um gate aparece, o prompt muda para aprovação.
 import { spawn } from 'node:child_process';
@@ -21,7 +21,7 @@ try {
   }
 } catch {}
 const RUNNER = join(ROOT, 'packages', 'falador-cli', 'run-flow.mjs');
-const FLOW = join(ROOT, 'apps', 'tui', 'flows', 'assistente-especialista-ti.json');
+const FLOW = join(ROOT, 'apps', 'tui', 'flows', 'especialista-ti.json');
 
 const c = {
   reset: '\x1b[0m', dim: '\x1b[2m', bold: '\x1b[1m', italic: '\x1b[3m',
