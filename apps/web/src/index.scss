@@ -530,12 +530,29 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 .stage-dd-label {
   @include type-style('label-01');
   color: $txt-2;
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   font-size: 0.7rem;
   line-height: 1rem;
+}
+
+.stage-dd-solution {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px;
+  height: 14px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  color: $txt-2;
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .stage-dd-ctrl {

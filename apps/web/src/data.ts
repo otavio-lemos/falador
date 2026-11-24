@@ -111,6 +111,31 @@ export function serviceOfNode(type: string): 'web' | 'asr' | 'omlx' | 'tts' {
   return 'web';
 }
 
+/** Nome da solução/executor para exibir junto ao stage no Runner bar.
+ *  Retorna null para nós sem executor de serviço dedicado (Input, Output, Approval, etc.). */
+export function solutionOfNodeType(type: string): string | null {
+  if (
+    type === 'llm.omlx' ||
+    type === 'translate.llm' ||
+    type === 'agent.tools' ||
+    type === 'turn.detector' ||
+    type === 'decision.llm' ||
+    type === 'goal.validator'
+  ) return 'omlx';
+  if (type === 'asr.realtime') return 'asr';
+  if (type === 'asr.lfm3') return 'tts';
+  if (type === 'tts.sts') return 'tts';
+  if (type === 'exec.command') return 'host';
+  if (
+    type === 'rag.search' ||
+    type === 'tool.web_search' ||
+    type === 'tool.crawler' ||
+    type === 'tool.mcp' ||
+    type === 'tool.workflow'
+  ) return 'host';
+  return null;
+}
+
 export interface ParamDoc {
   help: string;
   def?: string;

@@ -1490,7 +1490,12 @@ export function LiveView({
                 : langItems;
               return (
                 <div key={grp.key} className={`stage-dd ${isDual ? 'stage-dd--triple' : 'stage-dd--dual'}`} style={{ ['--accent' as string]: grp.accent }}>
-                  <span className="stage-dd-label">{grp.label}</span>
+                  <span className="stage-dd-label">
+                    {grp.label}
+                    {grp.solution && (
+                      <span className="stage-dd-solution">{grp.solution}</span>
+                    )}
+                  </span>
                   <div className={`stage-dd-ctrl ${isDual ? 'stage-dd-ctrl--triple' : 'stage-dd-ctrl--dual'}`}>
                     <Dropdown
                       id={`stage-inst-${grp.key}`}

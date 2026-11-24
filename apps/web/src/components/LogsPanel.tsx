@@ -24,6 +24,7 @@ interface LogServiceMeta {
 interface BaseServiceConfig {
   id: keyof ServiceStatusMap;
   port: number;
+  displayName: string; // nome da solução/executor exibido no cabeçalho do bloco
   fallbackLabel: string;
   fallbackColors: ServiceColorTag[];
 }
@@ -32,6 +33,7 @@ const BASE_SERVICES: BaseServiceConfig[] = [
   {
     id: 'web',
     port: 8787,
+    displayName: 'falador host',
     fallbackLabel: 'Input · Approval · Output',
     fallbackColors: [
       { color: '#22d3ee', label: 'Input' },
@@ -43,6 +45,7 @@ const BASE_SERVICES: BaseServiceConfig[] = [
   {
     id: 'asr',
     port: 8090,
+    displayName: 'asr',
     fallbackLabel: 'Transcription',
     fallbackColors: [
       { color: '#14b8a6', label: 'Transcription' },
@@ -51,6 +54,7 @@ const BASE_SERVICES: BaseServiceConfig[] = [
   {
     id: 'omlx',
     port: 8080,
+    displayName: 'omlx',
     fallbackLabel: 'LLM · Translate · Agent · Decision',
     fallbackColors: [
       { color: '#8b5cf6', label: 'LLM / Translate / Agent' },
@@ -60,6 +64,7 @@ const BASE_SERVICES: BaseServiceConfig[] = [
   {
     id: 'tts',
     port: 8091,
+    displayName: 'tts',
     fallbackLabel: 'TTS · Speech Translation',
     fallbackColors: [
       { color: '#d946ef', label: 'TTS' },
@@ -124,29 +129,20 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onTo
     const activeNodes = (flowNodes ?? []).filter((n) => n.enabled !== false);
     const base: LogServiceMeta[] = BASE_SERVICES.map((base) => {
       const matched = activeNodes.filter((n) => serviceOfNode(n.type) === base.id);
-      if (matched.length === 0) {
-        return {
-          id: base.id,
-          shortLabel: base.fallbackLabel,
-          label: `${base.fallbackLabel} (:${base.port})`,
-          colors: base.fallbackColors,
-        };
-      }
-      const names: string[] = [];
-      const byColor = new Map<string, string[]>();
-      for (const n of matched) {
-        const name = shortNodeName(n.type, n.id, n.params);
-        if (!names.includes(name)) names.push(name);
-        const accent = accentOf(n.type);
-        const list = byColor.get(accent) ?? [];
-        if (!list.includes(name)) list.push(name);
-        byColor.set(accent, list);
-      }
-      const shortLabel = names.join(' · ');
-      const colors: ServiceColorTag[] = [...byColor.entries()].map(([color, list]) => ({
-        color,
-        label: list.join(' · '),
-      }));
+      const colors: ServiceColorTag[] = (() => {
+        if (matched.length === 0) return base.fallbackColors;
+        const byColor = new Map<string, string[]>();
+        for (const n of matched) {
+          const name = shortNodeName(n.type, n.id, n.params);
+          const accent = accentOf(n.type);
+          const list = byColor.get(accent) ?? [];
+          if (!list.includes(name)) list.push(name);
+          byColor.set(accent, list);
+        }
+        return [...byColor.entries()].map(([color, list]) => ({ color, label: list.join(' · ') }));
+      })();
+      // Label mostrado no cabeçalho do bloco: sempre o nome da solução (displayName), nunca os nomes dos componentes
+      const shortLabel = base.displayName;
       return {
         id: base.id,
         shortLabel,
