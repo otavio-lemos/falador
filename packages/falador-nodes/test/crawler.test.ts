@@ -105,7 +105,7 @@ describe('tool.crawler — scraping / crawler BFS zero-deps com anti-SSRF', () =
     );
 
     assert.equal(res.ok, true, res.output);
-    assert.equal(seenRedirect[0], 'error');
+    assert.equal(seenRedirect[0], 'manual');
     assert.equal(seenHeaders[0], 'FaladorCrawler/1.0 (local-on-device)');
     assert.ok(res.output.includes('Título: Documentação & Guia'));
     assert.ok(res.output.includes('URL: https://example.com/start'));
@@ -266,7 +266,7 @@ describe('tool.crawler — scraping / crawler BFS zero-deps com anti-SSRF', () =
       { url: 'https://example.com/redirect-me' },
       opts,
     );
-    assert.equal(seenRedirectOpt, 'error', 'fetch deve sempre usar redirect: "error"');
+    assert.equal(seenRedirectOpt, 'manual', 'fetch deve usar redirect: "manual"');
     assert.equal(redirRes.ok, false);
     assert.ok(redirRes.output.includes('REDIRECT_BLOCKED'), `Esperava REDIRECT_BLOCKED, veio: ${redirRes.output}`);
   });

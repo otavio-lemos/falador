@@ -1,4 +1,6 @@
-// falador-nodes — tool.web_search: pesquisa externa zero-deps com proteção anti-SSRF
+// falador-nodes — tool.web_search: pesquisa externa zero-deps (SearXNG + DDG) com proteção anti-SSRF
+import { lookup as dnsLookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import type {
   NodeCtx,
   NodeRuntime,
@@ -11,12 +13,35 @@ import type {
 
 const DEFAULT_ENDPOINT = 'https://api.duckduckgo.com/';
 const FALLBACK_HTML_ENDPOINT = 'https://html.duckduckgo.com/html/';
+const DEFAULT_SEARXNG_URL = 'http://core.searxng.orb.local';
 const DEFAULT_TIMEOUT_MS = 8000;
 const MAX_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RESULTS = 5;
 const DEFAULT_MAX_CHARS = 4000;
+export const MAX_REDIRECTS = 3;
 
 export type FetcherFn = typeof fetch;
+export type DnsLookupFn = (hostname: string) => Promise<Array<{ address: string; family?: number }>>;
+export type WebSearchProvider = 'searxng' | 'ddg' | 'auto';
+export type SafeFetchErrorCode =
+  | 'SSRF_BLOCKED'
+  | 'REDIRECT_BLOCKED'
+  | 'DOMAIN_NOT_ALLOWED'
+  | 'TIMEOUT'
+  | 'ABORTED'
+  | 'FETCH_ERROR';
+
+export class SafeFetchError extends Error {
+  readonly code: SafeFetchErrorCode;
+  readonly isRedirect: boolean;
+
+  constructor(code: SafeFetchErrorCode, message: string, isRedirect = false) {
+    super(message);
+    this.name = 'SafeFetchError';
+    this.code = code;
+    this.isRedirect = isRedirect;
+  }
+}
 
 function isPrivateIpv4(host: string): boolean {
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
@@ -74,6 +99,13 @@ function isPrivateIpv6(host: string): boolean {
   return false;
 }
 
+export function isPrivateIp(ip: string): boolean {
+  const clean = (ip.startsWith('[') && ip.endsWith(']') ? ip.slice(1, -1) : ip).trim().toLowerCase();
+  if (!clean) return true;
+  if (clean.includes(':')) return isPrivateIpv6(clean);
+  return isPrivateIpv4(clean);
+}
+
 export function validateExternalUrl(
   rawUrl: unknown,
 ): { ok: true; url: URL } | { ok: false; reason: string } {
@@ -112,6 +144,45 @@ export function validateExternalUrl(
     return { ok: false, reason: `IPv6 privado/loopback bloqueado (anti-SSRF): ${host}` };
   }
   return { ok: true, url: parsed };
+}
+
+export async function validateExternalUrlWithDns(
+  rawUrl: unknown,
+  opts?: { dnsLookup?: DnsLookupFn; skipDns?: boolean },
+): Promise<{ ok: true; url: URL } | { ok: false; reason: string }> {
+  const base = validateExternalUrl(rawUrl);
+  if (!base.ok) return base;
+  if (opts?.skipDns) return base;
+
+  const rawHost = base.url.hostname.toLowerCase();
+  const host = (rawHost.startsWith('[') && rawHost.endsWith(']') ? rawHost.slice(1, -1) : rawHost).replace(/\.+$/, '');
+  if (isIP(host) !== 0) {
+    return base;
+  }
+
+  const lookupFn: DnsLookupFn = opts?.dnsLookup ?? ((h: string) => dnsLookup(h, { all: true }));
+  let records: Array<{ address: string; family?: number }>;
+  try {
+    records = await lookupFn(host);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, reason: `Falha ao resolver DNS (anti-SSRF) para ${host}: ${msg}` };
+  }
+
+  if (!Array.isArray(records) || records.length === 0) {
+    return { ok: false, reason: `DNS não retornou endereços (anti-SSRF) para ${host}` };
+  }
+
+  for (const rec of records) {
+    if (!rec?.address || isPrivateIp(rec.address)) {
+      return {
+        ok: false,
+        reason: `DNS resolveu para IP privado/reservado bloqueado (anti-SSRF): ${host} -> ${rec?.address ?? '(vazio)'}`,
+      };
+    }
+  }
+
+  return base;
 }
 
 function decodeHtmlEntities(text: string): string {
@@ -175,10 +246,68 @@ function truncateText(text: string, maxChars: number): string {
   return `${text.slice(0, keep)}${suffix}`;
 }
 
-interface SearchHit {
+export interface SearchHit {
   title: string;
   snippet: string;
   url?: string;
+}
+
+export function parseSearxngJson(data: unknown, maxResults: number): SearchHit[] {
+  if (!data || typeof data !== 'object') return [];
+  const obj = data as {
+    answers?: unknown[];
+    results?: unknown[];
+  };
+  const hits: SearchHit[] = [];
+
+  if (Array.isArray(obj.answers)) {
+    for (const ans of obj.answers) {
+      if (hits.length >= maxResults) break;
+      if (typeof ans === 'string' && ans.trim()) {
+        hits.push({
+          title: 'Resposta direta',
+          snippet: ans.trim(),
+        });
+      }
+    }
+  }
+
+  if (Array.isArray(obj.results)) {
+    for (const item of obj.results) {
+      if (hits.length >= maxResults) break;
+      if (!item || typeof item !== 'object') continue;
+      const rec = item as {
+        title?: unknown;
+        url?: unknown;
+        content?: unknown;
+        snippet?: unknown;
+      };
+      const rawTitle = typeof rec.title === 'string' ? decodeHtmlEntities(rec.title).trim() : '';
+      const rawUrl = typeof rec.url === 'string' ? rec.url.trim() : '';
+      const rawContent =
+        typeof rec.content === 'string'
+          ? decodeHtmlEntities(rec.content).trim()
+          : typeof rec.snippet === 'string'
+            ? decodeHtmlEntities(rec.snippet).trim()
+            : '';
+
+      const title = rawTitle || rawUrl;
+      if (!title) continue;
+
+      let url: string | undefined;
+      if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
+        url = rawUrl;
+      }
+
+      hits.push({
+        title,
+        snippet: rawContent || title,
+        url,
+      });
+    }
+  }
+
+  return hits.slice(0, maxResults);
 }
 
 function parseDdgInstantAnswer(data: unknown, maxResults: number): SearchHit[] {
@@ -236,7 +365,70 @@ function parseDdgInstantAnswer(data: unknown, maxResults: number): SearchHit[] {
   return hits.slice(0, maxResults);
 }
 
-function parseDdgHtmlFallback(html: string, maxResults: number): SearchHit[] {
+export function decodeDdgRedirectUrl(rawHref: string): string | undefined {
+  const clean = decodeHtmlEntities(rawHref).trim();
+  if (!clean) return undefined;
+
+  if (clean.startsWith('http://') || clean.startsWith('https://')) {
+    try {
+      const parsed = new URL(clean);
+      if (parsed.hostname.endsWith('duckduckgo.com') && parsed.pathname.startsWith('/l/')) {
+        const uddg = parsed.searchParams.get('uddg');
+        if (uddg && (uddg.startsWith('http://') || uddg.startsWith('https://'))) {
+          return uddg;
+        }
+      }
+      return clean;
+    } catch {
+      return undefined;
+    }
+  }
+
+  if (clean.startsWith('//') || clean.startsWith('/l/')) {
+    try {
+      const base = clean.startsWith('//') ? `https:${clean}` : `https://duckduckgo.com${clean}`;
+      const parsed = new URL(base);
+      const uddg = parsed.searchParams.get('uddg');
+      if (uddg && (uddg.startsWith('http://') || uddg.startsWith('https://'))) {
+        return uddg;
+      }
+    } catch {
+      return undefined;
+    }
+  }
+
+  return undefined;
+}
+
+function findMatchingTagClose(html: string, tagName: string, contentStart: number): number {
+  const lower = html.toLowerCase();
+  const openToken = `<${tagName}`;
+  const closeToken = `</${tagName}>`;
+  let depth = 1;
+  let pos = contentStart;
+
+  while (pos < html.length) {
+    const nextOpen = lower.indexOf(openToken, pos);
+    const nextClose = lower.indexOf(closeToken, pos);
+    if (nextClose === -1) return -1;
+
+    if (nextOpen !== -1 && nextOpen < nextClose) {
+      const chAfter = lower[nextOpen + openToken.length];
+      if (!chAfter || /[\s>/]/.test(chAfter)) {
+        depth++;
+      }
+      pos = nextOpen + openToken.length;
+    } else {
+      depth--;
+      if (depth === 0) return nextClose;
+      pos = nextClose + closeToken.length;
+    }
+  }
+
+  return -1;
+}
+
+export function parseDdgHtmlFallback(html: string, maxResults: number): SearchHit[] {
   const hits: SearchHit[] = [];
   const blocks = html.split('result__a');
   for (let i = 1; i < blocks.length && hits.length < maxResults; i++) {
@@ -248,25 +440,32 @@ function parseDdgHtmlFallback(html: string, maxResults: number): SearchHit[] {
     if (!title) continue;
 
     let url: string | undefined;
-    const hrefPrefix = blocks[i - 1];
-    const hrefIdx = hrefPrefix.lastIndexOf('href="');
-    if (hrefIdx !== -1) {
-      const hrefEnd = hrefPrefix.indexOf('"', hrefIdx + 6);
-      if (hrefEnd !== -1) {
-        const rawHref = hrefPrefix.slice(hrefIdx + 6, hrefEnd);
-        if (rawHref.startsWith('http://') || rawHref.startsWith('https://')) {
-          url = rawHref;
-        }
-      }
+    const preAttr = blocks[i - 1];
+    const postAttr = chunk.slice(0, gtIdx);
+    const openAnchorPre = preAttr.slice(Math.max(0, preAttr.lastIndexOf('<a')));
+    const attrZone = `${openAnchorPre} ${postAttr}`;
+    const hrefMatch = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(attrZone);
+    if (hrefMatch) {
+      url = decodeDdgRedirectUrl(hrefMatch[1] ?? hrefMatch[2] ?? '');
     }
 
     let snippet = '';
     const snipIdx = chunk.indexOf('result__snippet');
     if (snipIdx !== -1) {
       const snipGt = chunk.indexOf('>', snipIdx);
-      const snipClose = chunk.indexOf('</', snipGt + 1);
-      if (snipGt !== -1 && snipClose !== -1) {
-        snippet = stripHtmlToText(chunk.slice(snipGt + 1, snipClose));
+      if (snipGt !== -1) {
+        const tagOpenIdx = chunk.lastIndexOf('<', snipIdx);
+        let tagName = '';
+        if (tagOpenIdx !== -1) {
+          const m = /^<([a-z0-9]+)/i.exec(chunk.slice(tagOpenIdx, snipIdx));
+          if (m) tagName = m[1].toLowerCase();
+        }
+        const snipClose = tagName
+          ? findMatchingTagClose(chunk, tagName, snipGt + 1)
+          : chunk.indexOf('</', snipGt + 1);
+        if (snipClose !== -1) {
+          snippet = stripHtmlToText(chunk.slice(snipGt + 1, snipClose));
+        }
       }
     }
 
@@ -286,25 +485,30 @@ function formatHits(query: string, hits: SearchHit[], maxChars: number): string 
   return truncateText(lines.join('\n\n'), maxChars);
 }
 
-async function fetchWithTimeout(
+async function fetchSingleWithTimeout(
   fetcher: FetcherFn,
   url: string,
   timeoutMs: number,
+  headers: Record<string, string>,
   signals: AbortSignal[],
 ): Promise<Response> {
   const ac = new AbortController();
   let timedOut = false;
+  let externallyAborted = false;
   const timer = setTimeout(() => {
     timedOut = true;
     ac.abort(new Error(`Timeout após ${timeoutMs} ms`));
   }, timeoutMs);
   timer.unref?.();
 
-  const onAbort = () => ac.abort(new Error('Requisição cancelada'));
+  const onAbort = () => {
+    externallyAborted = true;
+    ac.abort(new Error('Requisição cancelada'));
+  };
   for (const s of signals) {
     if (s.aborted) {
       clearTimeout(timer);
-      throw new Error('Requisição cancelada (signal abortado)');
+      throw new SafeFetchError('ABORTED', 'Requisição cancelada (signal abortado)');
     }
     s.addEventListener('abort', onAbort, { once: true });
   }
@@ -312,18 +516,21 @@ async function fetchWithTimeout(
   try {
     return await fetcher(url, {
       method: 'GET',
-      headers: {
-        'User-Agent': 'Falador-WebSearch/0.2 (+https://github.com/otaviolemos/falador)',
-        Accept: 'application/json, text/html, text/plain;q=0.9',
-      },
-      redirect: 'error',
+      headers,
+      redirect: 'manual',
       signal: ac.signal,
     });
   } catch (err: unknown) {
     if (timedOut) {
-      throw new Error(`Timeout após ${timeoutMs} ms ao consultar ${url}`);
+      throw new SafeFetchError('TIMEOUT', `Timeout após ${timeoutMs} ms ao consultar ${url}`);
     }
-    throw err instanceof Error ? err : new Error(String(err));
+    if (externallyAborted || signals.some((s) => s.aborted)) {
+      throw new SafeFetchError('ABORTED', 'Requisição cancelada');
+    }
+    if (err instanceof SafeFetchError) throw err;
+    const msg = err instanceof Error ? err.message : String(err);
+    const isRedirect = msg.toLowerCase().includes('redirect');
+    throw new SafeFetchError(isRedirect ? 'REDIRECT_BLOCKED' : 'FETCH_ERROR', msg, isRedirect);
   } finally {
     clearTimeout(timer);
     for (const s of signals) {
@@ -332,10 +539,111 @@ async function fetchWithTimeout(
   }
 }
 
+export async function fetchWithSafeRedirects(opts: {
+  fetcher: FetcherFn;
+  url: string;
+  timeoutMs: number;
+  headers: Record<string, string>;
+  signals: AbortSignal[];
+  maxRedirects?: number;
+  dnsLookup?: DnsLookupFn;
+  skipDns?: boolean;
+  allowInternalHost?: boolean;
+  validateRedirectUrl?: (
+    nextUrl: URL,
+  ) => { ok: true } | { ok: false; code: 'SSRF_BLOCKED' | 'DOMAIN_NOT_ALLOWED' | 'REDIRECT_BLOCKED'; reason: string };
+}): Promise<{ response: Response; finalUrl: string }> {
+  const maxRedirects = Math.max(0, Math.floor(opts.maxRedirects ?? MAX_REDIRECTS));
+  let currentUrl = opts.url;
+
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    let parsedUrl: URL;
+    if (opts.allowInternalHost) {
+      try {
+        parsedUrl = new URL(currentUrl);
+      } catch {
+        throw new SafeFetchError('SSRF_BLOCKED', `URL inválida: ${currentUrl}`, hop > 0);
+      }
+      if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+        throw new SafeFetchError('SSRF_BLOCKED', `Protocolo não permitido: ${parsedUrl.protocol}`, hop > 0);
+      }
+    } else {
+      const checked = await validateExternalUrlWithDns(currentUrl, {
+        dnsLookup: opts.dnsLookup,
+        skipDns: opts.skipDns,
+      });
+      if (!checked.ok) {
+        throw new SafeFetchError('SSRF_BLOCKED', checked.reason, hop > 0);
+      }
+      parsedUrl = checked.url;
+    }
+
+    if (hop > 0 && opts.validateRedirectUrl) {
+      const v = opts.validateRedirectUrl(parsedUrl);
+      if (!v.ok) {
+        throw new SafeFetchError(v.code, v.reason, true);
+      }
+    }
+
+    const res = await fetchSingleWithTimeout(
+      opts.fetcher,
+      parsedUrl.toString(),
+      opts.timeoutMs,
+      opts.headers,
+      opts.signals,
+    );
+
+    if (res.status >= 300 && res.status < 400) {
+      res.body?.cancel?.().catch(() => {});
+      const location = res.headers.get('location');
+      if (!location || !location.trim()) {
+        throw new SafeFetchError(
+          'REDIRECT_BLOCKED',
+          `HTTP ${res.status} sem header Location em ${parsedUrl.toString()}`,
+          true,
+        );
+      }
+      if (hop >= maxRedirects) {
+        throw new SafeFetchError(
+          'REDIRECT_BLOCKED',
+          `Limite de ${maxRedirects} redirects excedido a partir de ${opts.url}`,
+          true,
+        );
+      }
+      try {
+        currentUrl = new URL(location.trim(), parsedUrl).toString();
+      } catch {
+        throw new SafeFetchError('REDIRECT_BLOCKED', `Location inválida no redirect: ${location}`, true);
+      }
+      continue;
+    }
+
+    return { response: res, finalUrl: parsedUrl.toString() };
+  }
+
+  throw new SafeFetchError('REDIRECT_BLOCKED', `Limite de ${maxRedirects} redirects excedido`, true);
+}
+
+function buildSearxngSearchUrl(baseUrl: string, query: string): URL {
+  const u = new URL(baseUrl);
+  const path = u.pathname.replace(/\/+$/, '');
+  if (!path.endsWith('/search')) {
+    u.pathname = `${path}/search`;
+  }
+  u.searchParams.set('q', query);
+  u.searchParams.set('format', 'json');
+  return u;
+}
+
+const DEFAULT_HEADERS: Record<string, string> = {
+  'User-Agent': 'Falador-WebSearch/0.2 (+https://github.com/otaviolemos/falador)',
+  Accept: 'application/json, text/html, text/plain;q=0.9',
+};
+
 export const toolWebSearch: NodeTypeDef = {
   type: 'tool.web_search',
-  paramNames: ['endpoint', 'timeoutMs', 'maxResults', 'maxChars'],
-  bindingNames: ['__fetcher'],
+  paramNames: ['endpoint', 'timeoutMs', 'maxResults', 'maxChars', 'provider', 'searxngUrl'],
+  bindingNames: ['__fetcher', '__dnsLookup'],
   inputs: [],
   outputs: [{ name: 'tool', type: 'tool', required: false }],
   validateParams: (p): ParamError[] => {
@@ -355,6 +663,31 @@ export const toolWebSearch: NodeTypeDef = {
     if (p.maxChars !== undefined && (typeof p.maxChars !== 'number' || Number.isNaN(p.maxChars) || p.maxChars <= 0)) {
       errs.push({ path: 'params.maxChars', code: 'INVALID_PARAM', message: 'maxChars deve ser número positivo' });
     }
+    if (p.provider !== undefined && p.provider !== 'searxng' && p.provider !== 'ddg' && p.provider !== 'auto') {
+      errs.push({
+        path: 'params.provider',
+        code: 'INVALID_PARAM',
+        message: "provider deve ser 'searxng', 'ddg' ou 'auto'",
+      });
+    }
+    if (p.searxngUrl !== undefined) {
+      if (typeof p.searxngUrl !== 'string' || p.searxngUrl.trim().length === 0) {
+        errs.push({ path: 'params.searxngUrl', code: 'INVALID_PARAM', message: 'searxngUrl deve ser string não vazia' });
+      } else {
+        try {
+          const u = new URL(p.searxngUrl.trim());
+          if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+            errs.push({
+              path: 'params.searxngUrl',
+              code: 'INVALID_PARAM',
+              message: 'searxngUrl deve usar protocolo http:// ou https://',
+            });
+          }
+        } catch {
+          errs.push({ path: 'params.searxngUrl', code: 'INVALID_PARAM', message: 'searxngUrl deve ser uma URL válida' });
+        }
+      }
+    }
     return errs;
   },
   create: (ctx: NodeCtx): NodeRuntime => {
@@ -363,14 +696,22 @@ export const toolWebSearch: NodeTypeDef = {
     const timeoutMs = Math.min(Math.max(100, rawTimeout), MAX_TIMEOUT_MS);
     const maxResults = Math.max(1, Math.floor((ctx.params.maxResults as number | undefined) ?? DEFAULT_MAX_RESULTS));
     const maxChars = Math.max(100, Math.floor((ctx.params.maxChars as number | undefined) ?? DEFAULT_MAX_CHARS));
+    const provider: WebSearchProvider = (ctx.params.provider as WebSearchProvider | undefined) ?? 'auto';
+    const envSearxng = process.env.SEARXNG_URL?.trim();
+    const searxngUrl =
+      ((ctx.params.searxngUrl as string | undefined) ?? (envSearxng || DEFAULT_SEARXNG_URL)).trim() ||
+      DEFAULT_SEARXNG_URL;
 
     const customFetcher = ctx.bindings?.__fetcher as FetcherFn | undefined;
     const fetcher: FetcherFn = typeof customFetcher === 'function' ? customFetcher : fetch;
+    const customDnsLookup = ctx.bindings?.__dnsLookup as DnsLookupFn | undefined;
+    const skipDns = Boolean(customFetcher) && typeof customDnsLookup !== 'function';
 
     const defs: ToolDef[] = [
       {
         name: 'web_search',
-        description: 'Pesquisa externa na web (DuckDuckGo Instant Answer + fallback HTML) para consultar documentação e referências.',
+        description:
+          'Pesquisa externa na web (SearXNG JSON + DuckDuckGo Instant Answer / HTML fallback) para consultar documentação e referências.',
         parameters: {
           type: 'object',
           properties: {
@@ -395,6 +736,105 @@ export const toolWebSearch: NodeTypeDef = {
         sourceNodeId: ctx.id,
       },
     ];
+
+    async function searchViaSearxng(
+      query: string,
+      signals: AbortSignal[],
+    ): Promise<{ hits: SearchHit[]; status: number }> {
+      const searchUrl = buildSearxngSearchUrl(searxngUrl, query);
+      // Permite explicitamente o searxngUrl configurado (ex.: http://core.searxng.orb.local)
+      const { response } = await fetchWithSafeRedirects({
+        fetcher,
+        url: searchUrl.toString(),
+        timeoutMs,
+        headers: DEFAULT_HEADERS,
+        signals,
+        maxRedirects: MAX_REDIRECTS,
+        allowInternalHost: true,
+      });
+      const body = await response.text();
+      if (!response.ok) {
+        throw new Error(`SearXNG HTTP ${response.status}: ${body.slice(0, 200)}`);
+      }
+      const parsed = JSON.parse(body) as unknown;
+      if (!parsed || typeof parsed !== 'object') {
+        throw new Error('SearXNG retornou JSON inválido');
+      }
+      const rec = parsed as { results?: unknown; answers?: unknown; infoboxes?: unknown };
+      if (!Array.isArray(rec.results) && !Array.isArray(rec.answers) && !Array.isArray(rec.infoboxes)) {
+        throw new Error('Resposta JSON não parece ser do SearXNG');
+      }
+      return { hits: parseSearxngJson(parsed, maxResults), status: response.status };
+    }
+
+    async function searchViaDdg(
+      query: string,
+      signals: AbortSignal[],
+    ): Promise<{ hits: SearchHit[]; errorStatus?: number; errorBody?: string }> {
+      if (!customFetcher) {
+        const epCheck = validateExternalUrl(endpoint);
+        if (!epCheck.ok) {
+          throw new SafeFetchError('SSRF_BLOCKED', `endpoint inválido — ${epCheck.reason}`);
+        }
+      }
+
+      const searchUrl = new URL(endpoint);
+      searchUrl.searchParams.set('q', query);
+      searchUrl.searchParams.set('format', 'json');
+      searchUrl.searchParams.set('no_html', '1');
+      searchUrl.searchParams.set('skip_disambig', '1');
+
+      const { response: res } = await fetchWithSafeRedirects({
+        fetcher,
+        url: searchUrl.toString(),
+        timeoutMs,
+        headers: DEFAULT_HEADERS,
+        signals,
+        maxRedirects: MAX_REDIRECTS,
+        dnsLookup: customDnsLookup,
+        skipDns,
+        allowInternalHost: Boolean(customFetcher),
+      });
+
+      const body = await res.text();
+      if (!res.ok) {
+        return { hits: [], errorStatus: res.status, errorBody: body };
+      }
+
+      let hits: SearchHit[] = [];
+      try {
+        const parsed: unknown = JSON.parse(body);
+        hits = parseDdgInstantAnswer(parsed, maxResults);
+      } catch {
+        hits = parseDdgHtmlFallback(body, maxResults);
+      }
+
+      if (hits.length === 0) {
+        const fbUrl = new URL(FALLBACK_HTML_ENDPOINT);
+        fbUrl.searchParams.set('q', query);
+        try {
+          const { response: fbRes } = await fetchWithSafeRedirects({
+            fetcher,
+            url: fbUrl.toString(),
+            timeoutMs,
+            headers: DEFAULT_HEADERS,
+            signals,
+            maxRedirects: MAX_REDIRECTS,
+            dnsLookup: customDnsLookup,
+            skipDns,
+            allowInternalHost: false,
+          });
+          if (fbRes.ok) {
+            const fbHtml = await fbRes.text();
+            hits = parseDdgHtmlFallback(fbHtml, maxResults);
+          }
+        } catch {
+          /* fallback best-effort */
+        }
+      }
+
+      return { hits };
+    }
 
     const toolProvider: ToolProvider = {
       listTools(): ToolDef[] {
@@ -426,65 +866,54 @@ export const toolWebSearch: NodeTypeDef = {
             };
           }
 
-          if (!customFetcher) {
-            const epCheck = validateExternalUrl(endpoint);
-            if (!epCheck.ok) {
-              return {
-                ok: false,
-                output: `SSRF_BLOCKED: endpoint inválido — ${epCheck.reason}`,
-                durationMs: Date.now() - t0,
-                meta: { code: 'SSRF_BLOCKED' },
-              };
-            }
-          }
-
-          let searchUrl: URL;
+          const signals = [opts.signal, ctx.signal];
           try {
-            searchUrl = new URL(endpoint);
-            searchUrl.searchParams.set('q', query);
-            searchUrl.searchParams.set('format', 'json');
-            searchUrl.searchParams.set('no_html', '1');
-            searchUrl.searchParams.set('skip_disambig', '1');
-          } catch {
-            return {
-              ok: false,
-              output: `Endpoint de busca inválido: ${endpoint}`,
-              durationMs: Date.now() - t0,
-            };
-          }
-
-          try {
-            const res = await fetchWithTimeout(fetcher, searchUrl.toString(), timeoutMs, [opts.signal, ctx.signal]);
-            const body = await res.text();
-            if (!res.ok) {
-              return {
-                ok: false,
-                output: `Erro HTTP ${res.status} na busca: ${body.slice(0, 300)}`,
-                durationMs: Date.now() - t0,
-                meta: { status: res.status },
-              };
-            }
-
             let hits: SearchHit[] = [];
-            try {
-              const parsed: unknown = JSON.parse(body);
-              hits = parseDdgInstantAnswer(parsed, maxResults);
-            } catch {
-              hits = parseDdgHtmlFallback(body, maxResults);
-            }
+            let usedProvider: 'searxng' | 'ddg' = provider === 'ddg' ? 'ddg' : 'searxng';
 
-            if (hits.length === 0) {
-              const fbUrl = new URL(FALLBACK_HTML_ENDPOINT);
-              fbUrl.searchParams.set('q', query);
+            if (provider === 'searxng') {
+              const sx = await searchViaSearxng(query, signals);
+              hits = sx.hits;
+              usedProvider = 'searxng';
+            } else if (provider === 'auto') {
               try {
-                const fbRes = await fetchWithTimeout(fetcher, fbUrl.toString(), timeoutMs, [opts.signal, ctx.signal]);
-                if (fbRes.ok) {
-                  const fbHtml = await fbRes.text();
-                  hits = parseDdgHtmlFallback(fbHtml, maxResults);
+                const sx = await searchViaSearxng(query, signals);
+                hits = sx.hits;
+                usedProvider = 'searxng';
+              } catch (sxErr: unknown) {
+                if (sxErr instanceof SafeFetchError && sxErr.code === 'ABORTED') {
+                  throw sxErr;
                 }
-              } catch {
-                /* fallback best-effort */
+                const sxMsg = sxErr instanceof Error ? sxErr.message : String(sxErr);
+                ctx.log('info', `tool.web_search fallback SearXNG → DDG (${sxMsg})`);
+                hits = [];
               }
+
+              if (hits.length === 0) {
+                const ddg = await searchViaDdg(query, signals);
+                if (ddg.errorStatus !== undefined) {
+                  return {
+                    ok: false,
+                    output: `Erro HTTP ${ddg.errorStatus} na busca: ${(ddg.errorBody ?? '').slice(0, 300)}`,
+                    durationMs: Date.now() - t0,
+                    meta: { status: ddg.errorStatus, provider: 'ddg' },
+                  };
+                }
+                hits = ddg.hits;
+                usedProvider = 'ddg';
+              }
+            } else {
+              const ddg = await searchViaDdg(query, signals);
+              if (ddg.errorStatus !== undefined) {
+                return {
+                  ok: false,
+                  output: `Erro HTTP ${ddg.errorStatus} na busca: ${(ddg.errorBody ?? '').slice(0, 300)}`,
+                  durationMs: Date.now() - t0,
+                  meta: { status: ddg.errorStatus, provider: 'ddg' },
+                };
+              }
+              hits = ddg.hits;
+              usedProvider = 'ddg';
             }
 
             const durationMs = Date.now() - t0;
@@ -494,9 +923,18 @@ export const toolWebSearch: NodeTypeDef = {
               ok: true,
               output: formatHits(query, hits, maxChars),
               durationMs,
-              meta: { query, hits: hits.length },
+              meta: { query, hits: hits.length, provider: usedProvider },
             };
           } catch (err: unknown) {
+            if (err instanceof SafeFetchError && err.code === 'SSRF_BLOCKED') {
+              ctx.metrics.counter('tool.web_search.ssrf_blocked', 1);
+              return {
+                ok: false,
+                output: `SSRF_BLOCKED: ${err.message}`,
+                durationMs: Date.now() - t0,
+                meta: { code: 'SSRF_BLOCKED' },
+              };
+            }
             const msg = err instanceof Error ? err.message : String(err);
             ctx.log('warn', `tool.web_search erro em web_search: ${msg}`);
             return {
@@ -508,26 +946,25 @@ export const toolWebSearch: NodeTypeDef = {
         }
 
         if (toolName === 'web_fetch_doc') {
-          const checked = validateExternalUrl(args.url);
-          if (!checked.ok) {
-            ctx.metrics.counter('tool.web_search.ssrf_blocked', 1);
-            return {
-              ok: false,
-              output: `SSRF_BLOCKED: ${checked.reason}`,
-              durationMs: Date.now() - t0,
-              meta: { code: 'SSRF_BLOCKED' },
-            };
-          }
-
           try {
-            const res = await fetchWithTimeout(fetcher, checked.url.toString(), timeoutMs, [opts.signal, ctx.signal]);
+            const { response: res, finalUrl } = await fetchWithSafeRedirects({
+              fetcher,
+              url: typeof args.url === 'string' ? args.url : String(args.url ?? ''),
+              timeoutMs,
+              headers: DEFAULT_HEADERS,
+              signals: [opts.signal, ctx.signal],
+              maxRedirects: MAX_REDIRECTS,
+              dnsLookup: customDnsLookup,
+              skipDns,
+              allowInternalHost: false,
+            });
             const raw = await res.text();
             if (!res.ok) {
               return {
                 ok: false,
-                output: `Erro HTTP ${res.status} ao acessar ${checked.url.toString()}: ${raw.slice(0, 300)}`,
+                output: `Erro HTTP ${res.status} ao acessar ${finalUrl}: ${raw.slice(0, 300)}`,
                 durationMs: Date.now() - t0,
-                meta: { status: res.status, url: checked.url.toString() },
+                meta: { status: res.status, url: finalUrl },
               };
             }
             const contentType = (res.headers.get('content-type') ?? '').toLowerCase();
@@ -539,9 +976,26 @@ export const toolWebSearch: NodeTypeDef = {
               ok: true,
               output: truncateText(text, maxChars),
               durationMs,
-              meta: { status: res.status, url: checked.url.toString() },
+              meta: { status: res.status, url: finalUrl },
             };
           } catch (err: unknown) {
+            if (err instanceof SafeFetchError && err.code === 'SSRF_BLOCKED') {
+              ctx.metrics.counter('tool.web_search.ssrf_blocked', 1);
+              return {
+                ok: false,
+                output: `SSRF_BLOCKED: ${err.message}`,
+                durationMs: Date.now() - t0,
+                meta: { code: 'SSRF_BLOCKED' },
+              };
+            }
+            if (err instanceof SafeFetchError && err.code === 'REDIRECT_BLOCKED') {
+              return {
+                ok: false,
+                output: `REDIRECT_BLOCKED: ${err.message}`,
+                durationMs: Date.now() - t0,
+                meta: { code: 'REDIRECT_BLOCKED' },
+              };
+            }
             const msg = err instanceof Error ? err.message : String(err);
             ctx.log('warn', `tool.web_search erro em web_fetch_doc: ${msg}`);
             return {
