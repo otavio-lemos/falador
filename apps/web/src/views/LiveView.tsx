@@ -1743,6 +1743,7 @@ export function LiveView({
         onServiceStatus={onServiceStatus}
         resetSignal={resetSignal}
         thoughtsOn={showThoughts}
+        thoughts={runner.thoughts}
         onToggleThoughts={(next) => {
           setShowThoughts(next);
           try { localStorage.setItem(THOUGHTS_STORAGE_KEY, String(next)); } catch { /* ignore */ }

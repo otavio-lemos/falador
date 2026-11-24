@@ -42,3 +42,29 @@ test('gate tem Aprovar/Editar/Rejeitar à direita e a recusa envia o texto escri
   expect(sent.text).toBeNull();
   expect(sent.rejectionText).toBe('use outro host');
 });
+
+test('aprovação no console preserva o host do gate no payload', async ({ page }) => {
+  const gate = {
+    type: 'gate', nodeId: 'exec_ssh', text: 'Comando fora da allowlist. Aprovar?',
+    meta: { command: 'uptime', host: '192.168.64.7', reason: 'Aprovação válida apenas para esta execução' },
+    ts: Date.now(),
+  };
+  await page.route('**/api/events', (route) => route.fulfill({
+    status: 200, contentType: 'text/event-stream',
+    body: `event: runner\ndata: ${JSON.stringify(gate)}\n\n`,
+  }));
+  let sent: Record<string, unknown> = {};
+  await page.route('**/api/gate', async (route) => {
+    sent = JSON.parse(route.request().postData() ?? '{}');
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
+  });
+  await page.goto('/console');
+  const card = page.getByRole('region', { name: 'Aprovação pendente exec_ssh' });
+  await expect(card).toContainText('Host: 192.168.64.7');
+  await card.getByRole('textbox').fill('uname -a');
+  await card.getByRole('button', { name: 'Aprovar e executar' }).click();
+  expect(sent.nodeId).toBe('exec_ssh');
+  expect(JSON.parse(String(sent.text))).toEqual({
+    command: 'uname -a', host: '192.168.64.7', reason: 'Aprovação válida apenas para esta execução',
+  });
+});

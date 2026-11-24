@@ -151,11 +151,11 @@ test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed 
   await expect(thoughtsToggle).toHaveAttribute('aria-pressed', 'true');
   const thought = page.locator('.live-chat-thought').first();
   await expect(thought).toBeVisible();
-  await expect(page.getByText('Analisar a intenção antes de responder.')).not.toBeVisible();
+  await expect(thought.getByText('Analisar a intenção antes de responder.')).not.toBeVisible();
   await thought.getByRole('button').click();
-  await expect(page.getByText('Analisar a intenção antes de responder.')).toBeVisible();
+  await expect(thought.getByText('Analisar a intenção antes de responder.')).toBeVisible();
   await thought.getByRole('button').click();
-  await expect(page.getByText('Analisar a intenção antes de responder.')).not.toBeVisible();
+  await expect(thought.getByText('Analisar a intenção antes de responder.')).not.toBeVisible();
   await thoughtsToggle.click();
   await expect(page.locator('.live-chat-thought')).toHaveCount(0);
 

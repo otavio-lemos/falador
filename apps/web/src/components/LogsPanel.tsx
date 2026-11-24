@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { Button, MultiSelect, Tab, TabList, TabPanel, TabPanels, Tabs } from '@carbon/react';
 import { ChevronDown, ChevronUp, Close, Terminal, TrashCan } from '@carbon/icons-react';
-import type { AuditEvent } from '../useRunner';
+import type { AuditEvent, Thought } from '../useRunner';
 import { clearLogs, fetchLogs, fetchServiceStatus, type ServiceStatusMap } from '../api';
 import { accentOf, serviceOfNode, shortNodeName } from '../data';
 import { AuditPanel } from '../components/AuditPanel';
@@ -92,6 +92,7 @@ interface LogsPanelProps {
   flowNodes?: FlowNodeRef[];
   onServiceStatus?: (status: ServiceStatusMap) => void;
   thoughtsOn?: boolean;
+  thoughts?: Thought[];
   onToggleThoughts?: (next: boolean) => void;
   resetSignal?: number;
   hasAgent?: boolean;
@@ -99,7 +100,7 @@ interface LogsPanelProps {
   audit?: AuditEvent[];
 }
 
-export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onToggleThoughts, resetSignal = 0, hasAgent = false, onOpenConsole, audit = [] }: LogsPanelProps) {
+export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, thoughts = [], onToggleThoughts, resetSignal = 0, hasAgent = false, onOpenConsole, audit = [] }: LogsPanelProps) {
   const logsRefs = useRef<Record<string, HTMLPreElement | null>>({});
   const clearEpochRef = useRef(0);
   const onServiceStatusRef = useRef(onServiceStatus);
@@ -395,14 +396,33 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onTo
           </Button>
         )}
         {onToggleThoughts && (
-          <Button
-            kind={thoughtsOn ? 'primary' : 'tertiary'}
-            size="sm"
-            onClick={() => onToggleThoughts(!thoughtsOn)}
-            aria-pressed={thoughtsOn}
-          >
-            Pensamentos
-          </Button>
+          <div className="thoughts-wrap">
+            <Button
+              kind={thoughtsOn ? 'primary' : 'tertiary'}
+              size="sm"
+              onClick={() => onToggleThoughts(!thoughtsOn)}
+              aria-pressed={thoughtsOn}
+              aria-expanded={thoughtsOn}
+            >
+              Pensamentos
+            </Button>
+            {thoughtsOn && (
+              <div className="thoughts-menu" role="region" aria-label="Pensamentos do agente">
+                <div className="thoughts-menu-head">Pensamentos ({thoughts.length})</div>
+                {thoughts.length === 0
+                  ? <p className="thoughts-empty">Nenhum pensamento neste run. O modelo está com thinking desligado para respostas rápidas.</p>
+                  : [...thoughts].reverse().map((t) => (
+                      <details key={t.thoughtId} className="thoughts-item">
+                        <summary>
+                          <span>{shortNodeName(flowNodes?.find((n) => n.id === t.nodeId)?.type ?? '', t.nodeId)}</span>
+                          <time>{new Date(t.ts).toLocaleTimeString()}</time>
+                        </summary>
+                        <pre>{t.text}</pre>
+                      </details>
+                    ))}
+              </div>
+            )}
+          </div>
         )}
         <Button
           kind="ghost"

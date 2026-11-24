@@ -103,9 +103,16 @@ export function ConsoleView() {
     bc.close();
   };
   const approve = (gate: Gate, draft: string) => {
-    const text = draft.trim() ? draft : gateCommand(gate);
-    const status = text.trim() === gateCommand(gate).trim() ? 'Aprovado' : 'Editado';
-    return answerGate(gate, text, undefined, status);
+    const command = draft.trim() ? draft : gateCommand(gate);
+    const status = command.trim() === gateCommand(gate).trim() ? 'Aprovado' : 'Editado';
+    // O gate do exec.command carrega o host no meta. Enviar só o texto derruba o
+    // host e o nó responde EXEC_POLICY_DENIED "Host SSH não informado".
+    const meta = gate.meta as { host?: unknown; reason?: unknown } | undefined;
+    const host = typeof meta?.host === 'string' && meta.host.trim() && meta.host !== 'local' ? meta.host.trim() : '';
+    const payload = host
+      ? JSON.stringify({ command, host, ...(typeof meta?.reason === 'string' && meta.reason ? { reason: meta.reason } : {}) })
+      : command;
+    return answerGate(gate, payload, undefined, status);
   };
   const reject = (gate: Gate, draft: string) => answerGate(gate, null, draft, 'Rejeitado');
 
@@ -133,6 +140,9 @@ export function ConsoleView() {
             <div className="console-card-head">
               <h2>Aprovar e executar</h2>
               <Tag type="cyan" size="sm">{g.nodeId}</Tag>
+              {typeof g.meta?.host === 'string' && g.meta.host && g.meta.host !== 'local' && (
+                <Tag type="gray" size="sm">Host: {g.meta.host}</Tag>
+              )}
             </div>
             <div className="console-gate-row">
               <div className="console-gate-main">

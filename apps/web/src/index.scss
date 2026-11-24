@@ -949,6 +949,29 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   padding: $spacing-01;
   .cds--form-item { flex: 1; }
 }
+// Dropdown de Pensamentos no rodapé: abre acima do painel de logs.
+.thoughts-wrap { position: relative; }
+.thoughts-menu {
+  position: absolute;
+  bottom: calc(100% + $spacing-02);
+  right: 0;
+  width: min(520px, 80vw);
+  max-height: 320px;
+  overflow-y: auto;
+  z-index: 10000;
+  background: $bg-panel;
+  border: 1px solid $border-2;
+  padding: $spacing-03;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  font-size: 12px;
+}
+.thoughts-menu-head { @include type-style('productive-heading-01'); margin-bottom: $spacing-02; }
+.thoughts-empty { color: $txt-2; margin: 0; }
+.thoughts-item { border-top: 1px solid $border-1; padding: $spacing-02 0; }
+.thoughts-item summary { display: flex; justify-content: space-between; cursor: pointer; gap: $spacing-03; }
+.thoughts-item time { color: $txt-2; font-size: 11px; }
+.thoughts-item pre { white-space: pre-wrap; word-break: break-word; font-size: 11px; line-height: 1.4; margin: $spacing-02 0 0; }
+
 // Botões de decisão na lateral direita do card, nunca abaixo do texto.
 .live-chat-entry--gate { position: relative; }
 .live-chat-entry--gate .live-chat-block-body { padding-right: 132px; }
