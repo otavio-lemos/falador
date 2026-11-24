@@ -517,7 +517,13 @@ export function buildSshRemoteCommand(argv: string[]): string {
  * 4. Allowlist de prefixo com fronteira de palavra
  * 5. Allowlist e sanitização de host (para SSH)
  */
-export function validateCommand(input: unknown, policy: ExecPolicy): ValidateResult {
+export const ALLOWLIST_DENIAL_PREFIX = 'Comando fora da allowlist de prefixos permitidos';
+
+export function validateCommand(
+  input: unknown,
+  policy: ExecPolicy,
+  opts?: { allowUnlisted?: boolean },
+): ValidateResult {
   const extracted = extractCommand(input);
   if (!extracted.ok) {
     return { ok: false, code: 'EXEC_POLICY_DENIED', reason: extracted.reason };
@@ -619,7 +625,7 @@ export function validateCommand(input: unknown, policy: ExecPolicy): ValidateRes
     }
   }
 
-  // 4. Allowlist de prefixo com fronteira de palavra (bypass: requireAllowlist=false)
+  // 4. Allowlist de prefixo com fronteira de palavra (allowUnlisted = aprovação humana desta exec)
   const normalized = command.replace(/\s+/g, ' ').trim();
   const prefixes = Array.isArray(policy.allowedPrefixes) ? policy.allowedPrefixes : [];
   const prefixMatched = prefixes.some((rawPrefix) => {
@@ -628,11 +634,11 @@ export function validateCommand(input: unknown, policy: ExecPolicy): ValidateRes
     if (!p) return false;
     return normalized === p || normalized.startsWith(`${p} `);
   });
-  if (!prefixMatched && policy.requireAllowlist !== false) {
+  if (!prefixMatched && !opts?.allowUnlisted) {
     return {
       ok: false,
       code: 'EXEC_POLICY_DENIED',
-      reason: `Comando fora da allowlist de prefixos permitidos: ${argv[0]}`,
+      reason: `${ALLOWLIST_DENIAL_PREFIX}: ${argv[0]}`,
       command,
     };
   }
@@ -840,7 +846,6 @@ export const execCommand: NodeTypeDef = {
   paramNames: [
     'transport',
     'mode',
-    'requireAllowlist',
     'dryRun',
     'allowedPrefixes',
     'allowedHosts',
@@ -869,7 +874,7 @@ export const execCommand: NodeTypeDef = {
     { name: 'out', type: 'phrase', required: false },
     { name: 'tool', type: 'tool', required: false },
   ],
-  bindingNames: ['__onExecution', '__onExecChunk'],
+  bindingNames: ['__onExecution', '__onExecChunk', '__gate'],
   validateParams: (p): ParamError[] => {
     const errs: ParamError[] = [];
     if (p.transport !== undefined && p.transport !== 'local' && p.transport !== 'ssh') {
@@ -1056,6 +1061,9 @@ export const execCommand: NodeTypeDef = {
     const defaultRunId = typeof ctx.bindings?.runId === 'string' ? ctx.bindings.runId : 'unknown';
     const onExecution = ctx.bindings?.__onExecution as ((ev: Record<string, unknown>) => void) | undefined;
     const onExecChunk = ctx.bindings?.__onExecChunk as ((ev: ExecChunkEvent) => void) | undefined;
+    const gateHolder = ctx.bindings?.__gate as
+      | { request(text: string, meta?: Record<string, unknown>): Promise<string | null>; cancel?: (reason?: string) => void }
+      | undefined;
     const emitChunkEvent = (ev: ExecChunkEvent) => {
       try {
         onExecChunk?.(ev);
@@ -1134,7 +1142,40 @@ export const execCommand: NodeTypeDef = {
         allowedPrefixes: effectivePrefixes,
       };
 
-      const validation = validateCommand(input, callPolicy);
+      let validation = validateCommand(input, callPolicy);
+      // Fora da allowlist: pede aprovação humana para ESTA execução (não grava prefixo).
+      // Na lista segue direto; denylist/metacaracteres/host continuam barreiras duras.
+      if (!validation.ok && validation.reason.startsWith(ALLOWLIST_DENIAL_PREFIX) && gateHolder) {
+        const deniedCommand = validation.command ?? String(payloadText(input)?.text ?? '');
+        let approvedText: string | null = null;
+        try {
+          approvedText = await gateHolder.request(
+            `Comando fora da allowlist. Aprovar execução desta vez?\n${deniedCommand}`,
+            {
+              tool: resolvedToolName,
+              kind: 'approve',
+              command: deniedCommand,
+              host: preliminaryHost || 'local',
+              transport,
+              reason: 'Aprovação válida apenas para esta execução',
+            },
+          );
+        } catch {
+          approvedText = null;
+        }
+        if (approvedText === null) {
+          validation = {
+            ok: false,
+            code: 'EXEC_POLICY_DENIED',
+            reason: 'Comando negado pelo usuário',
+            command: deniedCommand,
+          };
+        } else {
+          const fromGate = extractCommand(approvedText);
+          validation = validateCommand(fromGate.ok ? approvedText : input, callPolicy, { allowUnlisted: true });
+          ctx.metrics.counter('exec.command.approved', 1);
+        }
+      }
       if (!validation.ok) {
         const deniedHost = validation.host ?? (transport === 'ssh' ? (defaultHost ?? 'unknown') : 'local');
         const deniedCommand = validation.command ?? String(payloadText(input)?.text ?? '');
@@ -1621,6 +1662,7 @@ export const execCommand: NodeTypeDef = {
         required: transport === 'ssh' ? ['command', 'host'] : ['command'],
       },
       readonly: mode === 'readonly',
+      selfApproval: true,
       sourceNodeId: ctx.id,
     };
 

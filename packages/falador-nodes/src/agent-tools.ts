@@ -991,8 +991,9 @@ export const agentTools: NodeTypeDef = {
               }
 
               const needsApproval =
-                approvalPolicy === 'always' ||
-                (approvalPolicy === 'non_readonly' && (!toolEntry.def.readonly || d1Decision === 'sensivel'));
+                !toolEntry.def.selfApproval &&
+                (approvalPolicy === 'always' ||
+                  (approvalPolicy === 'non_readonly' && (!toolEntry.def.readonly || d1Decision === 'sensivel')));
 
               let gateOutcome: AuditEvent['gate'] = 'not_required';
               if (needsApproval) {

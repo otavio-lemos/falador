@@ -191,13 +191,15 @@ async function main() {
     }
   }
 
-  // gates human.approve e agent.tools:
+  // gates human.approve, agent.tools e exec.command (fora da allowlist):
   // runner cria holder por nó, anuncia {"type":"gate","nodeId","text","meta"?} e
   // resolve via stdin JSON {"type":"gate_action","nodeId","text"} (null = rejeitar).
   const gates = new Map(); // nodeId -> resolve
   const pendingGates = new Set(); // resolvers abertos (reject all no stop do run)
   for (const n of flow.nodes ?? []) {
-    const needsGate = (n.type === 'human.approve' || n.type === 'agent.tools') && !(flow.bindings[n.id]?.__gate);
+    const needsGate =
+      (n.type === 'human.approve' || n.type === 'agent.tools' || n.type === 'exec.command') &&
+      !(flow.bindings[n.id]?.__gate);
     if (needsGate) {
       flow.bindings[n.id] = {
         ...(flow.bindings[n.id] ?? {}),

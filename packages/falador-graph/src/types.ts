@@ -66,6 +66,8 @@ export interface ToolDef {
   description: string;
   parameters: Record<string, unknown>;
   readonly?: boolean;
+  /** tool pede aprovação por conta própria (ex.: exec só fora da allowlist) */
+  selfApproval?: boolean;
   sourceNodeId: string;
 }
 
