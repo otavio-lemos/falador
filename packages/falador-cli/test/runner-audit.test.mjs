@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { verifyAuditChain } from '../../falador-nodes/src/audit.ts';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'run-flow.mjs');
 const tmp = mkdtempSync(join(tmpdir(), 'falador-audit-test-'));
@@ -136,6 +137,8 @@ test('runner: audit NDJSON + JSONL por run com runId/seq, gates pending→approv
     assert.equal(new Set(seqs).size, seqs.length, 'seq único');
 
     const ops = audits.map((a) => a.op);
+    assert.ok(ops.includes('run_started'), 'op run_started');
+    assert.ok(ops.includes('chat_input'), 'op chat_input');
     assert.ok(ops.includes('plan'), 'op plan');
     assert.ok(ops.includes('goal_validation'), 'op goal_validation');
     assert.ok(ops.includes('agent_final'), 'op agent_final');
@@ -145,7 +148,7 @@ test('runner: audit NDJSON + JSONL por run com runId/seq, gates pending→approv
     const fin = audits.find((a) => a.op === 'agent_final');
     assert.equal(fin.goalAchieved, true);
 
-    // JSONL append-only com os MESMOS eventos
+    // JSONL append-only com os MESMOS eventos e cadeia SHA-256 íntegra
     const file = join(auditDir, `${r.runId}.jsonl`);
     assert.ok(existsSync(file), `arquivo ${file} deve existir`);
     const jsonl = readFileSync(file, 'utf-8').trim().split('\n').map((l) => JSON.parse(l));
@@ -154,7 +157,11 @@ test('runner: audit NDJSON + JSONL por run com runId/seq, gates pending→approv
       assert.equal(rec.seq, audits[i].seq);
       assert.equal(rec.op, audits[i].op);
       assert.equal(rec.runId, r.runId);
+      assert.equal(typeof rec.hash, 'string');
+      assert.equal(typeof rec.prevHash, 'string');
     }
+    const chainRes = verifyAuditChain(jsonl);
+    assert.equal(chainRes.ok, true, `hash chain inválida: ${JSON.stringify(chainRes)}`);
   } finally { await llm.close(); }
 });
 

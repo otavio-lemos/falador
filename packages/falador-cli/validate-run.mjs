@@ -11,6 +11,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { verifyAuditChain } from '../falador-nodes/src/audit.ts';
 
 const ROOT = join(fileURLToPath(import.meta.url), '..', '..', '..');
 const AUDIT_DIR = process.env.FALADOR_AUDIT_DIR || join(ROOT, 'logs', 'audit');
@@ -86,6 +87,17 @@ function runRules(events) {
   results.push(untraceable.length === 0
     ? { rule: 'errors_traceable', status: 'PASS', message: 'Todo erro de tool tem rastreabilidade (errorType/outputPreview)' }
     : { rule: 'errors_traceable', status: 'FAIL', message: `${untraceable.length} tool_call com erro sem rastreabilidade`, details: untraceable });
+
+  // R6: integridade da hash chain SHA-256 (quando presente — retrocompatível com logs legados)
+  const hasHashChain = events.some((e) => typeof e.hash === 'string' || typeof e.prevHash === 'string');
+  if (hasHashChain) {
+    const chain = verifyAuditChain(events);
+    results.push(chain.ok
+      ? { rule: 'audit_chain_integrity', status: 'PASS', message: `Cadeia SHA-256 íntegra (${chain.checked} eventos)` }
+      : { rule: 'audit_chain_integrity', status: 'FAIL', message: `Quebra de integridade SHA-256 no evento #${chain.index}: ${chain.reason}`, details: chain });
+  } else {
+    results.push({ rule: 'audit_chain_integrity', status: 'PASS', message: 'Log legado sem hash chain (retrocompatível)' });
+  }
 
   return results;
 }

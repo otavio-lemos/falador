@@ -2,7 +2,7 @@
 // Segura a sugestão do LLM; NÃO emite nada até o host aprovar/editar/rejeitar
 // via binding __gate: { request(text, meta?) → Promise<string|null>, cancel?(reason?) }.
 // null = rejeitado; string = texto (editado ou original) emitido como phrase.
-import type { ControlMsg, NodeCtx, NodeRuntime, NodeTypeDef } from '../../falador-graph/src/index.ts';
+import type { ControlMsg, GateProvider, NodeCtx, NodeRuntime, NodeTypeDef } from '../../falador-graph/src/index.ts';
 import { payloadText } from './sse.ts';
 import { inheritTrace, type TraceMeta } from './trace.ts';
 
@@ -60,7 +60,10 @@ export const humanApprove: NodeTypeDef = {
   bindingNames: ['__gate'],
   requiredBindings: ['__gate'],
   inputs: [{ name: 'in', type: 'tokens_parcial' }],
-  outputs: [{ name: 'out', type: 'phrase' }],
+  outputs: [
+    { name: 'out', type: 'phrase' },
+    { name: 'gate', type: 'gate', required: false },
+  ],
   validateParams: (p) => {
     if (p.mode !== undefined && p.mode !== 'manual' && p.mode !== 'auto') {
       return [{ path: 'params.mode', code: 'INVALID_PARAM', message: "mode deve ser 'manual' | 'auto'" }];
@@ -73,7 +76,27 @@ export const humanApprove: NodeTypeDef = {
     let inFlight = false;
     let cancelPending: ((reason: string) => void) | null = null;
 
+    const gateProvider: GateProvider = {
+      async request(text: string, meta?: Record<string, unknown>): Promise<string | null> {
+        if (mode === 'auto') {
+          ctx.metrics.counter('human.approve.bypassed', 1);
+          return text;
+        }
+        const decision = await gate.request(text, meta as GateMeta | undefined);
+        if (decision !== null) {
+          ctx.metrics.counter('human.approve.approved', 1);
+        } else {
+          ctx.metrics.counter('human.approve.rejected', 1);
+        }
+        return decision;
+      },
+      cancel(reason?: string): void {
+        gate.cancel?.(reason);
+      },
+    };
+
     return {
+      gateProvider,
       async start() {},
       async onInput(_port, msg) {
         if (msg.control) return;

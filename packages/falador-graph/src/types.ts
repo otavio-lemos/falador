@@ -8,7 +8,58 @@ export type PortType =
   | 'tokens_parcial'
   | 'phrase'
   | 'control'
-  | 'tool';
+  | 'tool'
+  | 'decider'
+  | 'gate'
+  | 'validator';
+
+export interface DeciderResult {
+  chosen: string;
+  confidence?: number;
+  probabilities?: Record<string, number>;
+}
+
+export interface DeciderProvider {
+  decide(
+    text: string,
+    opts?: {
+      signal?: AbortSignal;
+      options?: string[];
+      criteria?: Record<string, string>;
+      instructions?: string;
+    },
+  ): Promise<DeciderResult>;
+}
+
+export interface GateProvider {
+  request(text: string, meta?: Record<string, unknown>): Promise<string | null>;
+  cancel?(reason?: string): void;
+}
+
+export interface ValidatorProviderInput {
+  goal: string;
+  evidence: string[];
+  plan?: Array<{
+    id: string;
+    description: string;
+    verification: string;
+    status: 'pending' | 'verified' | 'failed';
+    evidence?: string;
+  }>;
+  signal: AbortSignal;
+}
+
+export interface ValidatorProviderResult {
+  achieved: boolean;
+  confidence: number;
+  gaps: string[];
+  nextActions: string[];
+}
+
+export interface ValidatorProvider {
+  validate(input: ValidatorProviderInput): Promise<ValidatorProviderResult>;
+  readonly confidenceThreshold?: number;
+}
 
 export interface ToolDef {
   name: string;
@@ -128,6 +179,8 @@ export interface NodeCtx {
   readonly signal: AbortSignal;
   /** Retorna provedores conectados à porta de entrada `'tool'` na ordem das arestas (ADR-008). */
   getTools?(port: string): ToolProvider[];
+  /** Retorna provedor conectado a uma porta de capability (`decider` | `gate` | `validator`), ou null. */
+  getProvider?<T = unknown>(port: string): T | null;
 }
 
 export interface NodeRuntime {
@@ -139,6 +192,12 @@ export interface NodeRuntime {
   onControl?(c: ControlMsg): void;
   /** Provedor de tools exposto por nós com porta de saída `'tool'` (ADR-008). */
   toolProvider?: ToolProvider;
+  /** Provedor de decisão exposto por nós com porta de saída `'decider'`. */
+  deciderProvider?: DeciderProvider;
+  /** Provedor de gate humano exposto por nós com porta de saída `'gate'`. */
+  gateProvider?: GateProvider;
+  /** Provedor de validação de objetivo exposto por nós com porta de saída `'validator'`. */
+  validatorProvider?: ValidatorProvider;
 }
 
 export interface MetricsSink {

@@ -6,13 +6,16 @@ import {
   GraphError,
   type Clock,
   type ControlMsg,
+  type DeciderProvider,
   type Envelope,
+  type GateProvider,
   type NodeCtx,
   type NodeMetrics,
   type NodeRuntime,
   type RunEvent,
   type Snapshot,
   type ToolProvider,
+  type ValidatorProvider,
 } from './types.ts';
 
 const realClock: Clock = { now: () => Date.now() };
@@ -165,6 +168,68 @@ export class RunningGraph {
           }
         }
         return providers;
+      },
+      getProvider<T = unknown>(port: string): T | null {
+        const dp = vn.def.inputs.find((p) => p.name === port);
+        if (!dp || (dp.type !== 'decider' && dp.type !== 'gate' && dp.type !== 'validator')) {
+          return null;
+        }
+        const edge = self.flow.edges.find(
+          (e) => e.toNode === vn.id && e.toPort === port && e.portType === dp.type,
+        );
+        if (!edge) return null;
+        const srcState = self.nodeStates.get(edge.fromNode);
+        if (!srcState?.runtime) return null;
+
+        const recordProviderCall = async <R>(kind: string, fn: () => Promise<R>): Promise<R> => {
+          srcState.metrics.in++;
+          const t0 = self.clock.now();
+          try {
+            const res = await fn();
+            srcState.metrics.out++;
+            return res;
+          } catch (err) {
+            srcState.metrics.errors++;
+            throw err;
+          } finally {
+            const dt = self.clock.now() - t0;
+            const arr = srcState.metrics.proc;
+            arr.push(dt);
+            if (arr.length > self.procWindow) arr.shift();
+            srcState.ctx.metrics.timer(`provider.${kind}.ms`, dt);
+          }
+        };
+
+        if (dp.type === 'decider') {
+          const raw = srcState.runtime.deciderProvider;
+          if (!raw) return null;
+          const wrapped: DeciderProvider = {
+            decide: (text, opts) => recordProviderCall('decider', () => raw.decide(text, opts)),
+          };
+          return wrapped as T;
+        }
+
+        if (dp.type === 'gate') {
+          const raw = srcState.runtime.gateProvider;
+          if (!raw) return null;
+          const wrapped: GateProvider = {
+            request: (text, meta) => recordProviderCall('gate', () => raw.request(text, meta)),
+            ...(raw.cancel ? { cancel: (reason?: string) => raw.cancel?.(reason) } : {}),
+          };
+          return wrapped as T;
+        }
+
+        if (dp.type === 'validator') {
+          const raw = srcState.runtime.validatorProvider;
+          if (!raw) return null;
+          const wrapped: ValidatorProvider = {
+            ...(raw.confidenceThreshold !== undefined ? { confidenceThreshold: raw.confidenceThreshold } : {}),
+            validate: (input) => recordProviderCall('validator', () => raw.validate(input)),
+          };
+          return wrapped as T;
+        }
+
+        return null;
       },
       async emit(port, payload, emitOpts) {
         const vnode = self.flow.nodes.get(vn.id)!;

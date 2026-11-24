@@ -62,7 +62,8 @@ describe('decision.llm', () => {
     assert.ok(decisionLlm.validateParams!({ options: ['auto', 'human'], defaultOption: 'nope' }).length > 0);
     assert.equal(decisionLlm.validateParams!({ options: ['auto', 'human'], defaultOption: 'auto' }).length, 0);
     const outs = decisionLlm.outputsFor!({ options: ['a', 'b'] });
-    assert.deepEqual(outs.map((o) => o.name), ['a', 'b']);
+    assert.deepEqual(outs.map((o) => o.name), ['a', 'b', 'decider']);
+    assert.deepEqual(outs.find((o) => o.name === 'decider'), { name: 'decider', type: 'decider', required: false });
   });
 
   test('modo chat: escolhe opção pelo texto e emite na porta correta com meta', async () => {

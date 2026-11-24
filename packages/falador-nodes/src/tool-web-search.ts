@@ -10,6 +10,7 @@ import type {
 } from '../../falador-graph/src/index.ts';
 
 const DEFAULT_ENDPOINT = 'https://api.duckduckgo.com/';
+const DEFAULT_SEARXNG_URL = 'http://127.0.0.1:8888/search';
 const FALLBACK_HTML_ENDPOINT = 'https://html.duckduckgo.com/html/';
 const DEFAULT_TIMEOUT_MS = 8000;
 const MAX_TIMEOUT_MS = 30_000;
@@ -334,12 +335,18 @@ async function fetchWithTimeout(
 
 export const toolWebSearch: NodeTypeDef = {
   type: 'tool.web_search',
-  paramNames: ['endpoint', 'timeoutMs', 'maxResults', 'maxChars'],
+  paramNames: ['provider', 'searxngUrl', 'endpoint', 'timeoutMs', 'maxResults', 'maxChars'],
   bindingNames: ['__fetcher'],
   inputs: [],
   outputs: [{ name: 'tool', type: 'tool', required: false }],
   validateParams: (p): ParamError[] => {
     const errs: ParamError[] = [];
+    if (p.provider !== undefined && p.provider !== 'auto' && p.provider !== 'ddg' && p.provider !== 'searxng') {
+      errs.push({ path: 'params.provider', code: 'INVALID_PARAM', message: "provider deve ser 'auto', 'ddg' ou 'searxng'" });
+    }
+    if (p.searxngUrl !== undefined && (typeof p.searxngUrl !== 'string' || p.searxngUrl.trim().length === 0)) {
+      errs.push({ path: 'params.searxngUrl', code: 'INVALID_PARAM', message: 'searxngUrl deve ser string não vazia' });
+    }
     if (p.endpoint !== undefined && (typeof p.endpoint !== 'string' || p.endpoint.trim().length === 0)) {
       errs.push({ path: 'params.endpoint', code: 'INVALID_PARAM', message: 'endpoint deve ser string não vazia' });
     }
@@ -358,6 +365,10 @@ export const toolWebSearch: NodeTypeDef = {
     return errs;
   },
   create: (ctx: NodeCtx): NodeRuntime => {
+    const provider = (ctx.params.provider as 'auto' | 'ddg' | 'searxng' | undefined) ?? 'ddg';
+    const searxngUrl =
+      ((ctx.params.searxngUrl as string | undefined) ?? process.env.SEARXNG_URL ?? DEFAULT_SEARXNG_URL).trim() ||
+      DEFAULT_SEARXNG_URL;
     const endpoint = ((ctx.params.endpoint as string | undefined) ?? DEFAULT_ENDPOINT).trim() || DEFAULT_ENDPOINT;
     const rawTimeout = (ctx.params.timeoutMs as number | undefined) ?? DEFAULT_TIMEOUT_MS;
     const timeoutMs = Math.min(Math.max(100, rawTimeout), MAX_TIMEOUT_MS);
@@ -424,6 +435,58 @@ export const toolWebSearch: NodeTypeDef = {
               output: 'Parâmetro "query" é obrigatório e não pode ser vazio.',
               durationMs: Date.now() - t0,
             };
+          }
+
+          if (provider === 'searxng' || provider === 'auto') {
+            try {
+              const sxUrl = new URL(searxngUrl);
+              sxUrl.searchParams.set('q', query);
+              sxUrl.searchParams.set('format', 'json');
+              const sxTimeout = provider === 'auto' ? Math.min(timeoutMs, 2500) : timeoutMs;
+              const sxRes = await fetchWithTimeout(fetcher, sxUrl.toString(), sxTimeout, [opts.signal, ctx.signal]);
+              if (sxRes.ok) {
+                const parsed = JSON.parse(await sxRes.text()) as {
+                  results?: Array<{ title?: string; url?: string; content?: string }>;
+                };
+                const sxHits: SearchHit[] = (parsed.results ?? [])
+                  .filter((r) => typeof r?.url === 'string' && r.url.trim().length > 0)
+                  .slice(0, maxResults)
+                  .map((r) => ({
+                    title: (r.title ?? r.url ?? '').trim(),
+                    url: (r.url ?? '').trim(),
+                    snippet: (r.content ?? '').trim(),
+                  }));
+                if (sxHits.length > 0 || provider === 'searxng') {
+                  const durationMs = Date.now() - t0;
+                  ctx.metrics.counter('tool.web_search.queries', 1);
+                  ctx.metrics.timer('tool.web_search.durationMs', durationMs);
+                  return {
+                    ok: true,
+                    output: formatHits(query, sxHits, maxChars),
+                    durationMs,
+                    meta: { query, hits: sxHits.length, provider: 'searxng' },
+                  };
+                }
+              } else if (provider === 'searxng') {
+                return {
+                  ok: false,
+                  output: `Erro HTTP ${sxRes.status} no SearXNG`,
+                  durationMs: Date.now() - t0,
+                  meta: { status: sxRes.status, provider: 'searxng' },
+                };
+              }
+            } catch (err: unknown) {
+              if (provider === 'searxng') {
+                const msg = err instanceof Error ? err.message : String(err);
+                return {
+                  ok: false,
+                  output: `Erro ao consultar SearXNG: ${msg}`,
+                  durationMs: Date.now() - t0,
+                  meta: { provider: 'searxng' },
+                };
+              }
+              /* provider === 'auto': fallback silencioso para DuckDuckGo */
+            }
           }
 
           if (!customFetcher) {

@@ -76,7 +76,19 @@ export {
 } from './tool-crawler.ts';
 export { inheritTrace, type TraceMeta } from './trace.ts';
 export { goalValidator, validateGoal, type GoalValidation } from './goal-validator.ts';
-export { parsePlanItems, preview, type AuditEvent, type PlanItem, type GoalValidationResult } from './audit.ts';
+export {
+  GENESIS_HASH,
+  canonicalJson,
+  computeAuditHash,
+  chainAuditEvent,
+  verifyAuditChain,
+  parsePlanItems,
+  preview,
+  type AuditChainVerification,
+  type AuditEvent,
+  type PlanItem,
+  type GoalValidationResult,
+} from './audit.ts';
 export { postJsonBytes, postSse, payloadText, omlxAuthHeaders } from './sse.ts';
 
 /** Registra todos os nós reais no registry dado. */

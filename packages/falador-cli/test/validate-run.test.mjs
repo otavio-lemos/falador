@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { GENESIS_HASH, chainAuditEvent } from '../../falador-nodes/src/audit.ts';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'validate-run.mjs');
 const tmp = mkdtempSync(join(tmpdir(), 'validate-run-test-'));
@@ -124,4 +125,30 @@ test('R5 errors_traceable: tool_call ok:false sem errorType/outputPreview ⇒ FA
   const { code, stdout } = await runValidate([runId], { FALADOR_AUDIT_DIR: auditDir });
   assert.equal(code, 1);
   assert.match(stdout, /errors_traceable/i);
+});
+
+test('R6 audit_chain_integrity: cadeia SHA-256 válida ⇒ PASS; adulterada ⇒ FAIL', async () => {
+  const dir = mkdtempSync(join(tmp, 'audit-chain-'));
+  const auditDir = join(dir, 'audit');
+  mkdirSync(auditDir, { recursive: true });
+  const runId = 'run-chain-ok';
+  let prev = GENESIS_HASH;
+  const chained = PASS_TRAIL.map((e, i) => {
+    const rec = chainAuditEvent({ runId, seq: i + 1, ts: 1000 + i * 100, ...e }, prev);
+    prev = rec.hash;
+    return rec;
+  });
+  writeFileSync(join(auditDir, `${runId}.jsonl`), chained.map((r) => JSON.stringify(r)).join('\n') + '\n', 'utf-8');
+
+  const okRes = await runValidate([runId], { FALADOR_AUDIT_DIR: auditDir, FALADOR_SESSIONS_DIR: join(tmp, 'sessions') });
+  assert.equal(okRes.code, 0);
+  assert.match(okRes.stdout, /audit_chain_integrity.*íntegra/i);
+
+  // Adultera 1 campo no meio da cadeia
+  const badRunId = 'run-chain-bad';
+  const tampered = chained.map((r, i) => (i === 1 ? { ...r, exitCode: 99 } : r));
+  writeFileSync(join(auditDir, `${badRunId}.jsonl`), tampered.map((r) => JSON.stringify(r)).join('\n') + '\n', 'utf-8');
+  const badRes = await runValidate([badRunId], { FALADOR_AUDIT_DIR: auditDir, FALADOR_SESSIONS_DIR: join(tmp, 'sessions') });
+  assert.equal(badRes.code, 1);
+  assert.match(badRes.stdout, /audit_chain_integrity/i);
 });

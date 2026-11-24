@@ -1,7 +1,14 @@
 // falador-nodes — testes dos helpers puros de auditoria (audit.ts)
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parsePlanItems, preview } from '../src/audit.ts';
+import {
+  GENESIS_HASH,
+  canonicalJson,
+  chainAuditEvent,
+  parsePlanItems,
+  preview,
+  verifyAuditChain,
+} from '../src/audit.ts';
 
 const validItem = {
   id: '1',
@@ -59,4 +66,37 @@ test('preview não altera output curto e respeita max custom', () => {
   assert.equal(preview('olá'), 'olá');
   const out = preview('x'.repeat(500), 100);
   assert.ok(out.length <= 100);
+});
+
+test('canonicalJson ordena chaves recursivamente e ignora undefined', () => {
+  assert.equal(
+    canonicalJson({ b: 1, a: { z: true, m: undefined, a: [2, 1] } }),
+    '{"a":{"a":[2,1],"z":true},"b":1}',
+  );
+});
+
+test('verifyAuditChain valida cadeia SHA-256 íntegra e detecta adulteração/quebra', () => {
+  const e1 = chainAuditEvent({ runId: 'r1', seq: 1, ts: 100, op: 'run_started', nodeId: 'runner' }, GENESIS_HASH);
+  const e2 = chainAuditEvent({ runId: 'r1', seq: 2, ts: 200, op: 'tool_call', nodeId: 'ag', ok: true }, e1.hash);
+  const e3 = chainAuditEvent({ runId: 'r1', seq: 3, ts: 300, op: 'run_stopped', nodeId: 'runner' }, e2.hash);
+
+  assert.deepEqual(verifyAuditChain([e1, e2, e3]), { ok: true, checked: 3 });
+
+  // Adulteração de conteúdo
+  const tampered = [e1, { ...e2, ok: false }, e3];
+  const rTampered = verifyAuditChain(tampered);
+  assert.equal(rTampered.ok, false);
+  if (!rTampered.ok) {
+    assert.equal(rTampered.index, 1);
+    assert.match(rTampered.reason, /hash inválido/i);
+  }
+
+  // Quebra de encadeamento (evento removido)
+  const dropped = [e1, e3];
+  const rDropped = verifyAuditChain(dropped);
+  assert.equal(rDropped.ok, false);
+  if (!rDropped.ok) {
+    assert.equal(rDropped.index, 1);
+    assert.match(rDropped.reason, /prevHash divergente/i);
+  }
 });
