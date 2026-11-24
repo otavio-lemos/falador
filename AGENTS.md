@@ -1,6 +1,6 @@
 # AGENTS.md — Falador
 
-> **MEMÓRIA VIVA DO PROJETO. Toda sessão de agente deve ler este arquivo primeiro e ATUALIZÁ-LO ao final de cada conquista.** Última atualização: 2026-11-21.
+> **MEMÓRIA VIVA DO PROJETO. Toda sessão de agente deve ler este arquivo primeiro e ATUALIZÁ-LO ao final de cada conquista.** Última atualização: 2026-11-24.
 > **Operação (subir/usar/derrubar serviços): ver `run.md`** — guia dedicado com comandos exatos, health checks e armadilhas.
 
 ## 1. O que é o Falador
@@ -128,7 +128,10 @@ App local (macOS, Apple Silicon M4 Pro 48 GB) que traduz conversas de conferênc
 - **L7** — **plano free do agente = UMA sessão por vez.** Orquestrar 4 workers em paralelo fez 3 morrerem em "Your free session ended" no meio da tarefa (o único que terminou antes do corte entregou 57 testes novos). Em cota free, trabalho de agente é **serial**; paralelismo só com sessão paga ou com trabalho realmente independente já validado. Verificar o terminal de cada worker (`orca orchestration worker-read --dispatch <id>`) antes de acreditar em `state: ready` — `ready` não significa vivo.
 - **L8** — teste de fuzz com PRNG semeado paga o investimento na primeira execução: achou 2 buracos reais em `validateFlow` (`ttlMs: NaN` aceito; `from`/`to` não-string → `TypeError`) que nenhum teste de caminho feliz pegaria — ambos corrigidos e virados casos permanentes da matriz.
 
+- **L9** — UI que grava em params de nó: dropdown/input devolve **sempre string**; coerce no ponto de escrita (padrão: `parseScalar` do `NodeEditor` / coerção no `onUpdateStage`), nunca afrouxar o `validateFlow` pra aceitar string — o validador estrito é o que pegou o bug. Params numéricos em UI: `maxResults`, `topK`, `maxPages`, `timeoutMs`, `maxChars`. Teste de regressão barato: interceptar `POST /api/run` no Playwright e asserir `typeof` do payload.
+
 ## 6. Estado atual (atualizar SEMPRE)
+- **FIX `flow_invalid INVALID_PARAM` NO RUNNER (2026-11-24, commit `41ea932`)**: a barra de etapas do Runner gravava o `id` do dropdown Carbon como **string** (`"3"`) em params numéricos (`maxResults`/`topK`/`maxPages`) via `onUpdateStage` → `validateFlow` do motor exige `typeof number` → run morria com `exit code=1` ("maxResults deve ser número positivo"). Repro: `.web-run.tmp.json` tinha `maxResults:"3"` enquanto o JSON fonte tem `10`. **Correção**: coerção number no `onUpdateStage` (`App.tsx`) — o único ponto de escrita dos dropdowns; JSONs no disco nunca foram corrompidos. **Mic/voz era coincidência**: qualquer restart (troca de etapa, toggle de voz enquanto roda) revalida e mostrava o erro. **Verificado**: teste de regressão `apps/web/tests/stage-numeric-params.spec.ts` (falhava `Received: "3"`), Playwright 12/12, `tsc` + `vite build` verdes. **Lição: ver §5 L9.**
 - **RUNNER = BUILDER, LOGS ⇄ AUDITORIA E CONVERSA ÚNICA (2026-11-23, plano `docs/superpowers/plans/2026-11-23-runner-parity-chat-audit.md`)**:
   - **T1 (`Runner`):** aba de navegação renomeada de `Workflow` para `Runner` em `TopBar.tsx` e `LiveView.tsx` (dropdown continua com título `Workflow`).
   - **T2 (Mini-mapa completo):** `WorkflowMiniMap.tsx` mantém TODOS os nós do workflow, inclusive `enabled === false` (opacidade `0.45` e contorno tracejado), no mesmo tamanho (`nodeW 86`, `nodeH 24`).
