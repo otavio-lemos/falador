@@ -293,6 +293,9 @@ export const toolMcp: NodeTypeDef = {
     if (p.url !== undefined && typeof p.url !== 'string') {
       errs.push({ path: 'params.url', code: 'INVALID_PARAM', message: 'url deve ser string' });
     }
+    if (p.transport === 'http' && (p.url === undefined || String(p.url).trim() === '')) {
+      errs.push({ path: 'params.url', code: 'INVALID_PARAM', message: 'url obrigatória para transporte http' });
+    }
     if (p.allowedUrls !== undefined && (!Array.isArray(p.allowedUrls) || p.allowedUrls.some((x) => typeof x !== 'string'))) {
       errs.push({ path: 'params.allowedUrls', code: 'INVALID_PARAM', message: 'allowedUrls deve ser string[]' });
     }

@@ -621,6 +621,16 @@ describe('ADR-008 Fase 3 — M3: tool.mcp transporte stdio', () => {
 // ============================================================================
 
 describe('ADR-008 Fase 3 — M4: tool.mcp transporte http', () => {
+  test('M4.0: validateParams exige url quando transport=http (reproduz o MCP_URL_DENIED do runner)', () => {
+    // http sem url: foi rejeitado em RUNTIME (MCP_URL_DENIED) — agora vira INVALID_PARAM de fluxo.
+    const errs = toolMcp.validateParams({ transport: 'http' });
+    assert.equal(errs.length, 1);
+    assert.equal(errs[0].path, 'params.url');
+    assert.equal(errs[0].code, 'INVALID_PARAM');
+    // stdio sem url é válido (command declarado); http com url é válido
+    assert.equal(toolMcp.validateParams({ transport: 'stdio', command: 'npx', args: ['-y', 'srv'] }).length, 0);
+    assert.equal(toolMcp.validateParams({ transport: 'http', url: 'http://127.0.0.1:9/mcp' }).length, 0);
+  });
   test('M4.1: initialize + Mcp-Session-Id + tools/list + tools/call + timeout + SSE', async () => {
     const tmp = makeTempDir();
     const auditFile = join(tmp.dir, 'mcp-http-audit.jsonl');
