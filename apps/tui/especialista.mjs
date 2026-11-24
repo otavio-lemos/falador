@@ -6,8 +6,20 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+// Carrega .env.falador (OMLX_API_KEY) se existir
+try {
+  const text = readFileSync(join(ROOT, '.env.falador'), 'utf8');
+  for (const line of text.split('\n')) {
+    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$/);
+    if (!m || process.env[m[1]]) continue;
+    const v = m[2].replace(/^['"]|['"]$/g, '').trim();
+    if (v) process.env[m[1]] = v;
+  }
+} catch {}
 const RUNNER = join(ROOT, 'packages', 'falador-cli', 'run-flow.mjs');
 const FLOW = join(ROOT, 'apps', 'tui', 'flows', 'assistente-especialista-ti.json');
 
