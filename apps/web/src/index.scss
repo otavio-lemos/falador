@@ -1224,36 +1224,36 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 // Console em janela própria: mesma sessão SSE da aba, com aprovação embutida.
 .console-view {
   min-height: 100%;
-  padding: $spacing-03;
+  padding: $spacing-02;
   background: $bg-app;
   color: $txt-1;
   display: flex;
   flex-direction: column;
-  gap: $spacing-03;
-  font-size: 12px;
+  gap: $spacing-02;
+  font-size: 11px;
 }
-.console-head { display: flex; align-items: center; justify-content: space-between; gap: $spacing-03; flex-wrap: wrap; }
-.console-head h1 { @include type-style('heading-04'); margin: 0; }
+.console-head { display: flex; align-items: center; justify-content: space-between; gap: $spacing-02; flex-wrap: wrap; }
+.console-head h1 { @include type-style('productive-heading-01'); margin: 0; }
 .console-head-status { display: flex; align-items: center; gap: $spacing-02; }
-.console-empty { color: $txt-2; font-size: 12px; }
-.console-card { padding: $spacing-03; background: $bg-card; border: 1px solid $border-1; display: flex; flex-direction: column; gap: $spacing-02; }
-.console-card-head { display: flex; align-items: center; gap: $spacing-02; flex-wrap: wrap; }
-.console-card-head h2 { @include type-style('productive-heading-01'); margin: 0; }
+.console-empty { color: $txt-2; font-size: 11px; }
+.console-card { padding: $spacing-02; background: $bg-card; border: 1px solid $border-1; display: flex; flex-direction: column; gap: $spacing-01; }
+.console-card-head { display: flex; align-items: center; gap: $spacing-01; flex-wrap: wrap; }
+.console-card-head h2 { @include type-style('label-01'); margin: 0; }
 .console-gate { border-left: 3px solid var(--cds-support-info, #0090ff); }
 .console-list-head { justify-content: space-between; }
-.console-gate-row { display: flex; align-items: flex-start; gap: $spacing-03; }
-.console-gate-main { flex: 1; min-width: 0; }
-.console-gate-main .cds--text-input__field-wrapper { max-width: none; }
-.console-gate-main input { font-size: 12px !important; height: 32px !important; }
-.console-actions { display: flex; flex-direction: column; gap: $spacing-02; flex-shrink: 0; width: 132px; .cds--btn { width: 100%; max-width: none; min-height: 28px; padding-block: 2px; font-size: 11px; } }
+.console-gate-prompt { margin: 0; color: $txt-2; font-size: 11px; line-height: 1.3; }
+.console-gate-row { display: flex; align-items: center; gap: $spacing-02; flex-wrap: wrap; }
+.console-gate-input { width: 220px !important; max-width: 220px !important; }
+.console-gate-input input { font-size: 11px !important; height: 26px !important; }
+.console-actions { display: flex; align-items: center; gap: $spacing-01; flex-wrap: wrap; .cds--btn { min-height: 26px; padding-block: 2px; font-size: 11px; } }
 .console-filters { display: flex; gap: $spacing-02; }
 .console-time { margin-left: auto; color: $txt-2; font-size: 12px; }
 .console-command { color: $txt-1; font-family: 'IBM Plex Mono', 'Menlo', monospace; font-size: 12px; word-break: break-word; }
 .console-plain, .console-output {
   margin: 0;
   overflow: auto;
-  max-height: 160px;
-  padding: $spacing-02;
+  max-height: 80px;
+  padding: $spacing-01;
   background: #0b0e13;
   color: #c6d0dc;
   font-family: 'IBM Plex Mono', 'Menlo', monospace;

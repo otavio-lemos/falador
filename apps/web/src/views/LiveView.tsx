@@ -431,7 +431,7 @@ export function LiveView({
   const openConsole = () => {
     const w = consoleWinRef.current;
     if (w && !w.closed) { w.focus(); return; }
-    consoleWinRef.current = window.open('/console', 'falador-console', 'popup,width=900,height=700,scrollbars=yes,resizable=yes');
+    consoleWinRef.current = window.open('/console', 'falador-console', 'popup,width=640,height=340,scrollbars=yes,resizable=yes');
   };
 
   // A janela do Console aprova gates; a conversa espelha o histórico sem reenviar o POST.

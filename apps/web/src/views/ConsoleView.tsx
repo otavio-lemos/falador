@@ -143,18 +143,20 @@ export function ConsoleView() {
               {typeof g.meta?.host === 'string' && g.meta.host && g.meta.host !== 'local' && (
                 <Tag type="gray" size="sm">Host: {g.meta.host}</Tag>
               )}
+              <span className="console-time">{stamp(g.ts)}</span>
             </div>
+            <p className="console-gate-prompt">{g.text}</p>
             <div className="console-gate-row">
-              <div className="console-gate-main">
-                <pre className="console-plain">{g.text}</pre>
-                <TextInput
-                  id={`console-gate-${g.nodeId}`}
-                  labelText="Comando / resposta (editável)"
-                  value={drafts[g.nodeId] ?? gateCommand(g)}
-                  onChange={(e) => setDrafts((d) => ({ ...d, [g.nodeId]: e.target.value }))}
-                  ref={gateInputRef}
-                />
-              </div>
+              <TextInput
+                id={`console-gate-${g.nodeId}`}
+                size="sm"
+                hideLabel
+                labelText="Comando / resposta (editável)"
+                className="console-gate-input"
+                value={drafts[g.nodeId] ?? gateCommand(g)}
+                onChange={(e) => setDrafts((d) => ({ ...d, [g.nodeId]: e.target.value }))}
+                ref={gateInputRef}
+              />
               <div className="console-actions">
                 <Button kind="primary" size="sm" onClick={() => void approve(g, drafts[g.nodeId] ?? gateCommand(g))}>Aprovar e executar</Button>
                 <Button kind="tertiary" size="sm" onClick={() => gateInputRef.current?.focus()}>Editar</Button>

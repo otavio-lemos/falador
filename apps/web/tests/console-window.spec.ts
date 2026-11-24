@@ -32,9 +32,11 @@ test('gate tem Aprovar/Editar/Rejeitar à direita e a recusa envia o texto escri
   const card = page.getByRole('region', { name: 'Aprovação pendente aprovacao' });
   const actions = card.locator('.console-actions');
   await expect(actions.getByRole('button')).toHaveText(['Aprovar e executar', 'Editar', 'Rejeitar']);
-  const box = await card.boundingBox();
-  const btn = await actions.boundingBox();
-  expect(btn!.x).toBeGreaterThan(box!.x + box!.width / 2);
+  const inputBox = await card.getByRole('textbox').boundingBox();
+  const actionsBox = await actions.boundingBox();
+  // Botões na MESMA linha do comando, imediatamente depois do campo.
+  expect(Math.abs((actionsBox?.y ?? 0) - (inputBox?.y ?? 0))).toBeLessThan(8);
+  expect((actionsBox?.x ?? 0)).toBeGreaterThan((inputBox?.x ?? 0) + (inputBox?.width ?? 0) - 4);
 
   await card.getByRole('textbox').fill('use outro host');
   await actions.getByRole('button', { name: 'Rejeitar' }).click();
