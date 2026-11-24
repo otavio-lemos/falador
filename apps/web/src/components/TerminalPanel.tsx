@@ -1,8 +1,8 @@
-// TerminalPanel — Terminal de verdade embutido na tela com xterm.js real.
-// Suporte a ANSI colors, cursor piscante, digitação interativa, fit dinâmico e scrollback persistente.
-import { useEffect, useRef } from 'react';
+// TerminalPanel — Terminal PTY real embutido na tela com xterm.js + PTY backend.
+// Suporte a shell interativo real, ANSI colors, redimensionamento (SIGWINCH), reconexão via buffer e fila ordenada de digitação.
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Tag } from '@carbon/react';
-import { Copy, TrashCan } from '@carbon/icons-react';
+import { Copy, Renew, TrashCan } from '@carbon/icons-react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -16,19 +16,119 @@ export interface TerminalPanelProps {
   onReject?: (gate: Gate, reason?: string) => Promise<void> | void;
 }
 
-export function TerminalPanel({ executions = [], gates = [], onApprove, onReject }: TerminalPanelProps) {
+const STORAGE_KEY = 'falador.terminalSessionId';
+
+function decodeBase64Bytes(b64: string): Uint8Array {
+  return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+}
+
+export function TerminalPanel(_props: TerminalPanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
-  const writtenExecIdsRef = useRef<Set<string>>(new Set());
-  const writtenChunksCountRef = useRef<Map<string, number>>(new Map());
-  const promptActiveRef = useRef(false);
-  const lineBufferRef = useRef('');
+  const sessionIdRef = useRef<string | null>(null);
+  const esRef = useRef<EventSource | null>(null);
+  const pendingInputRef = useRef<string[]>([]);
+  const flushingInputRef = useRef(false);
+  const resizeTimerRef = useRef<number | null>(null);
+  const disposedRef = useRef(false);
 
-  // 1. Inicializa o XTerm real uma única vez
+  const [connected, setConnected] = useState(false);
+  const [shellName, setShellName] = useState('zsh');
+
+  const flushInput = useCallback(async () => {
+    if (flushingInputRef.current) return;
+    flushingInputRef.current = true;
+    try {
+      while (pendingInputRef.current.length > 0) {
+        const sid = sessionIdRef.current;
+        if (!sid) {
+          pendingInputRef.current.length = 0;
+          break;
+        }
+        const chunk = pendingInputRef.current.splice(0).join('');
+        if (!chunk) continue;
+        await fetch('/api/terminal/input', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: sid, data: chunk }),
+        });
+      }
+    } catch {
+      // ignora erro transitório de rede
+    } finally {
+      flushingInputRef.current = false;
+      if (pendingInputRef.current.length > 0 && sessionIdRef.current) {
+        void flushInput();
+      }
+    }
+  }, []);
+
+  const connectSession = useCallback(async (term: Terminal, reuseId?: string | null) => {
+    if (esRef.current) {
+      esRef.current.close();
+      esRef.current = null;
+    }
+    setConnected(false);
+
+    try {
+      const resp = await fetch('/api/terminal/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...(reuseId ? { id: reuseId } : {}),
+          cols: term.cols,
+          rows: term.rows,
+        }),
+      });
+      if (!resp.ok || disposedRef.current) return;
+      const data = await resp.json() as { id: string; shell?: string };
+      if (disposedRef.current) return;
+
+      sessionIdRef.current = data.id;
+      try {
+        sessionStorage.setItem(STORAGE_KEY, data.id);
+      } catch { /* ignore storage errors */ }
+
+      const baseShell = String(data.shell || 'zsh').split('/').pop() || 'zsh';
+      setShellName(baseShell);
+
+      const es = new EventSource(`/api/terminal/stream?id=${encodeURIComponent(data.id)}`);
+      esRef.current = es;
+
+      es.onopen = () => {
+        if (!disposedRef.current) setConnected(true);
+      };
+
+      es.addEventListener('output', (ev) => {
+        if (disposedRef.current) return;
+        try {
+          const parsed = JSON.parse((ev as MessageEvent).data) as { data?: string };
+          if (typeof parsed.data === 'string' && parsed.data.length > 0) {
+            term.write(decodeBase64Bytes(parsed.data));
+          }
+        } catch { /* ignore malformed frame */ }
+      });
+
+      es.addEventListener('exit', () => {
+        if (!disposedRef.current) setConnected(false);
+        es.close();
+        if (esRef.current === es) esRef.current = null;
+      });
+
+      es.onerror = () => {
+        if (!disposedRef.current && es.readyState === EventSource.CLOSED) {
+          setConnected(false);
+        }
+      };
+    } catch {
+      if (!disposedRef.current) setConnected(false);
+    }
+  }, []);
+
   useEffect(() => {
-    if (!containerRef.current) return;
-    if (termRef.current) return;
+    if (!containerRef.current || termRef.current) return;
+    disposedRef.current = false;
 
     const term = new Terminal({
       cursorBlink: true,
@@ -70,136 +170,90 @@ export function TerminalPanel({ executions = [], gates = [], onApprove, onReject
     termRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    // Mensagem de boas-vindas inicial no xterm real
-    term.writeln('\x1b[1;36mFalador Terminal\x1b[0m · Emulador interativo real (xterm.js)');
-    term.writeln('\x1b[90mSessão persistente ativa. Comandos e saídas do agente rolam aqui em tempo real sem apagar.\x1b[0m');
-    term.writeln('');
-    term.write('\x1b[1;32mfalador\x1b[0m:\x1b[1;34m~\x1b[0m$ ');
-    promptActiveRef.current = true;
-
-    // Permite digitação interativa no xterm
-    term.onData((data) => {
-      // Enter
-      if (data === '\r' || data === '\n') {
-        const cmd = lineBufferRef.current.trim();
-        lineBufferRef.current = '';
-        term.writeln('');
-        if (cmd) {
-          if (gates.length > 0 && onApprove) {
-            void onApprove(gates[0], cmd);
-          } else {
-            term.writeln(`\x1b[90m[comando recebido: ${cmd}]\x1b[0m`);
-            term.write('\x1b[1;32mfalador\x1b[0m:\x1b[1;34m~\x1b[0m$ ');
-          }
-        } else {
-          term.write('\x1b[1;32mfalador\x1b[0m:\x1b[1;34m~\x1b[0m$ ');
-        }
-        return;
-      }
-
-      // Backspace
-      if (data === '\x7f' || data === '\b') {
-        if (lineBufferRef.current.length > 0) {
-          lineBufferRef.current = lineBufferRef.current.slice(0, -1);
-          term.write('\b \b');
-        }
-        return;
-      }
-
-      // Ctrl+C
-      if (data === '\x03') {
-        lineBufferRef.current = '';
-        term.writeln('^C');
-        term.write('\x1b[1;32mfalador\x1b[0m:\x1b[1;34m~\x1b[0m$ ');
-        return;
-      }
-
-      // Digitação normal
-      lineBufferRef.current += data;
-      term.write(data);
+    const dataDisp = term.onData((data) => {
+      pendingInputRef.current.push(data);
+      void flushInput();
     });
 
-    // ResizeObserver para manter o terminal ajustado à largura/altura da tela
+    let storedId: string | null = null;
+    try {
+      storedId = sessionStorage.getItem(STORAGE_KEY);
+    } catch { /* ignore */ }
+    void connectSession(term, storedId);
+
     const ro = new ResizeObserver(() => {
-      try { fitAddon.fit(); } catch { /* ignore */ }
+      try {
+        fitAddon.fit();
+      } catch { /* ignore */ }
+      if (resizeTimerRef.current !== null) {
+        window.clearTimeout(resizeTimerRef.current);
+      }
+      resizeTimerRef.current = window.setTimeout(() => {
+        resizeTimerRef.current = null;
+        const sid = sessionIdRef.current;
+        if (!sid || disposedRef.current) return;
+        void fetch('/api/terminal/resize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: sid, cols: term.cols, rows: term.rows }),
+        }).catch(() => {});
+      }, 60);
     });
     ro.observe(containerRef.current);
 
     return () => {
+      disposedRef.current = true;
+      if (resizeTimerRef.current !== null) {
+        window.clearTimeout(resizeTimerRef.current);
+        resizeTimerRef.current = null;
+      }
       ro.disconnect();
+      dataDisp.dispose();
+      if (esRef.current) {
+        esRef.current.close();
+        esRef.current = null;
+      }
       term.dispose();
       termRef.current = null;
       fitAddonRef.current = null;
     };
-  }, []);
+  }, [connectSession, flushInput]);
 
-  // 2. Transmite execuções do agente em tempo real para o XTerm
-  useEffect(() => {
+  const handleNewSession = async () => {
     const term = termRef.current;
-    if (!term || executions.length === 0) return;
-
-    for (const e of executions) {
-      const isNew = !writtenExecIdsRef.current.has(e.id);
-      if (isNew) {
-        writtenExecIdsRef.current.add(e.id);
-        writtenChunksCountRef.current.set(e.id, 0);
-
-        // Se havia prompt aberto, pula linha
-        term.writeln('');
-        const hostTag = e.host || 'servidor';
-        const ts = new Date(e.ts || Date.now()).toLocaleTimeString();
-        term.writeln(`\x1b[90m[${ts}]\x1b[0m \x1b[1;32m${hostTag}\x1b[0m:\x1b[1;34m~\x1b[0m# \x1b[1;37m${e.command}\x1b[0m${e.dryRun ? ' \x1b[33m[DRY-RUN]\x1b[0m' : ''}`);
-      }
-
-      // Chunks de streaming (stdout / stderr)
-      const prevCount = writtenChunksCountRef.current.get(e.id) ?? 0;
-      const chunks = e.chunks ?? [];
-      if (chunks.length > prevCount) {
-        for (let i = prevCount; i < chunks.length; i++) {
-          const chunk = chunks[i];
-          const color = chunk.stream === 'stderr' ? '\x1b[31m' : '';
-          const reset = chunk.stream === 'stderr' ? '\x1b[0m' : '';
-          // Converte quebras de linha para CRLF exigidas pelo xterm
-          const formatted = chunk.text.replace(/\r?\n/g, '\r\n');
-          term.write(`${color}${formatted}${reset}`);
-        }
-        writtenChunksCountRef.current.set(e.id, chunks.length);
-      } else if (isNew && e.output && chunks.length === 0) {
-        const formatted = e.output.replace(/\r?\n/g, '\r\n');
-        term.writeln(formatted);
-      }
-
-      // Fim do comando
-      if (e.status === 'done' && isNew) {
-        const exitColor = e.exitCode === 0 ? '\x1b[32m' : '\x1b[31m';
-        term.writeln(`${exitColor}[processo finalizado: saída ${e.exitCode ?? '—'}${e.durationMs ? `, ${e.durationMs}ms` : ''}]\x1b[0m`);
-        term.write(`\x1b[1;32m${e.host || 'falador'}\x1b[0m:\x1b[1;34m~\x1b[0m# `);
-      }
+    if (!term) return;
+    if (esRef.current) {
+      esRef.current.close();
+      esRef.current = null;
     }
-  }, [executions]);
-
-  // 3. Notifica gates pendentes direto no terminal
-  useEffect(() => {
-    const term = termRef.current;
-    if (!term || gates.length === 0) return;
-    const g = gates[0];
-    term.writeln('');
-    term.writeln(`\x1b[1;33m┌── [APROVAÇÃO NECESSÁRIA: ${g.nodeId}] ───────────────────────\x1b[0m`);
-    term.writeln(`\x1b[33m│\x1b[0m ${g.text}`);
-    term.writeln('\x1b[1;33m└─────────────────────────────────────────────────────────────\x1b[0m');
-    term.write('\x1b[1;33mComando para aprovar/editar > \x1b[0m');
-  }, [gates]);
+    const oldId = sessionIdRef.current;
+    sessionIdRef.current = null;
+    pendingInputRef.current.length = 0;
+    try {
+      sessionStorage.removeItem(STORAGE_KEY);
+    } catch { /* ignore */ }
+    if (oldId) {
+      await fetch(`/api/terminal/session?id=${encodeURIComponent(oldId)}`, { method: 'DELETE' }).catch(() => {});
+    }
+    term.reset();
+    await connectSession(term, null);
+    term.focus();
+  };
 
   const handleClear = () => {
     const term = termRef.current;
     if (!term) return;
     term.clear();
-    term.write('\x1b[1;32mfalador\x1b[0m:\x1b[1;34m~\x1b[0m$ ');
   };
 
   const handleCopy = () => {
     const term = termRef.current;
     if (!term) return;
+    const existing = term.getSelection();
+    if (existing) {
+      navigator.clipboard?.writeText(existing);
+      return;
+    }
     term.selectAll();
     const text = term.getSelection();
     term.clearSelection();
@@ -210,18 +264,30 @@ export function TerminalPanel({ executions = [], gates = [], onApprove, onReject
     <div className="falador-terminal" role="region" aria-label="Terminal Real xterm.js">
       <div className="falador-terminal-bar">
         <div className="falador-terminal-tags">
-          <span className="falador-terminal-dot" title="xterm.js Ativo" />
-          <span className="falador-terminal-title">TERMINAL (XTERM.JS)</span>
-          <Tag size="sm" type="cyan">interativo</Tag>
-          <Tag size="sm" type="green">scrollback infinito</Tag>
+          <span
+            className={`falador-terminal-dot${connected ? '' : ' falador-terminal-dot--disconnected'}`}
+            title={connected ? `${shellName} conectado` : 'desconectado'}
+          />
+          <span className="falador-terminal-title">TERMINAL (PTY)</span>
+          <Tag size="sm" type={connected ? 'green' : 'red'}>
+            {connected ? `${shellName} · conectado` : 'desconectado'}
+          </Tag>
         </div>
         <div className="falador-terminal-actions">
           <Button
             kind="ghost"
             size="sm"
+            renderIcon={Renew}
+            onClick={() => void handleNewSession()}
+          >
+            Nova sessão
+          </Button>
+          <Button
+            kind="ghost"
+            size="sm"
             renderIcon={Copy}
             hasIconOnly
-            iconDescription="Copiar seleção do terminal"
+            iconDescription="Copiar"
             onClick={handleCopy}
           />
           <Button
@@ -229,7 +295,7 @@ export function TerminalPanel({ executions = [], gates = [], onApprove, onReject
             size="sm"
             renderIcon={TrashCan}
             hasIconOnly
-            iconDescription="Limpar tela"
+            iconDescription="Limpar"
             onClick={handleClear}
           />
         </div>

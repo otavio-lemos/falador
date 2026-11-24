@@ -26,6 +26,8 @@ import { chunkDocument } from '../packages/falador-nodes/src/context-store.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = join(ROOT, 'packages/falador-cli/run-flow.mjs');
+const PTY_BRIDGE = join(ROOT, 'services/pty-bridge.py');
+const PTY_BUFFER_MAX_BYTES = 64 * 1024;
 const FLOWS_DIR = process.env.FALADOR_FLOWS_DIR || join(ROOT, 'apps/tui/flows');
 const DIST = join(ROOT, 'apps/web/dist');
 const LOG_FILES = { omlx: 'omlx.log', asr: 'asr.log', tts: 'tts.log', web: 'web.log' };
@@ -114,6 +116,141 @@ function getLogsDir() {
 }
 
 let currentRun = null; // { child, clients:Set<res>, stopRequested }
+const ptySessions = new Map(); // id -> { id, proc, shell, cwd, cols, rows, buffer, bufferBytes, clients, alive, exitCode }
+
+function clampInt(val, fallback, min, max) {
+  const n = Number(val);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(n)));
+}
+
+function killPtySession(id) {
+  const session = ptySessions.get(id);
+  if (!session) return false;
+  ptySessions.delete(id);
+  session.alive = false;
+  try {
+    if (session.proc.exitCode === null) session.proc.kill('SIGTERM');
+  } catch { /* já morto */ }
+  const killTimer = setTimeout(() => {
+    try {
+      if (session.proc.exitCode === null) session.proc.kill('SIGKILL');
+    } catch { /* já morto */ }
+  }, 500);
+  killTimer.unref?.();
+  for (const clientRes of session.clients) {
+    try { clientRes.end(); } catch { /* já fechado */ }
+  }
+  session.clients.clear();
+  return true;
+}
+
+function killAllPtySessions() {
+  for (const id of [...ptySessions.keys()]) {
+    killPtySession(id);
+  }
+}
+
+function createPtySession({ cols, rows, cwd } = {}) {
+  const id = randomUUID();
+  const shell = process.env.SHELL || '/bin/zsh';
+  const resolvedCwd = (typeof cwd === 'string' && cwd.trim() && existsSync(cwd.trim())) ? cwd.trim() : ROOT;
+  const c = clampInt(cols, 80, 1, 500);
+  const r = clampInt(rows, 24, 1, 200);
+
+  const proc = spawn(
+    'python3',
+    [PTY_BRIDGE, '--cols', String(c), '--rows', String(r), '--cwd', resolvedCwd, '--shell', shell],
+    { stdio: ['pipe', 'pipe', 'pipe'] },
+  );
+
+  const session = {
+    id,
+    proc,
+    shell,
+    cwd: resolvedCwd,
+    cols: c,
+    rows: r,
+    buffer: [],
+    bufferBytes: 0,
+    clients: new Set(),
+    alive: true,
+    exitCode: null,
+  };
+  ptySessions.set(id, session);
+
+  let outBuf = '';
+  proc.stdout.on('data', (chunk) => {
+    outBuf += chunk.toString('utf8');
+    let idx;
+    while ((idx = outBuf.indexOf('\n')) >= 0) {
+      const line = outBuf.slice(0, idx).trim();
+      outBuf = outBuf.slice(idx + 1);
+      if (!line) continue;
+      let ev;
+      try { ev = JSON.parse(line); } catch { continue; }
+      if (ev.type === 'output' && typeof ev.data === 'string') {
+        session.buffer.push(ev.data);
+        session.bufferBytes += Buffer.byteLength(ev.data, 'utf8');
+        while (session.bufferBytes > PTY_BUFFER_MAX_BYTES && session.buffer.length > 0) {
+          const dropped = session.buffer.shift();
+          session.bufferBytes -= Buffer.byteLength(dropped, 'utf8');
+        }
+        const payload = `event: output\ndata: ${JSON.stringify({ data: ev.data })}\n\n`;
+        for (const clientRes of session.clients) {
+          try { clientRes.write(payload); } catch { /* cliente fechado */ }
+        }
+      } else if (ev.type === 'exit') {
+        session.alive = false;
+        session.exitCode = typeof ev.code === 'number' ? ev.code : 0;
+        const payload = `event: exit\ndata: ${JSON.stringify({ code: session.exitCode })}\n\n`;
+        for (const clientRes of session.clients) {
+          try {
+            clientRes.write(payload);
+            clientRes.end();
+          } catch { /* já fechado */ }
+        }
+        session.clients.clear();
+      }
+    }
+  });
+
+  proc.stderr.on('data', (d) => {
+    const raw = d.toString('utf8').trim();
+    if (raw) appendWebLog(`[pty_stderr] ${raw.slice(0, 500)}`);
+  });
+
+  proc.on('error', (err) => {
+    appendWebLog(`[pty] spawn_error: ${String(err?.message ?? err).slice(0, 500)}`);
+    session.alive = false;
+    session.exitCode = -1;
+    const payload = `event: exit\ndata: ${JSON.stringify({ code: -1 })}\n\n`;
+    for (const clientRes of session.clients) {
+      try {
+        clientRes.write(payload);
+        clientRes.end();
+      } catch { /* já fechado */ }
+    }
+    session.clients.clear();
+  });
+
+  proc.on('exit', (code) => {
+    if (session.alive) {
+      session.alive = false;
+      session.exitCode = typeof code === 'number' ? code : -1;
+      const payload = `event: exit\ndata: ${JSON.stringify({ code: session.exitCode })}\n\n`;
+      for (const clientRes of session.clients) {
+        try {
+          clientRes.write(payload);
+          clientRes.end();
+        } catch { /* já fechado */ }
+      }
+      session.clients.clear();
+    }
+  });
+
+  return session;
+}
 
 // Carência antes de parar um run cujo ÚLTIMO cliente SSE desconectou (reload/troca de
 // view). Se um cliente reconectar dentro dela, o stop é cancelado. Assim um reload não
@@ -1161,11 +1298,79 @@ async function handleApi(req, res, pathname) {
     }
     return json(res, 200, { topics }), true;
   }
+  if (pathname === '/api/terminal/session' && req.method === 'POST') {
+    const body = await readBody(req);
+    if (typeof body.id === 'string' && body.id.trim()) {
+      const existing = ptySessions.get(body.id.trim());
+      if (existing && existing.alive) {
+        return json(res, 200, { id: existing.id, shell: existing.shell, cwd: existing.cwd, alive: true }), true;
+      }
+    }
+    const s = createPtySession({ cols: body.cols, rows: body.rows, cwd: body.cwd });
+    return json(res, 200, { id: s.id, shell: s.shell, cwd: s.cwd, alive: true }), true;
+  }
+  if (pathname === '/api/terminal/stream' && req.method === 'GET') {
+    const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
+    const id = u.searchParams.get('id') || '';
+    const session = id ? ptySessions.get(id) : null;
+    if (!session) return json(res, 404, { error: 'sessão de terminal não encontrada' }), true;
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    for (const chunk of session.buffer) {
+      res.write(`event: output\ndata: ${JSON.stringify({ data: chunk })}\n\n`);
+    }
+    if (!session.alive) {
+      res.write(`event: exit\ndata: ${JSON.stringify({ code: session.exitCode ?? 0 })}\n\n`);
+      res.end();
+      return true;
+    }
+    session.clients.add(res);
+    res.on('close', () => { session.clients.delete(res); });
+    return true;
+  }
+  if (pathname === '/api/terminal/input' && req.method === 'POST') {
+    const body = await readBody(req);
+    const session = typeof body.id === 'string' ? ptySessions.get(body.id) : null;
+    if (!session || !session.alive) {
+      return json(res, 404, { error: 'sessão de terminal não encontrada ou encerrada' }), true;
+    }
+    if (typeof body.data !== 'string') {
+      return json(res, 400, { error: 'data obrigatório' }), true;
+    }
+    try {
+      session.proc.stdin?.write(JSON.stringify({ type: 'input', data: body.data }) + '\n');
+    } catch {
+      return json(res, 404, { error: 'sessão de terminal encerrada' }), true;
+    }
+    return json(res, 200, { ok: true }), true;
+  }
+  if (pathname === '/api/terminal/resize' && req.method === 'POST') {
+    const body = await readBody(req);
+    const session = typeof body.id === 'string' ? ptySessions.get(body.id) : null;
+    if (!session || !session.alive) {
+      return json(res, 404, { error: 'sessão de terminal não encontrada ou encerrada' }), true;
+    }
+    const cols = clampInt(body.cols, session.cols, 1, 500);
+    const rows = clampInt(body.rows, session.rows, 1, 200);
+    session.cols = cols;
+    session.rows = rows;
+    try {
+      session.proc.stdin?.write(JSON.stringify({ type: 'resize', cols, rows }) + '\n');
+    } catch {
+      return json(res, 404, { error: 'sessão de terminal encerrada' }), true;
+    }
+    return json(res, 200, { ok: true }), true;
+  }
+  if (pathname === '/api/terminal/session' && req.method === 'DELETE') {
+    const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
+    const id = u.searchParams.get('id') || '';
+    if (id) killPtySession(id);
+    return json(res, 200, { ok: true }), true;
+  }
   return false;
 }
 
 export function createWebServer() {
-  return createServer(async (req, res) => {
+  const server = createServer(async (req, res) => {
     const pathname = new URL(req.url, `http://127.0.0.1:${PORT}`).pathname;
     try {
       if (await handleApi(req, res, pathname)) return;
@@ -1182,10 +1387,21 @@ export function createWebServer() {
       json(res, code, { error: String(e?.message ?? e) });
     }
   });
+  server.on('close', () => {
+    killAllPtySessions();
+  });
+  return server;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const server = createWebServer();
+  const shutdown = () => {
+    killAllPtySessions();
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 1000).unref?.();
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
   server.listen(PORT, '127.0.0.1', () => {
     const addr = server.address();
     const boundPort = typeof addr === 'object' && addr ? addr.port : PORT;

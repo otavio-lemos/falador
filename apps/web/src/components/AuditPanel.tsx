@@ -77,6 +77,119 @@ function Empty({ label }: { label: string }) {
   return <p className="audit-empty">{label}</p>;
 }
 
+const OP_TAG_TYPES = {
+  run_started: 'green',
+  run_stopped: 'gray',
+  chat_input: 'blue',
+  tool_call: 'purple',
+  exec: 'cyan',
+  gate: 'magenta',
+  plan: 'teal',
+  goal_validation: 'warm-gray',
+  agent_final: 'high-contrast',
+} as const;
+
+function opTag(op: string) {
+  const type = OP_TAG_TYPES[op as keyof typeof OP_TAG_TYPES] ?? 'cool-gray';
+  return <Tag type={type} size="sm">{op}</Tag>;
+}
+
+function summarizeEvent(ev: AuditEvent): string {
+  switch (ev.op) {
+    case 'run_started':
+      return 'Execução iniciada';
+    case 'run_stopped':
+      return ev.reason || 'Execução encerrada';
+    case 'chat_input':
+      return ev.text || '—';
+    case 'tool_call':
+    case 'exec': {
+      const cmd = ev.args && typeof ev.args.command === 'string' ? ev.args.command : '';
+      if (cmd) return ev.tool ? `${ev.tool}: ${cmd}` : cmd;
+      const argsStr = ev.args && Object.keys(ev.args).length > 0 ? JSON.stringify(ev.args) : '';
+      if (ev.tool && argsStr) return `${ev.tool} ${argsStr}`;
+      return ev.tool || ev.text || '—';
+    }
+    case 'gate':
+      return [ev.tool, ev.gate, ev.text].filter(Boolean).join(' · ') || '—';
+    case 'plan':
+      return `${ev.plan?.length ?? 0} itens`;
+    case 'goal_validation':
+      return ev.validation?.achieved ? 'Atingido' : 'Pendente';
+    case 'agent_final':
+      return ev.text || 'Finalizado';
+    default:
+      return ev.text || ev.reason || ev.tool || '—';
+  }
+}
+
+function eventStatus(ev: AuditEvent) {
+  if (ev.op === 'gate' && ev.gate) return gateTag(ev.gate);
+  if (ev.op === 'goal_validation') {
+    const achieved = Boolean(ev.validation?.achieved);
+    return <IconIndicator kind={achieved ? 'succeeded' : 'caution-major'} label={achieved ? 'Atingido' : 'Pendente'} size={16} />;
+  }
+  if (ev.op === 'agent_final') {
+    const kind = ev.goalAchieved ? 'succeeded' : ev.maxStepsReached ? 'failed' : 'informative';
+    const label = ev.goalAchieved ? 'Concluído' : ev.maxStepsReached ? 'Limite de passos' : 'Encerrado';
+    return <IconIndicator kind={kind} label={label} size={16} />;
+  }
+  if (typeof ev.ok === 'boolean') {
+    return <IconIndicator kind={ev.ok ? 'succeeded' : 'failed'} label={ev.ok ? 'ok' : 'falha'} size={16} />;
+  }
+  if (typeof ev.exitCode === 'number') {
+    return <IconIndicator kind={ev.exitCode === 0 ? 'succeeded' : 'failed'} label={`exit ${ev.exitCode}`} size={16} />;
+  }
+  if (ev.risk) return riskTag(ev.risk);
+  return '—';
+}
+
+function AllEventsTable({ data, filter }: { data: AuditEvent[]; filter: string }) {
+  const rows = data.filter((a) =>
+    matches(
+      filter,
+      a.op,
+      a.nodeId,
+      a.tool,
+      a.text,
+      a.reason,
+      a.gate,
+      a.risk,
+      a.host,
+      a.args ? JSON.stringify(a.args) : undefined,
+    ),
+  );
+  if (rows.length === 0) return <Empty label="Nenhum evento registrado." />;
+  return (
+    <TableContainer>
+      <Table size="sm">
+        <TableHeader>
+          <TableRow>
+            <TableHead>Hora</TableHead>
+            <TableHead>Evento</TableHead>
+            <TableHead>Nó</TableHead>
+            <TableHead>Resumo / Detalhes</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>Duração</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((ev) => (
+            <TableRow key={`${ev.runId}-${ev.seq}`}>
+              <TableCell>{fmtTs(ev.ts)}</TableCell>
+              <TableCell>{opTag(ev.op)}</TableCell>
+              <TableCell>{ev.nodeId || '—'}</TableCell>
+              <TableCell>{truncateText(summarizeEvent(ev), 160)}</TableCell>
+              <TableCell>{eventStatus(ev)}</TableCell>
+              <TableCell>{fmtMs(ev.durationMs)}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
+  );
+}
+
 function DecisionsTable({ data, filter }: { data: AuditEvent[]; filter: string }) {
   const rows = data.filter((d) => matches(filter, d.tool, JSON.stringify(d.args ?? {}), d.risk, d.gate));
   if (rows.length === 0) return <Empty label="Nenhuma decisão registrada." />;
@@ -378,8 +491,11 @@ export function AuditPanel({ audit }: AuditPanelProps) {
 
   const toolCalls = useMemo(() => audit.filter((a) => a.op === 'tool_call'), [audit]);
   const executions = useMemo(
-    () => toolCalls.filter((a) => (a.tool ?? '').startsWith('exec_') || (a.transport ?? '').startsWith('mcp') || a.transport === 'ssh'),
-    [toolCalls],
+    () => audit.filter((a) =>
+      a.op === 'exec' ||
+      (a.op === 'tool_call' && ((a.tool ?? '').startsWith('exec_') || (a.transport ?? '').startsWith('mcp') || a.transport === 'ssh')),
+    ),
+    [audit],
   );
   const gates = useMemo(() => audit.filter((a) => a.op === 'gate'), [audit]);
   const rag = useMemo(() => toolCalls.filter((a) => a.rag), [toolCalls]);
@@ -396,6 +512,7 @@ export function AuditPanel({ audit }: AuditPanelProps) {
     <div className="audit-panel">
       <Tabs selectedIndex={activeTab} onChange={({ selectedIndex }) => setActiveTab(selectedIndex ?? 0)}>
         <TabList aria-label="Auditoria do run">
+          <Tab>Todos ({audit.length})</Tab>
           <Tab>Decisões ({toolCalls.length})</Tab>
           <Tab>Execuções ({executions.length})</Tab>
           <Tab>Gates ({gates.length})</Tab>
@@ -408,7 +525,15 @@ export function AuditPanel({ audit }: AuditPanelProps) {
           <TabPanel>
             <TableToolbar>
               <TableToolbarContent>
-                <TableToolbarSearch id="audit-filter-decisions" placeholder="Filtrar decisões…" value={filter} onChange={(e) => setFilter((e as unknown as { target?: { value?: string } }).target?.value ?? '')} />
+                <TableToolbarSearch id="audit-filter-decisions" placeholder="Filtrar eventos…" value={filter} onChange={(e) => setFilter((e as unknown as { target?: { value?: string } }).target?.value ?? '')} />
+              </TableToolbarContent>
+            </TableToolbar>
+            <AllEventsTable data={audit} filter={filter} />
+          </TabPanel>
+          <TabPanel>
+            <TableToolbar>
+              <TableToolbarContent>
+                <TableToolbarSearch id="audit-filter-tool-calls" placeholder="Filtrar decisões…" value={filter} onChange={(e) => setFilter((e as unknown as { target?: { value?: string } }).target?.value ?? '')} />
               </TableToolbarContent>
             </TableToolbar>
             <DecisionsTable data={toolCalls} filter={filter} />

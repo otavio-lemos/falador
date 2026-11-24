@@ -114,7 +114,7 @@ export interface AuditEvent {
   runId: string;
   seq: number;
   ts: number;
-  op: 'plan' | 'tool_call' | 'gate' | 'goal_validation' | 'agent_final';
+  op: 'run_started' | 'run_stopped' | 'chat_input' | 'exec' | 'plan' | 'tool_call' | 'gate' | 'goal_validation' | 'agent_final' | string;
   nodeId: string;
   step?: number;
   tool?: string;
@@ -129,6 +129,7 @@ export interface AuditEvent {
   transport?: string;
   outputPreview?: string;
   errorType?: string;
+  reason?: string;
   rag?: { query: string; hits: number; chunkIds?: string[] };
   plan?: PlanItem[];
   validation?: { achieved: boolean; confidence: number; gaps: string[]; nextActions: string[] };

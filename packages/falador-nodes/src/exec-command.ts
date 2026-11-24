@@ -181,11 +181,11 @@ export interface ExecPolicy {
 }
 
 export type ExtractResult =
-  | { ok: true; command: string; host?: string; reason?: string }
+  | { ok: true; command: string; host?: string; user?: string; reason?: string }
   | { ok: false; code: 'EXEC_POLICY_DENIED'; reason: string };
 
 export type ValidateResult =
-  | { ok: true; command: string; argv: string[]; host: string; reason?: string }
+  | { ok: true; command: string; argv: string[]; host: string; user?: string; reason?: string }
   | { ok: false; code: 'EXEC_POLICY_DENIED'; reason: string; command?: string; host?: string };
 
 export interface AuditEntry {
@@ -421,14 +421,15 @@ export function parseArgv(command: string): string[] {
   return argv;
 }
 
-function tryParseJsonCommand(raw: string): { command: string; host?: string; reason?: string } | null {
+function tryParseJsonCommand(raw: string): { command: string; host?: string; user?: string; reason?: string } | null {
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === 'object' && typeof (parsed as Record<string, unknown>).command === 'string') {
-      const obj = parsed as { command: string; host?: unknown; reason?: unknown };
+      const obj = parsed as { command: string; host?: unknown; user?: unknown; reason?: unknown };
       return {
         command: obj.command,
         host: typeof obj.host === 'string' ? obj.host : undefined,
+        user: typeof obj.user === 'string' ? obj.user : undefined,
         reason: typeof obj.reason === 'string' ? obj.reason : undefined,
       };
     }
@@ -440,21 +441,24 @@ function tryParseJsonCommand(raw: string): { command: string; host?: string; rea
 
 /**
  * Extrai um único comando de:
- * - objeto `{ command, host?, reason? }`
+ * - objeto `{ command, host?, user?, reason? }`
  * - string JSON `{ "command": ... }` (direta ou em bloco ```json)
  * - bloco markdown ```sh / ```bash / ```
  * - texto plano de 1 linha
+ * Suporta também desempacotar comandos `ssh [user@]host 'cmd'` e hosts no formato `user@host`.
  * Rejeita comandos vazios ou com múltiplas linhas.
  */
 export function extractCommand(input: unknown): ExtractResult {
   let command = '';
   let host: string | undefined;
+  let user: string | undefined;
   let reason: string | undefined;
 
   if (input && typeof input === 'object' && typeof (input as Record<string, unknown>).command === 'string') {
-    const obj = input as { command: string; host?: unknown; reason?: unknown };
+    const obj = input as { command: string; host?: unknown; user?: unknown; reason?: unknown };
     command = obj.command;
     host = typeof obj.host === 'string' ? obj.host : undefined;
+    user = typeof obj.user === 'string' ? obj.user : undefined;
     reason = typeof obj.reason === 'string' ? obj.reason : undefined;
   } else {
     const pl = payloadText(input);
@@ -468,6 +472,7 @@ export function extractCommand(input: unknown): ExtractResult {
     if (directJson) {
       command = directJson.command;
       host = directJson.host;
+      user = directJson.user;
       reason = directJson.reason;
     } else {
       // Verifica bloco ```json ... ```
@@ -476,6 +481,7 @@ export function extractCommand(input: unknown): ExtractResult {
       if (fencedJson) {
         command = fencedJson.command;
         host = fencedJson.host;
+        user = fencedJson.user;
         reason = fencedJson.reason;
       } else {
         // Verifica bloco ```sh / ```bash / ```
@@ -489,6 +495,51 @@ export function extractCommand(input: unknown): ExtractResult {
     }
   }
 
+  // Se o comando começa com 'ssh ', desempacota host/user e o comando interno remoto
+  if (/^ssh\s+/i.test(command)) {
+    try {
+      const parts = parseArgv(command);
+      let targetFromSsh: string | undefined;
+      let remoteCmdParts: string[] = [];
+      let i = 1;
+      while (i < parts.length) {
+        const arg = parts[i];
+        if (arg.startsWith('-')) {
+          if (arg === '-p' || arg === '-i' || arg === '-o' || arg === '-F' || arg === '-l') {
+            if (arg === '-l' && i + 1 < parts.length) {
+              user = user ?? parts[i + 1];
+            }
+            i += 2;
+            continue;
+          }
+          i++;
+          continue;
+        }
+        if (!targetFromSsh) {
+          targetFromSsh = arg;
+          i++;
+          remoteCmdParts = parts.slice(i);
+          break;
+        }
+      }
+      if (targetFromSsh) {
+        host = host ?? targetFromSsh;
+        if (remoteCmdParts.length > 0) {
+          command = remoteCmdParts.join(' ');
+        }
+      }
+    } catch {
+      /* parseArgv falhou, mantém comando */
+    }
+  }
+
+  // Se o host contém 'user@host', separa user e host limpo
+  if (host && host.includes('@')) {
+    const atIdx = host.lastIndexOf('@');
+    user = user ?? host.slice(0, atIdx).trim();
+    host = host.slice(atIdx + 1).trim();
+  }
+
   const clean = command.trim();
   if (!clean) {
     return { ok: false, code: 'EXEC_POLICY_DENIED', reason: 'Comando vazio após extração' };
@@ -497,7 +548,7 @@ export function extractCommand(input: unknown): ExtractResult {
     return { ok: false, code: 'EXEC_POLICY_DENIED', reason: 'Múltiplas linhas de comando não são permitidas' };
   }
 
-  return { ok: true, command: clean, host, reason };
+  return { ok: true, command: clean, host, user, reason };
 }
 
 /** Escapa um argumento em POSIX single-quotes (`'` → `'\''`) para envio seguro ao shell remoto via SSH. */
@@ -663,21 +714,22 @@ export function validateCommand(
 
   // 5. Allowlist de host e validação de sshUser (SSH)
   let host = 'local';
+  const effectiveUser = (extracted.user ?? policy.sshUser ?? '').trim();
   if (policy.transport === 'ssh') {
-    if (policy.sshUser !== undefined && policy.sshUser !== '') {
-      if (policy.sshUser.startsWith('-')) {
+    if (effectiveUser !== '') {
+      if (effectiveUser.startsWith('-')) {
         return {
           ok: false,
           code: 'EXEC_POLICY_DENIED',
-          reason: `sshUser inválido (inicia com hífen): ${policy.sshUser}`,
+          reason: `sshUser inválido (inicia com hífen): ${effectiveUser}`,
           command,
         };
       }
-      if (!HOST_REGEX.test(policy.sshUser)) {
+      if (!HOST_REGEX.test(effectiveUser)) {
         return {
           ok: false,
           code: 'EXEC_POLICY_DENIED',
-          reason: `sshUser contém caracteres proibidos: ${policy.sshUser}`,
+          reason: `sshUser contém caracteres proibidos: ${effectiveUser}`,
           command,
         };
       }
@@ -733,7 +785,7 @@ export function validateCommand(
     host = targetHost;
   }
 
-  return { ok: true, command, argv, host, reason };
+  return { ok: true, command, argv, host, user: effectiveUser || undefined, reason };
 }
 
 /** Acumulador de saída que preserva os últimos `maxBytes` bytes (tail) sem crescer sem limite. */

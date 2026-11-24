@@ -51,6 +51,7 @@ import {
   VolumeMute,
   VoiceActivate,
   ErrorFilled,
+  Send,
 } from '@carbon/icons-react';
 import type { Runner, Gate, AgentStep, Caption, AuditEvent } from '../useRunner';
 import { exportSession, gateAction, type Flow, type ContextDoc, type ServiceStatusMap } from '../api';
@@ -587,6 +588,7 @@ export function LiveView({
       ]);
       runner.gate(gate.nodeId, answer);
       setCmdDraft('');
+      setFieldValues({});
       return;
     }
     if (gateInfo.isCommand) {
@@ -668,6 +670,7 @@ export function LiveView({
     setEditing(false);
     setDraft('');
     setCmdDraft('');
+    setFieldValues({});
     setChatInput('');
     setGateHistory([]);
     setAuditFocus(null);
@@ -920,7 +923,9 @@ export function LiveView({
   const lastCaption = runner.captions[runner.captions.length - 1];
   const agentBusy = runner.agentSteps.some((s) => s.phase === 'calling') || Boolean(lastCaption && !lastCaption.final);
   const turnStatus = gate
-    ? { label: 'Aguardando aprovação', type: 'teal' as const, hint: 'Aguardando sua aprovação na janela do Console' }
+    ? gateInfo.isAskUser
+      ? { label: 'Aguardando resposta', type: 'cyan' as const, hint: 'Responda à pergunta do agente abaixo para continuar.' }
+      : { label: 'Aguardando aprovação', type: 'teal' as const, hint: 'Revise e aprove ou rejeite a ação abaixo.' }
     : !runner.running
       ? { label: 'Parado', type: 'gray' as const, hint: 'Inicie a sessão para conversar com o agente.' }
       : agentBusy
@@ -995,9 +1000,13 @@ export function LiveView({
                             placeholder={f.placeholder ?? ''}
                             value={fieldValues[f.name] ?? ''}
                             onChange={(e) => setFieldValues((v) => ({ ...v, [f.name]: e.target.value }))}
+                            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); approve(); } }}
                           />
                         )
                       ))}
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.25rem' }}>
+                        <Button kind="primary" size="sm" renderIcon={Send} className="approve-btn" onClick={() => approve()}>Enviar</Button>
+                      </div>
                     </div>
                   ) : (
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end' }}>
@@ -1008,6 +1017,7 @@ export function LiveView({
                         placeholder="Digite sua resposta para o agente continuar..."
                         value={cmdDraft}
                         onChange={(e) => setCmdDraft(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); approve(); } }}
                         style={{ flex: 1 }}
                       />
                       <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>

@@ -989,7 +989,7 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 // ---- logs dos serviços residentes (altura fixa controlada SOMENTE pelo usuário) ----
 .logs-panel {
   flex-shrink: 0;
-  height: var(--logs-h, 180px);
+  height: var(--logs-h, 300px);
   display: flex;
   flex-direction: column;
   margin: 0 $spacing-05 $spacing-04;
@@ -1004,6 +1004,9 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 }
 .logs-panel--collapsed {
   height: auto;
+}
+.logs-panel--expanded {
+  height: 72vh;
 }
 .logs-resizer {
   height: 8px;
@@ -1091,26 +1094,6 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   .cds--tabs__nav-item-label { @include type-style('label-01'); }
   .cds--tab-content { display: none; padding: 0; }
 }
-.logs-panel-body--audit {
-  display: block;
-  overflow-x: hidden;
-  overflow-y: auto;
-}
-.logs-panel-body--terminal {
-  display: flex;
-  flex-direction: column;
-  padding: 0;
-  overflow: hidden;
-  height: 100%;
-}
-.logs-panel-title {
-  @include type-style('label-01');
-  color: $txt-1;
-  display: flex;
-  align-items: center;
-  gap: $spacing-02;
-  white-space: nowrap;
-}
 .logs-panel-body {
   flex: 1;
   min-height: 0;
@@ -1121,6 +1104,33 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   padding: $spacing-02 $spacing-04 $spacing-03;
   overflow-x: auto;
   overflow-y: hidden;
+}
+.logs-panel-body--audit {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.logs-panel-body--terminal {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  height: 100%;
+}
+.audit-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  .cds--tabs { flex-shrink: 0; }
+  .cds--tab-content {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: $spacing-03 0;
+  }
 }
 .logs-panel-empty {
   @include type-style('helper-text-01');

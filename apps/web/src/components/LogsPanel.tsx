@@ -3,7 +3,7 @@
 // e retângulos coloridos identificando visualmente quais componentes do workflow escrevem em cada log.
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { Button, MultiSelect, Tab, TabList, TabPanel, TabPanels, Tabs } from '@carbon/react';
-import { ChevronDown, ChevronUp, Close, Terminal, TrashCan } from '@carbon/icons-react';
+import { ChevronDown, ChevronUp, Close, Maximize, Minimize, Terminal, TrashCan } from '@carbon/icons-react';
 import type { AuditEvent, Thought, Execution, Gate } from '../useRunner';
 import { clearLogs, fetchLogs, fetchServiceStatus, type ServiceStatusMap } from '../api';
 import { accentOf, serviceOfNode, shortNodeName } from '../data';
@@ -79,8 +79,10 @@ const LOG_HEIGHT_KEY = 'falador.logsHeight';
 const LOG_COLLAPSED_KEY = 'falador.logsCollapsed';
 const LOG_VIEW_KEY = 'falador.logsView';
 const MIN_LOGS_H = 110;
-const MAX_LOGS_H = 520;
-const DEFAULT_LOGS_H = 180;
+const DEFAULT_LOGS_H = 300;
+function getMaxLogsHeight(): number {
+  return Math.max(600, Math.floor((typeof window !== 'undefined' ? window.innerHeight : 900) * 0.85));
+}
 
 interface FlowNodeRef {
   id: string;
@@ -137,9 +139,15 @@ export function LogsPanel({
       return 0;
     } catch { return 0; }
   });
+  const [logsExpanded, setLogsExpanded] = useState(false);
+  const logsExpandedRef = useRef(logsExpanded);
+  logsExpandedRef.current = logsExpanded;
   const changeView = (index: number) => {
     const next: 0 | 1 | 2 = index === 2 ? 2 : index === 1 ? 1 : 0;
     setView(next);
+    if ((next === 1 || next === 2) && !logsExpandedRef.current) {
+      setLogsHeight((h) => (h < 320 ? 320 : h));
+    }
     try {
       localStorage.setItem(LOG_VIEW_KEY, next === 2 ? 'terminal' : next === 1 ? 'audit' : 'logs');
     } catch { /* ignore */ }
@@ -195,7 +203,7 @@ export function LogsPanel({
   const [logsHeight, setLogsHeight] = useState<number>(() => {
     try {
       const n = Number(localStorage.getItem(LOG_HEIGHT_KEY));
-      if (Number.isFinite(n) && n >= MIN_LOGS_H && n <= MAX_LOGS_H) return n;
+      if (Number.isFinite(n) && n >= MIN_LOGS_H && n <= getMaxLogsHeight()) return n;
     } catch { /* ignore */ }
     return DEFAULT_LOGS_H;
   });
@@ -243,11 +251,12 @@ export function LogsPanel({
 
   const onLogsResizeStart = (e: ReactPointerEvent<HTMLDivElement>) => {
     e.preventDefault();
+    setLogsExpanded(false);
     const startY = e.clientY;
     const startH = logsHeight;
     let latestH = startH;
     const onMove = (ev: PointerEvent) => {
-      latestH = Math.min(MAX_LOGS_H, Math.max(MIN_LOGS_H, Math.round(startH + (startY - ev.clientY))));
+      latestH = Math.min(getMaxLogsHeight(), Math.max(MIN_LOGS_H, Math.round(startH + (startY - ev.clientY))));
       setLogsHeight(latestH);
     };
     const onUp = () => {
@@ -262,8 +271,9 @@ export function LogsPanel({
   const onLogsResizeKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
     e.preventDefault();
+    setLogsExpanded(false);
     const delta = e.key === 'ArrowUp' ? 24 : -24;
-    const next = Math.min(MAX_LOGS_H, Math.max(MIN_LOGS_H, logsHeight + delta));
+    const next = Math.min(getMaxLogsHeight(), Math.max(MIN_LOGS_H, logsHeight + delta));
     setLogsHeight(next);
     try { localStorage.setItem(LOG_HEIGHT_KEY, String(next)); } catch { /* ignore */ }
   };
@@ -374,9 +384,19 @@ export function LogsPanel({
     }
   }, [logsByService, logServices]);
 
+  const toggleLogsExpanded = () => {
+    if (logsCollapsed) {
+      setLogsCollapsed(false);
+      try { localStorage.setItem(LOG_COLLAPSED_KEY, 'false'); } catch { /* ignore */ }
+      setLogsExpanded(true);
+      return;
+    }
+    setLogsExpanded((cur) => !cur);
+  };
+
   return (
     <section
-      className={`logs-panel${logsCollapsed ? ' logs-panel--collapsed' : ''}`}
+      className={`logs-panel${logsCollapsed ? ' logs-panel--collapsed' : ''}${!logsCollapsed && logsExpanded ? ' logs-panel--expanded' : ''}`}
       aria-label="Logs dos serviços"
       style={{ ['--logs-h' as string]: `${logsHeight}px` }}
     >
@@ -489,6 +509,15 @@ export function LogsPanel({
             )}
           </div>
         )}
+        <Button
+          kind="ghost"
+          size="sm"
+          hasIconOnly
+          renderIcon={logsExpanded ? Minimize : Maximize}
+          iconDescription={logsExpanded ? 'Restaurar altura' : 'Expandir painel'}
+          tooltipPosition="left"
+          onClick={toggleLogsExpanded}
+        />
         <Button
           kind="ghost"
           size="sm"

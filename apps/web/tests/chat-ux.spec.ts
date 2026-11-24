@@ -25,7 +25,7 @@ test('pill mostra Aguardando aprovação com gate pendente e linha de feedback',
   }]);
   const status = page.getByTestId('turn-status');
   await expect(status).toHaveText('Aguardando aprovação');
-  await expect(page.getByText('Aguardando sua aprovação na janela do Console')).toBeVisible();
+  await expect(page.getByText('Revise e aprove ou rejeite a ação abaixo.')).toBeVisible();
 });
 
 test('gate_active é publicado no BroadcastChannel inclusive quando o gate é limpo', async ({ page }) => {
@@ -94,4 +94,49 @@ test('clique (e teclado) num passo abre Auditoria com filtro do nodeId', async (
   const logs = page.locator('.live2 .logs-panel');
   await expect(logs.locator('.logs-panel-view').getByRole('tab', { name: /^Auditoria/ })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#audit-filter-decisions')).toHaveValue('agente');
+});
+
+test('ask_user com fields estruturados mostra Aguardando resposta e envia via botão Enviar', async ({ page }) => {
+  const gatePayloads: Record<string, unknown>[] = [];
+  await page.route('**/api/gate', (route) => {
+    gatePayloads.push(route.request().postDataJSON() as Record<string, unknown>);
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
+  });
+  await startRun(page, [{ type: 'run_started' }, {
+    type: 'gate',
+    nodeId: 'gate_ask_user',
+    text: 'Informe o host',
+    meta: { tool: 'ask_user', args: { fields: [{ name: 'host', label: 'IP ou Hostname', type: 'text' }] } },
+  }]);
+
+  const status = page.getByTestId('turn-status');
+  await expect(status).toHaveText('Aguardando resposta');
+  await expect(status).not.toHaveText('Aguardando aprovação');
+  await expect(page.getByText('Responda à pergunta do agente abaixo para continuar.')).toBeVisible();
+
+  await page.locator('#field-host').fill('192.168.64.7');
+  await page.locator('.live-chat-entry--gate').getByRole('button', { name: 'Enviar' }).click();
+
+  await expect.poll(() => gatePayloads.length).toBe(1);
+  expect(JSON.parse(String(gatePayloads[0]?.text)).host).toBe('192.168.64.7');
+});
+
+test('ask_user com fields estruturados envia POST /api/gate ao pressionar Enter no campo', async ({ page }) => {
+  const gatePayloads: Record<string, unknown>[] = [];
+  await page.route('**/api/gate', (route) => {
+    gatePayloads.push(route.request().postDataJSON() as Record<string, unknown>);
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
+  });
+  await startRun(page, [{ type: 'run_started' }, {
+    type: 'gate',
+    nodeId: 'gate_ask_user',
+    text: 'Informe o host',
+    meta: { tool: 'ask_user', args: { fields: [{ name: 'host', label: 'IP ou Hostname', type: 'text' }] } },
+  }]);
+
+  await page.locator('#field-host').fill('192.168.64.7');
+  await page.locator('#field-host').press('Enter');
+
+  await expect.poll(() => gatePayloads.length).toBe(1);
+  expect(JSON.parse(String(gatePayloads[0]?.text)).host).toBe('192.168.64.7');
 });
