@@ -8,6 +8,8 @@
 //   POST /api/gate                   → { nodeId, text|null } aprovação/edição/rejeição do human.approve
 //   POST /api/stop                   → mata o run corrente
 //   POST /api/session/export         → { saveMarkdown?, webhookUrl?, flowName? } exporta ata .md e/ou envia webhook
+//   GET  /api/sessions              → { items: [{ name, size, updatedAt, preview }] } (sessions/*.md)
+//   GET  /api/sessions/<name>       → { name, content } (ata .md de sessão antiga)
 //   GET  /api/context                → lista docs RAG (tags, chunksCount, points, chars)
 //   POST /api/context/doc            → indexa .md/.txt/.pdf/.yaml/.yml/.json com chunks BM25
 //   estático: serve apps/web/dist (build) — um único processo para tudo.
@@ -15,7 +17,7 @@
 import { spawn } from 'node:child_process';
 import { createServer, get as httpGet, request as httpRequest } from 'node:http';
 import { connect as netConnect } from 'node:net';
-import { appendFileSync, readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
+import { appendFileSync, readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, lstatSync } from 'node:fs';
 import { join, dirname, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -467,6 +469,17 @@ function safeFlowPath(rawName) {
   const p = resolve(join(dir, name + '.json'));
   if (!p.startsWith(dir + '/')) return null;
   return { name, path: p };
+}
+
+// Mesma blindagem de safeFlowPath, aplicada a sessions/*.md: nome sem barras,
+// resolve() + checagem do diretório raiz. Symlink é rejeitado no handler via lstat.
+function safeSessionPath(rawName) {
+  const name = String(rawName ?? '').replace(/\.md$/, '');
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) return null;
+  const dir = resolve(getSessionsDir());
+  const p = resolve(join(dir, name + '.md'));
+  if (!p.startsWith(dir + '/')) return null;
+  return { name: name + '.md', path: p };
 }
 
 function json(res, code, body, extraHeaders = {}) {
@@ -1010,6 +1023,48 @@ async function handleApi(req, res, pathname) {
     clearTimeout(killTimer);
     if (currentRun === run) currentRun = null;
     return json(res, 200, { ok: true }), true;
+  }
+  if (pathname === '/api/sessions' && req.method === 'GET') {
+    const noStore = { 'Cache-Control': 'no-store' };
+    const dir = getSessionsDir();
+    if (!existsSync(dir)) return json(res, 200, { items: [] }, noStore), true;
+    const items = readdirSync(dir)
+      .filter((f) => f.endsWith('.md') && !f.startsWith('.'))
+      .map((f) => {
+        try {
+          const p = join(dir, f);
+          const st = lstatSync(p);
+          if (!st.isFile() || st.isSymbolicLink()) return null;
+          const content = readFileSync(p, 'utf8');
+          return {
+            name: f,
+            size: st.size,
+            updatedAt: new Date(st.mtimeMs).toISOString(),
+            preview: content.replace(/\s+/g, ' ').trim().slice(0, 180),
+            _mtimeMs: st.mtimeMs,
+          };
+        } catch { return null; }
+      })
+      .filter(Boolean)
+      .sort((a, b) => b._mtimeMs - a._mtimeMs)
+      .map(({ _mtimeMs, ...item }) => item);
+    return json(res, 200, { items }, noStore), true;
+  }
+  if (pathname.startsWith('/api/sessions/') && req.method === 'GET') {
+    const noStore = { 'Cache-Control': 'no-store' };
+    let raw;
+    try { raw = decodeURIComponent(pathname.slice('/api/sessions/'.length)); }
+    catch { return json(res, 400, { error: 'nome de sessão inválido' }, noStore), true; }
+    const safe = safeSessionPath(raw);
+    if (!safe) return json(res, 400, { error: 'nome de sessão inválido (use letras/números/._-, sem barras)' }, noStore), true;
+    let st;
+    try { st = lstatSync(safe.path); }
+    catch (e) {
+      if (e?.code === 'ENOENT') return json(res, 404, { error: 'sessão não encontrada' }, noStore), true;
+      return json(res, 400, { error: 'nome de sessão inválido' }, noStore), true;
+    }
+    if (!st.isFile() || st.isSymbolicLink()) return json(res, 400, { error: 'nome de sessão inválido' }, noStore), true;
+    return json(res, 200, { name: safe.name, content: readFileSync(safe.path, 'utf8') }, noStore), true;
   }
   if (pathname === '/api/session/export' && req.method === 'POST') {
     const body = await readBody(req);

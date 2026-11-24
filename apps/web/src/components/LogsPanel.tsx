@@ -98,9 +98,10 @@ interface LogsPanelProps {
   hasAgent?: boolean;
   onOpenConsole?: () => void;
   audit?: AuditEvent[];
+  auditFocus?: { nodeId: string; token: number } | null;
 }
 
-export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, thoughts = [], onToggleThoughts, resetSignal = 0, hasAgent = false, onOpenConsole, audit = [] }: LogsPanelProps) {
+export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, thoughts = [], onToggleThoughts, resetSignal = 0, hasAgent = false, onOpenConsole, audit = [], auditFocus = null }: LogsPanelProps) {
   const logsRefs = useRef<Record<string, HTMLPreElement | null>>({});
   const clearEpochRef = useRef(0);
   const onServiceStatusRef = useRef(onServiceStatus);
@@ -116,6 +117,7 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, thou
     setView(next);
     try { localStorage.setItem(LOG_VIEW_KEY, next === 1 ? 'audit' : 'logs'); } catch { /* ignore */ }
   };
+
   const [logServices, setLogServices] = useState<string[]>(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(LOG_SERVICES_KEY) ?? 'null');
@@ -164,6 +166,25 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, thou
   const [logsCollapsed, setLogsCollapsed] = useState<boolean>(() => {
     try { return localStorage.getItem(LOG_COLLAPSED_KEY) === 'true'; } catch { return false; }
   });
+
+  // Ponte conversa → Auditoria: um card clicável pede a aba e o filtro por nodeId.
+  useEffect(() => {
+    if (!auditFocus?.nodeId) return;
+    changeView(1);
+    setLogsCollapsed(false);
+    try { localStorage.setItem(LOG_COLLAPSED_KEY, 'false'); } catch { /* ignore */ }
+  }, [auditFocus?.token]);
+  useEffect(() => {
+    if (!auditFocus?.nodeId || view !== 1 || logsCollapsed) return;
+    // shortcut: a busca vive dentro do AuditPanel (fora do escopo desta mudança),
+    // então preenchemos o input existente pelo evento de input nativo.
+    const input = document.getElementById('audit-filter-decisions') as HTMLInputElement | null;
+    if (!input) return;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    setter?.call(input, auditFocus.nodeId);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }, [auditFocus?.token, view, logsCollapsed]);
+
   const onLogServicesChange = (items: LogServiceMeta[]) => {
     const ids = items.map((i) => i.id);
     setLogServices(ids);

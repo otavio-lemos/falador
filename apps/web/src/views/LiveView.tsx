@@ -68,9 +68,17 @@ import {
 } from '../live-utils';
 import { WorkflowMiniMap } from '../components/WorkflowMiniMap';
 import { LogsPanel } from '../components/LogsPanel';
+import { SessionsPanel } from '../components/SessionsPanel';
 
 const WEBHOOK_STORAGE_KEY = 'falador.webhookUrl';
 const THOUGHTS_STORAGE_KEY = 'falador.showThoughts';
+const SUGGESTED_PROMPTS = [
+  'O que está rodando agora?',
+  'Mostre o último erro do run',
+  'Resuma a auditoria desta sessão',
+];
+
+interface AuditFocus { nodeId: string; token: number }
 
 interface Props {
   runner: Runner;
@@ -332,7 +340,7 @@ type ChatTagType = 'gray' | 'cyan' | 'green' | 'blue' | 'purple' | 'teal' | 'red
 // barra de acento, avatar, papel em negrito, Tag, hora e corpo. Vale para mensagem,
 // transcrição, resposta, áudio, passo, decisão, erro e aprovação.
 function ChatCard({
-  kind, nodeId, role, tag, tagType, accent, icon, ts, meta, aiLabel, body, ariaLabel,
+  kind, nodeId, role, tag, tagType, accent, icon, ts, meta, aiLabel, body, ariaLabel, onOpenAudit,
 }: {
   kind: string;
   nodeId: string;
@@ -346,13 +354,23 @@ function ChatCard({
   aiLabel?: boolean;
   body: ReactNode;
   ariaLabel?: string;
+  onOpenAudit?: () => void;
 }) {
   return (
     <article
       className={`live-chat-entry live-chat-entry--${kind}`}
       data-node-id={nodeId}
       style={{ ['--accent' as string]: accent }}
-      aria-label={ariaLabel}
+      aria-label={ariaLabel || (onOpenAudit ? `Ver auditoria de ${nodeId}` : undefined)}
+      role={onOpenAudit ? 'button' : undefined}
+      tabIndex={onOpenAudit ? 0 : undefined}
+      onClick={onOpenAudit ? (e) => {
+        if ((e.target as HTMLElement).closest('button, a, input, textarea, summary')) return;
+        onOpenAudit();
+      } : undefined}
+      onKeyDown={onOpenAudit ? (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenAudit(); }
+      } : undefined}
     >
       <span className="live-chat-accent" aria-hidden="true" />
       <span className="live-chat-avatar" aria-hidden="true">{icon}</span>
@@ -425,9 +443,12 @@ export function LiveView({
   const [docsOpen, setDocsOpen] = useState(false);
   const [uploadTags, setUploadTags] = useState('');
   const [exportOpen, setExportOpen] = useState(false);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
   const [gateHistory, setGateHistory] = useState<GateHistoryItem[]>([]);
+  const [auditFocus, setAuditFocus] = useState<AuditFocus | null>(null);
   // Uma janela de browser real, reaproveitada. Nunca about:blank, nunca innerHTML.
   const consoleWinRef = useRef<Window | null>(null);
+  const consoleBcRef = useRef<BroadcastChannel | null>(null);
   const openConsole = () => {
     const w = consoleWinRef.current;
     if (w && !w.closed) { w.focus(); return; }
@@ -438,6 +459,7 @@ export function LiveView({
   useEffect(() => {
     if (typeof BroadcastChannel === 'undefined') return;
     const bc = new BroadcastChannel('falador-console');
+    consoleBcRef.current = bc;
     bc.onmessage = (e: MessageEvent) => {
       const m = e.data as { type?: string; nodeId?: string; text?: string | null; ts?: number; status?: GateHistoryItem['status'] };
       if (m?.type !== 'gate_answered' || !m.nodeId) return;
@@ -451,13 +473,16 @@ export function LiveView({
         ts,
       }]);
     };
-    return () => bc.close();
+    return () => { bc.close(); consoleBcRef.current = null; };
   }, []);
 
   const wasRunningRef = useRef(runner.running);
   useEffect(() => {
     if (!wasRunningRef.current && runner.running) {
       setGateHistory([]);
+    }
+    if (wasRunningRef.current && !runner.running) {
+      consoleBcRef.current?.postMessage({ type: 'gate_active', gate: null, ts: Date.now() });
     }
     wasRunningRef.current = runner.running;
   }, [runner.running]);
@@ -472,6 +497,18 @@ export function LiveView({
   const transcription = lastOf(sinks.transcription)?.text ?? '';
   const gate = runner.gates[0];
   const gateInfo = useMemo(() => parseGateCommand(gate), [gate]);
+
+  // Contrato com a janela do Console: sempre que o gate pendente muda (inclusive
+  // null no fim/reset do run), publica no mesmo canal. NÃO reenvia POST /api/gate.
+  useEffect(() => {
+    consoleBcRef.current?.postMessage({
+      type: 'gate_active',
+      gate: gate
+        ? { nodeId: gate.nodeId, text: gate.text, ts: gate.ts, ...(gate.meta ? { meta: gate.meta } : {}) }
+        : null,
+      ts: Date.now(),
+    });
+  }, [gate, runner.running]);
 
   // Sincroniza rascunho editável do comando sempre que chegar um novo gate de comando
   useEffect(() => {
@@ -614,6 +651,7 @@ export function LiveView({
     setCmdDraft('');
     setChatInput('');
     setGateHistory([]);
+    setAuditFocus(null);
     setExportResult(null);
     setDocsOpen(false);
   }, [resetSignal]);
@@ -859,6 +897,18 @@ export function LiveView({
   };
 
   const bd = runner.latencyBreakdown;
+
+  const lastCaption = runner.captions[runner.captions.length - 1];
+  const agentBusy = runner.agentSteps.some((s) => s.phase === 'calling') || Boolean(lastCaption && !lastCaption.final);
+  const turnStatus = gate
+    ? { label: 'Aguardando aprovação', type: 'teal' as const, hint: 'Aguardando sua aprovação na janela do Console' }
+    : !runner.running
+      ? { label: 'Parado', type: 'gray' as const, hint: 'Inicie a sessão para conversar com o agente.' }
+      : agentBusy
+        ? { label: 'Pensando', type: 'blue' as const, hint: 'Processando a resposta…' }
+        : { label: 'Pronto', type: 'green' as const, hint: 'Sessão ativa — envie uma mensagem.' };
+
+  const openAuditFor = (nodeId: string) => setAuditFocus(nodeId ? { nodeId, token: Date.now() } : null);
 
   // Aprovação/comando pendente: MESMO card de conversa (.live-chat-entry) usado por
   // todas as ocorrências — nada de bloco próprio. Ações ficam dentro do card.
@@ -1277,6 +1327,7 @@ export function LiveView({
           icon={status === 'Rejeitado' ? <Close size={16} /> : <Checkmark size={16} />}
           ts={m.ts}
           ariaLabel={`Gate ${status}`}
+          onOpenAudit={() => openAuditFor(m.nodeId)}
           body={(
             <>
               {(m.gateTool || m.gateHost) && (
@@ -1317,6 +1368,7 @@ export function LiveView({
         ts={m.ts}
         meta={meta}
         aiLabel={m.kind === 'agent' || m.kind === 'decision'}
+        onOpenAudit={m.kind === 'agent-step' || m.kind === 'decision' ? () => openAuditFor(m.nodeId) : undefined}
         body={(
           <>
             <div className="live-chat-entry-text">
@@ -1455,6 +1507,9 @@ export function LiveView({
         </div>
 
         <div className="live2-top-actions">
+          <Button kind="tertiary" size="sm" renderIcon={Document} onClick={() => setSessionsOpen(true)}>
+            Sessões
+          </Button>
           <Button kind="tertiary" size="sm" renderIcon={Download} onClick={() => { setExportResult(null); setExportOpen(true); }}>
             Exportar
           </Button>
@@ -1570,7 +1625,11 @@ export function LiveView({
         <main className="live2-main">
           <>
               <div className="live-chat">
-                <div className="live2-label">Conversa</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <div className="live2-label">Conversa</div>
+                  <Tag type={turnStatus.type} size="sm" data-testid="turn-status">{turnStatus.label}</Tag>
+                </div>
+                <p className="live-chat-empty" style={{ marginTop: '-0.25rem' }}>{turnStatus.hint}</p>
                 {latestPlan && (
                   <div className="live-plan-panel">
                     <Accordion size="sm">
@@ -1606,9 +1665,16 @@ export function LiveView({
                 )}
                 <div className="live-chat-log" ref={chatLogRef}>
                   {conversation.length === 0 && !liveAgent && !gateCard && !errorCard && (
-                    <p className="live-chat-empty">
-                      {runner.running ? 'Envie uma mensagem para conversar com o agente.' : 'Inicie a sessão para conversar com o agente.'}
-                    </p>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.5rem' }}>
+                      <p className="live-chat-empty" style={{ margin: 0 }}>
+                        {runner.running ? 'Envie uma mensagem para conversar com o agente.' : 'Inicie a sessão para conversar com o agente.'}
+                      </p>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                        {SUGGESTED_PROMPTS.map((p) => (
+                          <Button key={p} kind="tertiary" size="sm" onClick={() => setChatInput(p)}>{p}</Button>
+                        ))}
+                      </div>
+                    </div>
                   )}
                   {conversation.map(renderConversationEntry)}
                   {gateCard}
@@ -1751,6 +1817,7 @@ export function LiveView({
         hasAgent={hasAgent}
         onOpenConsole={openConsole}
         audit={runner.audit}
+        auditFocus={auditFocus}
       />
 
       <Modal
@@ -1775,6 +1842,8 @@ export function LiveView({
         />
         {exportResult && <p className="export-modal-result">{exportResult}</p>}
       </Modal>
+
+      <SessionsPanel open={sessionsOpen} onClose={() => setSessionsOpen(false)} />
 
     </div>
   );

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button, Tag, TextInput, Theme } from '@carbon/react';
 import { openEvents, gateAction, stopRun, type RunnerEvent } from '../api';
 import type { Execution, Gate } from '../useRunner';
+import './console.scss';
 
 type StreamFilter = 'all' | 'stdout' | 'stderr';
 
@@ -11,15 +12,109 @@ function stamp(ts: number): string {
   try { return new Date(ts).toLocaleTimeString(); } catch { return ''; }
 }
 
+function parseGate(raw: unknown, fallbackTs: number): Gate | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const g = raw as { nodeId?: unknown; text?: unknown; ts?: unknown; meta?: unknown };
+  const nodeId = String(g.nodeId ?? '');
+  if (!nodeId) return null;
+  return {
+    nodeId,
+    text: String(g.text ?? ''),
+    ts: typeof g.ts === 'number' ? g.ts : fallbackTs,
+    ...(g.meta && typeof g.meta === 'object' ? { meta: g.meta as Gate['meta'] } : {}),
+  };
+}
+
+type Approval =
+  | { ok: true; payload: string; command: string; status: 'Aprovado' | 'Editado' }
+  | { ok: false; error: string };
+
+// Validação no ponto de envio: NUNCA POST /api/gate com command vazio.
+function approvalPayload(gate: Gate, draft: string): Approval {
+  const original = gateCommand(gate).trim();
+  const raw = (draft.trim() ? draft : original).trim();
+  if (!raw) return { ok: false, error: 'Comando vazio — nada foi enviado.' };
+  const meta = gate.meta as { host?: unknown; reason?: unknown } | undefined;
+  const metaHost = typeof meta?.host === 'string' && meta.host.trim() && meta.host !== 'local' ? meta.host.trim() : '';
+  const reason = typeof meta?.reason === 'string' && meta.reason.trim() ? meta.reason : '';
+  let command = raw;
+  let host = metaHost;
+  // Campo editável aceita comando cru ou o payload JSON composto do gate.
+  if (raw.startsWith('{') || raw.startsWith('[')) {
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); } catch { return { ok: false, error: 'JSON inválido — nada foi enviado.' }; }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { ok: false, error: 'JSON de aprovação deve ser um objeto com command.' };
+    }
+    const obj = parsed as Record<string, unknown>;
+    if (typeof obj.command !== 'string' || !obj.command.trim()) {
+      return { ok: false, error: 'command deve ser uma string não-vazia.' };
+    }
+    if ('host' in obj && (typeof obj.host !== 'string' || !obj.host.trim())) {
+      return { ok: false, error: 'host deve ser uma string não-vazia.' };
+    }
+    command = obj.command.trim();
+    if (typeof obj.host === 'string' && obj.host.trim()) host = obj.host.trim();
+  }
+  const payload = host ? JSON.stringify({ command, host, ...(reason ? { reason } : {}) }) : command;
+  return { ok: true, payload, command, status: command === original ? 'Aprovado' : 'Editado' };
+}
+
+function newest(a: Gate, b: Gate): Gate { return b.ts >= a.ts ? b : a; }
+
 export function ConsoleView() {
   const [execs, setExecs] = useState<Execution[]>([]);
   const [gates, setGates] = useState<Gate[]>([]);
+  const [bcGates, setBcGates] = useState<Gate[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [filter, setFilter] = useState<StreamFilter>('all');
   const [connected, setConnected] = useState(false);
   const [retry, setRetry] = useState(0);
   const ctlRef = useRef<AbortController | null>(null);
-  const gateInputRef = useRef<HTMLInputElement | null>(null);
+
+  // A aba da conversa publica o gate ativo antes (ou no lugar) do SSE.
+  useEffect(() => {
+    const bc = new BroadcastChannel('falador-console');
+    bc.onmessage = (ev: MessageEvent) => {
+      const msg = ev.data as { type?: unknown; gate?: unknown; nodeId?: unknown } | null;
+      if (!msg || typeof msg !== 'object') return;
+      if (msg.type === 'gate_answered') {
+        const nodeId = String(msg.nodeId ?? '');
+        if (nodeId) {
+          setGates((g) => g.filter((x) => x.nodeId !== nodeId));
+          setBcGates((g) => g.filter((x) => x.nodeId !== nodeId));
+        }
+        return;
+      }
+      if (msg.type !== 'gate_active') return;
+      if (msg.gate == null) {
+        // Fim do gate ativo: limpa as duas fontes para não deixar card fantasma.
+        setGates([]);
+        setBcGates([]);
+        return;
+      }
+      const gate = parseGate(msg.gate, Date.now());
+      if (!gate) return;
+      setBcGates((g) => {
+        const prev = g.find((x) => x.nodeId === gate.nodeId);
+        if (prev && prev.ts > gate.ts) return g;
+        return [...g.filter((x) => x.nodeId !== gate.nodeId), gate];
+      });
+      setDrafts((d) => (d[gate.nodeId] === undefined ? { ...d, [gate.nodeId]: gateCommand(gate) } : d));
+    };
+    return () => { bc.onmessage = null; bc.close(); };
+  }, []);
+
+  // SSE e BroadcastChannel descrevem o mesmo gate: dedup por nodeId, evento mais recente ganha.
+  const pending = (() => {
+    const byId = new Map<string, Gate>();
+    for (const g of [...gates, ...bcGates]) {
+      const prev = byId.get(g.nodeId);
+      byId.set(g.nodeId, prev ? newest(prev, g) : g);
+    }
+    return [...byId.values()].sort((a, b) => a.ts - b.ts);
+  })();
 
   // A janela é persistente: se abrir antes do run ou o run terminar, volta a anexar sozinha.
   useEffect(() => {
@@ -87,6 +182,7 @@ export function ConsoleView() {
       } else if (ev.type === 'gate_cancelled') {
         const nodeId = String(ev.nodeId ?? '');
         setGates((g) => g.filter((x) => x.nodeId !== nodeId));
+        setBcGates((g) => g.filter((x) => x.nodeId !== nodeId));
       }
     };
     const ctl = openEvents(onEvent, () => setConnected(false));
@@ -94,25 +190,25 @@ export function ConsoleView() {
     return () => { ctl.abort(); if (ctlRef.current === ctl) ctlRef.current = null; };
   }, [retry]);
 
+  const clearGate = (nodeId: string) => {
+    setGates((g) => g.filter((x) => x.nodeId !== nodeId));
+    setBcGates((g) => g.filter((x) => x.nodeId !== nodeId));
+    setErrors((e) => { const next = { ...e }; delete next[nodeId]; return next; });
+  };
   const answerGate = async (gate: Gate, text: string | null, rejectionText?: string, status?: 'Aprovado' | 'Editado' | 'Rejeitado') => {
     try { await gateAction(gate.nodeId, text, rejectionText); } catch { /* host sem run */ }
-    setGates((g) => g.filter((x) => x.nodeId !== gate.nodeId));
+    clearGate(gate.nodeId);
     // A aba da conversa registra o mesmo histórico sem duplicar o POST.
     const bc = new BroadcastChannel('falador-console');
     bc.postMessage({ type: 'gate_answered', nodeId: gate.nodeId, text: text ?? rejectionText ?? null, status, ts: Date.now() });
     bc.close();
   };
   const approve = (gate: Gate, draft: string) => {
-    const command = draft.trim() ? draft : gateCommand(gate);
-    const status = command.trim() === gateCommand(gate).trim() ? 'Aprovado' : 'Editado';
+    const result = approvalPayload(gate, draft);
+    if (!result.ok) { setErrors((e) => ({ ...e, [gate.nodeId]: result.error })); return; }
     // O gate do exec.command carrega o host no meta. Enviar só o texto derruba o
     // host e o nó responde EXEC_POLICY_DENIED "Host SSH não informado".
-    const meta = gate.meta as { host?: unknown; reason?: unknown } | undefined;
-    const host = typeof meta?.host === 'string' && meta.host.trim() && meta.host !== 'local' ? meta.host.trim() : '';
-    const payload = host
-      ? JSON.stringify({ command, host, ...(typeof meta?.reason === 'string' && meta.reason ? { reason: meta.reason } : {}) })
-      : command;
-    return answerGate(gate, payload, undefined, status);
+    return answerGate(gate, result.payload, undefined, result.status);
   };
   const reject = (gate: Gate, draft: string) => answerGate(gate, null, draft, 'Rejeitado');
 
@@ -135,36 +231,50 @@ export function ConsoleView() {
         </header>
         {!connected && <p className="console-empty">Inicie um fluxo na aba principal. Esta janela acompanha o mesmo run.</p>}
 
-        {gates.map((g) => (
-          <section className="console-card console-gate" key={g.nodeId} aria-label={`Aprovação pendente ${g.nodeId}`}>
-            <div className="console-card-head">
-              <h2>Aprovar e executar</h2>
-              <Tag type="cyan" size="sm">{g.nodeId}</Tag>
-              {typeof g.meta?.host === 'string' && g.meta.host && g.meta.host !== 'local' && (
-                <Tag type="gray" size="sm">Host: {g.meta.host}</Tag>
-              )}
-              <span className="console-time">{stamp(g.ts)}</span>
-            </div>
-            <p className="console-gate-prompt">{g.text}</p>
-            <div className="console-gate-row">
-              <TextInput
-                id={`console-gate-${g.nodeId}`}
-                size="sm"
-                hideLabel
-                labelText="Comando / resposta (editável)"
-                className="console-gate-input"
-                value={drafts[g.nodeId] ?? gateCommand(g)}
-                onChange={(e) => setDrafts((d) => ({ ...d, [g.nodeId]: e.target.value }))}
-                ref={gateInputRef}
-              />
-              <div className="console-actions">
-                <Button kind="primary" size="sm" onClick={() => void approve(g, drafts[g.nodeId] ?? gateCommand(g))}>Aprovar e executar</Button>
-                <Button kind="tertiary" size="sm" onClick={() => gateInputRef.current?.focus()}>Editar</Button>
-                <Button kind="danger--tertiary" size="sm" onClick={() => void reject(g, drafts[g.nodeId] ?? gateCommand(g))}>Rejeitar</Button>
-              </div>
-            </div>
-          </section>
-        ))}
+        <section className="console-gates" aria-label="Fila de aprovações pendentes">
+          <div className="console-gates-head">
+            <h2>Aprovações pendentes</h2>
+            <Tag type={pending.length ? 'red' : 'gray'} size="sm">
+              <span data-testid="pending-count">{pending.length}</span>
+            </Tag>
+          </div>
+          {pending.length === 0 && <p className="console-empty">Nenhuma aprovação pendente.</p>}
+          <div className="console-gate-queue">
+            {pending.map((g) => (
+              <section className="console-card console-gate" key={g.nodeId} aria-label={`Aprovação pendente ${g.nodeId}`}>
+                <div className="console-card-head">
+                  <h2>Aprovar e executar</h2>
+                  <Tag type="cyan" size="sm">{g.nodeId}</Tag>
+                  {typeof g.meta?.host === 'string' && g.meta.host && g.meta.host !== 'local' && (
+                    <Tag type="gray" size="sm">Host: {g.meta.host}</Tag>
+                  )}
+                  <span className="console-time">{stamp(g.ts)}</span>
+                </div>
+                <p className="console-gate-prompt">{g.text}</p>
+                {typeof g.meta?.reason === 'string' && g.meta.reason && (
+                  <p className="console-gate-reason">Motivo: {g.meta.reason}</p>
+                )}
+                <div className="console-gate-row">
+                  <TextInput
+                    id={`console-gate-${g.nodeId}`}
+                    size="sm"
+                    hideLabel
+                    labelText="Comando / resposta (editável)"
+                    className="console-gate-input"
+                    value={drafts[g.nodeId] ?? gateCommand(g)}
+                    onChange={(e) => setDrafts((d) => ({ ...d, [g.nodeId]: e.target.value }))}
+                  />
+                  <div className="console-actions">
+                    <Button kind="primary" size="sm" onClick={() => void approve(g, drafts[g.nodeId] ?? gateCommand(g))}>Aprovar e executar</Button>
+                    <Button kind="tertiary" size="sm" onClick={() => document.getElementById(`console-gate-${g.nodeId}`)?.focus()}>Editar</Button>
+                    <Button kind="danger--tertiary" size="sm" onClick={() => void reject(g, drafts[g.nodeId] ?? gateCommand(g))}>Rejeitar</Button>
+                  </div>
+                </div>
+                {errors[g.nodeId] && <p className="console-gate-error" role="alert">{errors[g.nodeId]}</p>}
+              </section>
+            ))}
+          </div>
+        </section>
 
         <div className="console-card-head console-list-head">
           <h2>Execuções</h2>

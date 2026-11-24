@@ -158,6 +158,20 @@ export async function exportSession(opts: ExportSessionOptions): Promise<ExportS
   if (!r.ok) throw new Error((await r.json()).error ?? 'falha ao exportar sessão');
   return r.json();
 }
+// ---- Sessões exportadas (sessions/*.md) ----
+export interface SessionInfo { name: string; size: number; updatedAt: string; preview: string }
+export interface SessionDetail { name: string; content: string }
+export async function listSessions(): Promise<{ items: SessionInfo[] }> {
+  const r = await fetch('/api/sessions', { cache: 'no-store' });
+  if (!r.ok) throw new Error((await r.json()).error ?? 'falha ao listar sessões');
+  return r.json();
+}
+export async function getSession(name: string): Promise<SessionDetail> {
+  const r = await fetch('/api/sessions/' + encodeURIComponent(name), { cache: 'no-store' });
+  if (!r.ok) throw new Error((await r.json()).error ?? 'falha ao abrir sessão');
+  return r.json();
+}
+
 // ---- Logs dos serviços residentes (omlx/asr/tts/web) ----
 export interface LogsResult {
   name: string;
