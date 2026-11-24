@@ -507,8 +507,8 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 }
 
 .stage-dd {
-  flex: 0 1 auto;
-  min-width: 0;
+  flex: 1 1 auto;
+  min-width: 120px;
   border-top: 2px solid var(--accent);
   padding-top: $spacing-01;
   display: flex;
@@ -518,12 +518,12 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 }
 
 .stage-dd--dual {
-  flex: 0 1 auto;
+  flex: 1.4 1 auto;
   min-width: 0;
 }
 
 .stage-dd--triple {
-  flex: 0 1 auto;
+  flex: 1.8 1 auto;
   min-width: 0;
 }
 
@@ -605,7 +605,7 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 .stage-dd-ctrl .stage-main-select {
   flex: 1 1 auto;
   min-width: 65px;
-  max-width: 130px;
+  max-width: none;
 
   .cds--list-box__field {
     padding-inline: 6px 22px !important;
@@ -613,6 +613,9 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 
   .cds--list-box__label {
     font-size: 0.8125rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 
@@ -620,7 +623,7 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 .stage-dd-ctrl .stage-sec-select {
   flex: 0 1 auto;
   min-width: 55px;
-  max-width: 90px;
+  max-width: none;
 
   .cds--list-box__field {
     padding-inline: 6px 20px !important;
