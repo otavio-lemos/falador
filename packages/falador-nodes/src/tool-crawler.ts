@@ -12,7 +12,14 @@ import {
   type ToolProvider,
 } from '../../falador-graph/src/index.ts';
 import { payloadText } from './sse.ts';
-import { validateExternalUrl, type FetcherFn } from './tool-web-search.ts';
+import {
+  MAX_REDIRECTS,
+  SafeFetchError,
+  fetchWithSafeRedirects,
+  validateExternalUrl,
+  type DnsLookupFn,
+  type FetcherFn,
+} from './tool-web-search.ts';
 import { inheritTrace } from './trace.ts';
 
 const DEFAULT_MAX_PAGES = 5;
@@ -29,6 +36,7 @@ const MAX_TIMEOUT_MS = 30_000;
 
 const DEFAULT_MAX_CHARS_PER_PAGE = 4000;
 const DEFAULT_MAX_TOTAL_CHARS = 16_000;
+const DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const DEFAULT_USER_AGENT = 'FaladorCrawler/1.0 (local-on-device)';
 
 export interface ExtractedPageData {
@@ -93,12 +101,122 @@ function removeTagBlocks(html: string, tags: readonly string[]): string {
   return s;
 }
 
-function stripTagsToText(html: string): string {
-  const withoutBlocks = removeTagBlocks(html, ['script', 'style', 'noscript', 'svg']);
+function stripTagsPreservingNewlines(html: string): string {
+  let out = '';
+  let inTag = false;
+  for (let i = 0; i < html.length; i++) {
+    const ch = html[i];
+    if (ch === '<') {
+      inTag = true;
+    } else if (ch === '>') {
+      inTag = false;
+    } else if (!inTag) {
+      out += ch;
+    }
+  }
+  return decodeHtmlEntities(out);
+}
+
+function extractLanguageHint(attrZone: string): string {
+  const m = /\bclass\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(attrZone);
+  const cls = m?.[1] ?? m?.[2] ?? '';
+  const langMatch = /(?:language-|lang-)([a-z0-9_+-]+)/i.exec(cls);
+  return langMatch ? langMatch[1].toLowerCase() : '';
+}
+
+function formatCodeFence(rawInnerHtml: string, attrZone: string): string {
+  let lang = extractLanguageHint(attrZone);
+  if (!lang) {
+    const innerCodeMatch = /<code([^>]*)>/i.exec(rawInnerHtml);
+    if (innerCodeMatch) {
+      lang = extractLanguageHint(innerCodeMatch[1]);
+    }
+  }
+  const decoded = stripTagsPreservingNewlines(rawInnerHtml).replace(/\r\n?/g, '\n');
+  const lines = decoded.split('\n');
+  while (lines.length > 0 && lines[0].trim() === '') lines.shift();
+  while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop();
+  const code = lines.join('\n');
+  return `\n\n\`\`\`${lang}\n${code}\n\`\`\`\n\n`;
+}
+
+export function stripTagsToText(html: string): string {
+  const withoutNoise = removeTagBlocks(html, [
+    'script',
+    'style',
+    'noscript',
+    'svg',
+    'nav',
+    'header',
+    'footer',
+  ]);
+
+  const codeBlocks: string[] = [];
+  let withPlaceholders = '';
+  const lower = withoutNoise.toLowerCase();
+  let idx = 0;
+
+  while (idx < withoutNoise.length) {
+    const preIdx = lower.indexOf('<pre', idx);
+    const codeIdx = lower.indexOf('<code', idx);
+
+    let nextIdx = -1;
+    let tag: 'pre' | 'code' = 'pre';
+    if (preIdx !== -1 && (codeIdx === -1 || preIdx <= codeIdx)) {
+      nextIdx = preIdx;
+      tag = 'pre';
+    } else if (codeIdx !== -1) {
+      nextIdx = codeIdx;
+      tag = 'code';
+    }
+
+    if (nextIdx === -1) {
+      withPlaceholders += withoutNoise.slice(idx);
+      break;
+    }
+
+    const openTagLen = tag === 'pre' ? 4 : 5;
+    const afterName = lower[nextIdx + openTagLen];
+    if (afterName && !/[\s>]/.test(afterName)) {
+      withPlaceholders += withoutNoise.slice(idx, nextIdx + openTagLen);
+      idx = nextIdx + openTagLen;
+      continue;
+    }
+
+    const gtIdx = withoutNoise.indexOf('>', nextIdx + openTagLen);
+    if (gtIdx === -1) {
+      withPlaceholders += withoutNoise.slice(idx);
+      break;
+    }
+
+    const closeTag = `</${tag}>`;
+    const closeIdx = lower.indexOf(closeTag, gtIdx + 1);
+    if (closeIdx === -1) {
+      withPlaceholders += withoutNoise.slice(idx, gtIdx + 1);
+      idx = gtIdx + 1;
+      continue;
+    }
+
+    withPlaceholders += withoutNoise.slice(idx, nextIdx);
+    const attrZone = withoutNoise.slice(nextIdx + openTagLen, gtIdx);
+    const innerHtml = withoutNoise.slice(gtIdx + 1, closeIdx);
+
+    if (tag === 'pre' || innerHtml.includes('\n')) {
+      const token = `__FALADOR_CODE_BLOCK_${codeBlocks.length}__`;
+      codeBlocks.push(formatCodeFence(innerHtml, attrZone));
+      withPlaceholders += ` ${token} `;
+    } else {
+      const inlineCode = stripTagsPreservingNewlines(innerHtml).replace(/\s+/g, ' ').trim();
+      withPlaceholders += inlineCode ? ` \`${inlineCode}\` ` : ' ';
+    }
+
+    idx = closeIdx + closeTag.length;
+  }
+
   let stripped = '';
   let inTag = false;
-  for (let i = 0; i < withoutBlocks.length; i++) {
-    const ch = withoutBlocks[i];
+  for (let i = 0; i < withPlaceholders.length; i++) {
+    const ch = withPlaceholders[i];
     if (ch === '<') {
       inTag = true;
       stripped += ' ';
@@ -108,7 +226,13 @@ function stripTagsToText(html: string): string {
       stripped += ch;
     }
   }
-  return decodeHtmlEntities(stripped).replace(/\s+/g, ' ').trim();
+
+  let text = decodeHtmlEntities(stripped).replace(/\s+/g, ' ').trim();
+  for (let i = 0; i < codeBlocks.length; i++) {
+    const token = `__FALADOR_CODE_BLOCK_${i}__`;
+    text = text.replace(new RegExp(`\\s*${token}\\s*`, 'g'), codeBlocks[i]);
+  }
+  return text.replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function extractTitle(html: string): string {
@@ -167,8 +291,8 @@ function extractLinks(html: string, baseUrl: string): string[] {
 }
 
 /**
- * Extrai título, texto limpo (sem script/style/noscript/svg e tags HTML) e links http/https
- * resolvidos e deduplicados de uma página HTML.
+ * Extrai título, texto limpo (sem nav/header/footer/script/style/noscript/svg, preservando blocos de código)
+ * e links http/https resolvidos e deduplicados de uma página HTML.
  */
 export function extractPageData(
   html: string,
@@ -221,55 +345,56 @@ function normalizeUrlKey(u: URL): string {
   return copy.toString();
 }
 
-async function fetchWithTimeout(
-  fetcher: FetcherFn,
-  url: string,
-  timeoutMs: number,
-  userAgent: string,
-  signals: AbortSignal[],
-): Promise<Response> {
-  const ac = new AbortController();
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    ac.abort(new Error(`Timeout após ${timeoutMs} ms`));
-  }, timeoutMs);
-  timer.unref?.();
-
-  const onAbort = () => ac.abort(new Error('Requisição cancelada'));
-  for (const s of signals) {
-    if (s.aborted) {
-      clearTimeout(timer);
-      throw new Error('Requisição cancelada (signal abortado)');
-    }
-    s.addEventListener('abort', onAbort, { once: true });
+async function readResponseTextWithLimit(res: Response, maxBytes: number): Promise<string> {
+  if (!res.body) {
+    const ab = await res.arrayBuffer();
+    const view = new Uint8Array(ab, 0, Math.min(ab.byteLength, maxBytes));
+    return new TextDecoder('utf-8', { fatal: false }).decode(view);
   }
+
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let streamDone = false;
 
   try {
-    return await fetcher(url, {
-      method: 'GET',
-      headers: {
-        'User-Agent': userAgent,
-        Accept: 'text/html, application/xhtml+xml, text/plain;q=0.9, */*;q=0.1',
-      },
-      redirect: 'error',
-      signal: ac.signal,
-    });
-  } catch (err: unknown) {
-    if (timedOut) {
-      throw new Error(`Timeout após ${timeoutMs} ms ao acessar ${url}`);
+    while (total < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) {
+        streamDone = true;
+        break;
+      }
+      if (!value || value.byteLength === 0) continue;
+
+      const remaining = maxBytes - total;
+      if (value.byteLength <= remaining) {
+        chunks.push(value);
+        total += value.byteLength;
+      } else {
+        chunks.push(value.subarray(0, remaining));
+        total += remaining;
+        break;
+      }
     }
-    throw err instanceof Error ? err : new Error(String(err));
+    if (!streamDone) {
+      await reader.cancel().catch(() => {});
+    }
   } finally {
-    clearTimeout(timer);
-    for (const s of signals) {
-      s.removeEventListener('abort', onAbort);
-    }
+    reader.releaseLock();
   }
+
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    merged.set(c, offset);
+    offset += c.byteLength;
+  }
+  return new TextDecoder('utf-8', { fatal: false }).decode(merged);
 }
 
 function isAbortError(err: unknown, signals: AbortSignal[]): boolean {
   if (signals.some((s) => s.aborted)) return true;
+  if (err instanceof SafeFetchError && err.code === 'ABORTED') return true;
   if (err instanceof Error && err.name === 'AbortError') return true;
   const msg = err instanceof Error ? err.message : String(err);
   return msg.toLowerCase().includes('cancelada') || msg.toLowerCase().includes('aborted');
@@ -346,9 +471,10 @@ export const toolCrawler: NodeTypeDef = {
     'timeoutMs',
     'maxCharsPerPage',
     'maxTotalChars',
+    'maxBytes',
     'userAgent',
   ],
-  bindingNames: ['__fetcher'],
+  bindingNames: ['__fetcher', '__dnsLookup'],
   inputs: [
     { name: 'in', type: 'phrase' },
     { name: 'parcs', type: 'tokens_parcial' },
@@ -388,6 +514,9 @@ export const toolCrawler: NodeTypeDef = {
     ) {
       errs.push({ path: 'params.maxTotalChars', code: 'INVALID_PARAM', message: 'maxTotalChars deve ser número positivo' });
     }
+    if (p.maxBytes !== undefined && (typeof p.maxBytes !== 'number' || Number.isNaN(p.maxBytes) || p.maxBytes <= 0)) {
+      errs.push({ path: 'params.maxBytes', code: 'INVALID_PARAM', message: 'maxBytes deve ser número positivo' });
+    }
     if (p.userAgent !== undefined && (typeof p.userAgent !== 'string' || p.userAgent.trim().length === 0)) {
       errs.push({ path: 'params.userAgent', code: 'INVALID_PARAM', message: 'userAgent deve ser string não vazia' });
     }
@@ -409,10 +538,16 @@ export const toolCrawler: NodeTypeDef = {
       200,
       Math.floor((ctx.params.maxTotalChars as number | undefined) ?? DEFAULT_MAX_TOTAL_CHARS),
     );
+    const maxBytes = Math.max(
+      1024,
+      Math.floor((ctx.params.maxBytes as number | undefined) ?? DEFAULT_MAX_RESPONSE_BYTES),
+    );
     const userAgent = ((ctx.params.userAgent as string | undefined) ?? DEFAULT_USER_AGENT).trim() || DEFAULT_USER_AGENT;
 
     const customFetcher = ctx.bindings?.__fetcher as FetcherFn | undefined;
     const fetcher: FetcherFn = typeof customFetcher === 'function' ? customFetcher : fetch;
+    const customDnsLookup = ctx.bindings?.__dnsLookup as DnsLookupFn | undefined;
+    const skipDns = Boolean(customFetcher) && typeof customDnsLookup !== 'function';
 
     let linearInterruptAc: AbortController | null = null;
 
@@ -482,8 +617,41 @@ export const toolCrawler: NodeTypeDef = {
         const currentUrlStr = item.url.toString();
 
         let res: Response;
+        let finalUrl = currentUrlStr;
         try {
-          res = await fetchWithTimeout(fetcher, currentUrlStr, timeoutMs, userAgent, opts.signals);
+          const fetched = await fetchWithSafeRedirects({
+            fetcher,
+            url: currentUrlStr,
+            timeoutMs,
+            headers: {
+              'User-Agent': userAgent,
+              Accept: 'text/html, application/xhtml+xml, text/plain;q=0.9, */*;q=0.1',
+            },
+            signals: opts.signals,
+            maxRedirects: MAX_REDIRECTS,
+            dnsLookup: customDnsLookup,
+            skipDns,
+            allowInternalHost: false,
+            validateRedirectUrl: (nextUrl) => {
+              if (!isDomainAllowed(nextUrl, allowedDomains)) {
+                return {
+                  ok: false,
+                  code: 'DOMAIN_NOT_ALLOWED',
+                  reason: `Redirect para domínio não permitido por allowedDomains: ${nextUrl.hostname}`,
+                };
+              }
+              return { ok: true };
+            },
+          });
+          res = fetched.response;
+          finalUrl = fetched.finalUrl;
+          if (finalUrl !== currentUrlStr) {
+            try {
+              visited.add(normalizeUrlKey(new URL(finalUrl)));
+            } catch {
+              /* ignore */
+            }
+          }
         } catch (err: unknown) {
           if (isAbortError(err, opts.signals)) {
             return {
@@ -494,15 +662,32 @@ export const toolCrawler: NodeTypeDef = {
               durationMs: Date.now() - t0,
             };
           }
+          if (err instanceof SafeFetchError) {
+            if (err.isRedirect) {
+              ctx.metrics.counter('tool.crawler.redirect_blocked', 1);
+            }
+            if (err.code === 'SSRF_BLOCKED') {
+              ctx.metrics.counter('tool.crawler.ssrf_blocked', 1);
+            } else if (err.code === 'DOMAIN_NOT_ALLOWED') {
+              ctx.metrics.counter('tool.crawler.domain_blocked', 1);
+            }
+            if (item.depth === 0) {
+              return {
+                ok: false,
+                code: err.isRedirect ? 'REDIRECT_BLOCKED' : err.code,
+                reason: err.message,
+                durationMs: Date.now() - t0,
+              };
+            }
+            ctx.log('warn', `tool.crawler erro ao seguir link ${currentUrlStr}: ${err.message}`);
+            continue;
+          }
           const msg = err instanceof Error ? err.message : String(err);
-          const isRedirectErr = msg.toLowerCase().includes('redirect');
           if (item.depth === 0) {
             return {
               ok: false,
-              code: isRedirectErr ? 'REDIRECT_BLOCKED' : 'FETCH_ERROR',
-              reason: isRedirectErr
-                ? `Redirect bloqueado (anti-SSRF) em ${currentUrlStr}: ${msg}`
-                : `Erro ao acessar ${currentUrlStr}: ${msg}`,
+              code: 'FETCH_ERROR',
+              reason: `Erro ao acessar ${currentUrlStr}: ${msg}`,
               durationMs: Date.now() - t0,
             };
           }
@@ -510,26 +695,13 @@ export const toolCrawler: NodeTypeDef = {
           continue;
         }
 
-        // Defesa extra contra mocks ou respostas 3xx que não lançam erro em redirect:'error'
-        if (res.status >= 300 && res.status < 400) {
-          ctx.metrics.counter('tool.crawler.redirect_blocked', 1);
-          if (item.depth === 0) {
-            return {
-              ok: false,
-              code: 'REDIRECT_BLOCKED',
-              reason: `HTTP ${res.status} redirect bloqueado (anti-SSRF) em ${currentUrlStr}`,
-              durationMs: Date.now() - t0,
-            };
-          }
-          continue;
-        }
-
         if (!res.ok) {
+          res.body?.cancel?.().catch(() => {});
           if (item.depth === 0) {
             return {
               ok: false,
               code: 'HTTP_ERROR',
-              reason: `Erro HTTP ${res.status} ao acessar ${currentUrlStr}`,
+              reason: `Erro HTTP ${res.status} ao acessar ${finalUrl}`,
               durationMs: Date.now() - t0,
             };
           }
@@ -538,7 +710,7 @@ export const toolCrawler: NodeTypeDef = {
 
         let body: string;
         try {
-          body = await res.text();
+          body = await readResponseTextWithLimit(res, maxBytes);
         } catch (err: unknown) {
           if (isAbortError(err, opts.signals)) {
             return {
@@ -553,7 +725,7 @@ export const toolCrawler: NodeTypeDef = {
             return {
               ok: false,
               code: 'FETCH_ERROR',
-              reason: `Erro ao ler resposta de ${currentUrlStr}: ${err instanceof Error ? err.message : String(err)}`,
+              reason: `Erro ao ler resposta de ${finalUrl}: ${err instanceof Error ? err.message : String(err)}`,
               durationMs: Date.now() - t0,
             };
           }
@@ -567,10 +739,10 @@ export const toolCrawler: NodeTypeDef = {
           /<html|<body|<title|<a\s/i.test(body);
 
         const extracted: ExtractedPageData = looksHtml
-          ? extractPageData(body, currentUrlStr, maxCharsPerPage)
+          ? extractPageData(body, finalUrl, maxCharsPerPage)
           : {
               title: '',
-              url: currentUrlStr,
+              url: finalUrl,
               text: truncateText(body.trim(), maxCharsPerPage),
               links: [],
             };

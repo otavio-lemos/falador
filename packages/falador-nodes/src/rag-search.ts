@@ -1,5 +1,6 @@
 // falador-nodes — rag.search: expõe context-store.ts (BM25) como ToolProvider sob demanda (ADR-008 Fase 2, ZERO deps)
 import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   type NodeCtx,
   type NodeRuntime,
@@ -70,7 +71,14 @@ export const ragSearch: NodeTypeDef = {
     const topK = (ctx.params.topK as number | undefined) ?? DEFAULT_TOP_K;
     const defaultTags = ctx.params.tags as string[] | undefined;
     const maxChars = (ctx.params.maxChars as number | undefined) ?? DEFAULT_MAX_CHARS;
-    const docsPath = (ctx.params.docsPath as string | undefined) ?? DEFAULT_DOCS_PATH;
+    const paramDocsPath = typeof ctx.params.docsPath === 'string' && ctx.params.docsPath.trim().length > 0
+      ? ctx.params.docsPath.trim()
+      : undefined;
+    const resolveDocsPath = (): string => {
+      if (paramDocsPath) return paramDocsPath;
+      const ctxDir = process.env.FALADOR_CONTEXT_DIR?.trim();
+      return ctxDir ? join(ctxDir, 'docs.json') : DEFAULT_DOCS_PATH;
+    };
 
     const toolDef: ToolDef = {
       name: toolName,
@@ -137,6 +145,10 @@ export const ragSearch: NodeTypeDef = {
             : undefined;
         const effectiveTags = argTags && argTags.length > 0 ? argTags : defaultTags;
 
+        const hasArgTags = Boolean(argTags && argTags.length > 0);
+        const usedDefaultTags = !hasArgTags && Boolean(defaultTags && defaultTags.length > 0);
+        const docsPath = resolveDocsPath();
+
         let docs: ContextDocument[];
         try {
           docs = await loadDocuments(ctx, docsPath);
@@ -150,11 +162,16 @@ export const ragSearch: NodeTypeDef = {
           };
         }
 
-        const chunks = searchChunks(docs, query, {
+        let chunks = searchChunks(docs, query, {
           topK,
           tags: effectiveTags,
           maxChars,
         });
+        let tagFallback = false;
+        if (chunks.length === 0 && usedDefaultTags) {
+          chunks = searchChunks(docs, query, { topK, maxChars });
+          tagFallback = chunks.length > 0;
+        }
 
         const durationMs = Date.now() - t0;
         ctx.metrics.counter('rag.search.queries', 1);
@@ -165,7 +182,7 @@ export const ragSearch: NodeTypeDef = {
             ok: true,
             output: 'Nenhum trecho relevante encontrado na documentação local.',
             durationMs,
-            meta: { hits: 0, query, tags: effectiveTags },
+            meta: { hits: 0, query, tags: effectiveTags, tagFallback: false },
           };
         }
 
@@ -177,7 +194,8 @@ export const ragSearch: NodeTypeDef = {
           meta: {
             hits: chunks.length,
             query,
-            tags: effectiveTags,
+            tags: tagFallback ? undefined : effectiveTags,
+            tagFallback,
             chunkIds: chunks.map((c) => c.id),
           },
         };

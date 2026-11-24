@@ -42,21 +42,39 @@ const STOPWORDS = new Set([
   'the', 'is', 'in', 'to', 'of', 'and', 'for', 'on', 'with', 'an',
 ]);
 
-/** Tokeniza texto: lowercase, NFD sem acentos, remove pontuação, ignora stopwords PT/EN. */
+/**
+ * Tokeniza texto: lowercase, NFD sem acentos, preserva tokens técnicos compostos
+ * (flags CLI `--dry-run`, IPs `10.0.0.1`, paths `/etc/nginx`, versões `0.8.0`, termos com hífen)
+ * junto com as palavras alfanuméricas normalizadas, ignorando stopwords PT/EN.
+ */
 export function tokenize(input: string): string[] {
   const normalized = input
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, ' ')
     .trim();
   if (!normalized) return [];
-  const raw = normalized.split(/\s+/);
+
+  const rawChunks = normalized.split(/[\s,;()[\]{}"'<>`]+/);
   const out: string[] = [];
-  for (const tok of raw) {
-    if (!tok || STOPWORDS.has(tok)) continue;
-    out.push(tok);
+
+  for (const raw of rawChunks) {
+    if (!raw) continue;
+
+    // Preserva token técnico composto (ex.: --dry-run, 10.0.0.1, /etc/nginx, 0.8.0, anti-ssrf)
+    const candidate = raw.replace(/^[^a-z0-9/-]+/, '').replace(/[^a-z0-9]+$/, '');
+    const hasTechSep = candidate.length > 0 && /[-./_]/.test(candidate) && /[a-z0-9]/.test(candidate);
+    if (hasTechSep && /^[a-z0-9/_.-]+$/.test(candidate) && !STOPWORDS.has(candidate)) {
+      out.push(candidate);
+    }
+
+    const subWords = raw.split(/[^a-z0-9]+/);
+    for (const w of subWords) {
+      if (!w || STOPWORDS.has(w)) continue;
+      out.push(w);
+    }
   }
+
   return out;
 }
 
