@@ -952,7 +952,11 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   background: $bg-panel;
   border: 1px solid $border-1;
   border-radius: 0;
-  overflow: hidden;
+  // Menu aberto do dropdown (services) precisa sair do painel — overflow:hidden
+  // corta na borda do panel (bug 2026-11-24, mesmo fix do runner bar).
+  overflow: visible;
+  position: relative;
+  z-index: 20;
 }
 .logs-panel--collapsed {
   height: auto;
@@ -986,7 +990,11 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   min-height: 40px;
   padding: $spacing-01 $spacing-04;
   border-bottom: 1px solid $border-1;
-  overflow-x: auto;
+  // Dropdown dos serviços abre o menu fora do panel — overflow-x:auto criava
+  // scroll interno e cortava o menu (bug 2026-11-24).
+  overflow: visible;
+  position: relative;
+  z-index: 21;
 }
 .logs-service-badges {
   display: flex;
