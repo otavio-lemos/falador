@@ -496,19 +496,27 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   padding: $spacing-02 $spacing-04;
   background: $bg-app;
   border-bottom: 1px solid $border-1;
-  overflow-x: hidden; // sem barra de rolagem horizontal feia
+  // overflow VISÍVEL: o menu aberto do dropdown precisa sair da faixa (overflow-x:hidden
+  // força overflow-y:auto e corta o menu dentro da barra — bug visto em 2026-11-23).
+  overflow: visible;
+  position: relative;
+  z-index: 20;
 }
 
+// TODAS as etapas em UMA linha: largura dividida pelo espaço disponível (flex-basis 0),
+// nunca pelo tamanho do nome do modelo; nome longo vira reticências no dropdown fechado
+// e aparece completo só no menu aberto.
 .live2-stages {
   display: flex;
-  flex-wrap: wrap; // acomoda todos os nós na mesma tela sem barra de rolagem
+  flex-wrap: nowrap;
   gap: $spacing-02;
   width: 100%;
+  min-width: 0;
 }
 
 .stage-dd {
-  flex: 1 1 auto;
-  min-width: 120px;
+  flex: 1 1 0;
+  min-width: 0;
   border-top: 2px solid var(--accent);
   padding-top: $spacing-01;
   display: flex;
@@ -518,12 +526,12 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 }
 
 .stage-dd--dual {
-  flex: 1.4 1 auto;
+  flex: 1 1 0;
   min-width: 0;
 }
 
 .stage-dd--triple {
-  flex: 1.8 1 auto;
+  flex: 1.5 1 0;
   min-width: 0;
 }
 
@@ -620,12 +628,17 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 
 // Dropdown principal da etapa (modo / modelo / etc.)
 .stage-dd-ctrl .stage-main-select {
-  flex: 1 1 auto;
-  min-width: 65px;
+  flex: 1 1 0;
+  min-width: 0;
   max-width: none;
 
+  .cds--list-box,
   .cds--list-box__field {
-    padding-inline: 6px 22px !important;
+    min-width: 0;
+  }
+
+  .cds--list-box__field {
+    padding-inline: 6px 26px !important;
   }
 
   .cds--list-box__label {
@@ -643,7 +656,7 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   max-width: none;
 
   .cds--list-box__field {
-    padding-inline: 6px 20px !important;
+    padding-inline: 6px 26px !important;
   }
 
   .cds--list-box__label {
@@ -1271,4 +1284,14 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 }
 .exec-chunk-stderr {
   color: var(--cds-support-error, #ff8389);
+}
+// Runner bar: dropdowns SEM seta (pedido do dono 2026-11-23) — clicar no campo abre o menu.
+.stage-dd-ctrl .cds--list-box__menu-icon {
+  display: none !important;
+}
+.stage-dd-ctrl .cds--list-box__field {
+  padding-inline-end: 6px !important;
+}
+.stage-dd-ctrl .stage-inst-select .cds--list-box__field {
+  padding-inline: 4px !important;
 }
