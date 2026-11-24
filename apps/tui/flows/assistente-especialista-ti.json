@@ -290,8 +290,7 @@
         "timeoutMs": 60000,
         "maxOutputBytes": 65536,
         "toolName": "exec_ssh",
-        "auditLogPath": "logs/exec-audit.jsonl",
-        "requireAllowlist": false
+        "auditLogPath": "logs/exec-audit.jsonl"
       }
     }
   ],
