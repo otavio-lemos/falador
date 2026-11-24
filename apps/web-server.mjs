@@ -35,16 +35,25 @@ const PORT = Number(process.env.FALADOR_WEB_PORT ?? 8787);
 
 // Carrega chaves do `.env.falador` quando o host não está via faladorctl (que sourcing
 // faz na inicialização). Sem isso os nós OMLX respondem 401 "API key required".
+// Procura em mais de um lugar: um worktree/branch NÃO tem `.env.falador` (é gitignored),
+// então caímos para o checkout principal ($HOME/ml/falador) e, por fim, FALADOR_ENV_FILE.
 {
-  try {
-    const text = readFileSync(join(ROOT, '.env.falador'), 'utf8');
-    for (const line of text.split('\n')) {
-      const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$/);
-      if (!m || process.env[m[1]]) continue;
-      const v = m[2].replace(/^['"]|['"]$/g, '').trim();
-      if (v) process.env[m[1]] = v;
-    }
-  } catch { /* .env.falador é opcional */ }
+  const candidates = [
+    process.env.FALADOR_ENV_FILE,
+    join(ROOT, '.env.falador'),
+    join(process.env.HOME ?? '', 'ml', 'falador', '.env.falador'),
+  ].filter((p) => typeof p === 'string' && p.length > 0);
+  for (const file of candidates) {
+    try {
+      const text = readFileSync(file, 'utf8');
+      for (const line of text.split('\n')) {
+        const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$/);
+        if (!m || process.env[m[1]]) continue;
+        const v = m[2].replace(/^['"]|['"]$/g, '').trim();
+        if (v) process.env[m[1]] = v;
+      }
+    } catch { /* arquivo ausente nesta candidata — tenta a próxima */ }
+  }
 }
 
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml' };
