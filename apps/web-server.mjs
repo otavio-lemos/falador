@@ -29,6 +29,20 @@ const DIST = join(ROOT, 'apps/web/dist');
 const LOG_FILES = { omlx: 'omlx.log', asr: 'asr.log', tts: 'tts.log', web: 'web.log' };
 const PORT = Number(process.env.FALADOR_WEB_PORT ?? 8787);
 
+// Carrega chaves do `.env.falador` quando o host não está via faladorctl (que sourcing
+// faz na inicialização). Sem isso os nós OMLX respondem 401 "API key required".
+{
+  try {
+    const text = readFileSync(join(ROOT, '.env.falador'), 'utf8');
+    for (const line of text.split('\n')) {
+      const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$/);
+      if (!m || process.env[m[1]]) continue;
+      const v = m[2].replace(/^['"]|['"]$/g, '').trim();
+      if (v) process.env[m[1]] = v;
+    }
+  } catch { /* .env.falador é opcional */ }
+}
+
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml' };
 const ALLOWED_DOC_EXTS = new Set(['.md', '.markdown', '.txt', '.pdf', '.yaml', '.yml', '.json']);
 
