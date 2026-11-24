@@ -438,6 +438,7 @@ export function LiveView({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [cmdDraft, setCmdDraft] = useState('');
+  const [editingCmd, setEditingCmd] = useState(false);
   const [fieldValues, setFieldValues] = useState<Record<string,string>>({});
   const [chatInput, setChatInput] = useState('');
   const [sendingChat, setSendingChat] = useState(false);
@@ -499,6 +500,8 @@ export function LiveView({
   const transcription = lastOf(sinks.transcription)?.text ?? '';
   const gate = runner.gates[0];
   const gateInfo = useMemo(() => parseGateCommand(gate), [gate]);
+  // Ao trocar/resolver o gate, sai do modo de edição do comando.
+  useEffect(() => { setEditingCmd(false); }, [gate?.nodeId]);
 
   // Contrato com a janela do Console: sempre que o gate pendente muda (inclusive
   // null no fim/reset do run), publica no mesmo canal. NÃO reenvia POST /api/gate.
@@ -1019,29 +1022,32 @@ export function LiveView({
                 </>
               ) : gateInfo.isCommand ? (
                 <>
-                  {gateInfo.reason && <p className="live-chat-entry-text">{gateInfo.reason}</p>}
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end' }}>
-                    <TextArea
+                  {gateInfo.reason && <span className="live-chat-entry-reason">{gateInfo.reason}</span>}
+                  {editingCmd ? (
+                    <TextInput
                       id="cmd-gate-input"
-                      labelText="Comando (editável antes da execução)"
-                      rows={2}
-                      className="cmd-gate-textarea"
+                      labelText="Comando"
+                      hideLabel
+                      size="sm"
+                      className="cmd-gate-input"
                       value={cmdDraft}
                       onChange={(e) => setCmdDraft(e.target.value)}
-                      style={{ flex: 1 }}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); approve(); } }}
                     />
-                    <ButtonSet className="gate-actions">
-                      <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
-                        Aprovar e Executar
-                      </Button>
-                      <Button kind="tertiary" size="sm" renderIcon={Edit} onClick={() => document.getElementById('cmd-gate-input')?.focus()}>
-                        Editar
-                      </Button>
-                      <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>
-                        Rejeitar
-                      </Button>
-                    </ButtonSet>
-                  </div>
+                  ) : (
+                    <code className="live-chat-entry-code" title={cmdDraft}>{cmdDraft}</code>
+                  )}
+                  <ButtonSet className="gate-actions">
+                    <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
+                      Aprovar e Executar
+                    </Button>
+                    <Button kind="tertiary" size="sm" renderIcon={Edit} onClick={() => setEditingCmd(true)}>
+                      Editar
+                    </Button>
+                    <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>
+                      Rejeitar
+                    </Button>
+                  </ButtonSet>
                 </>
               ) : editing ? (
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end' }}>

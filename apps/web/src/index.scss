@@ -1031,8 +1031,21 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
     margin: 0;
   }
 }
-.cmd-gate-textarea textarea,
-.live-chat-entry--gate textarea { min-height: 44px !important; font-size: 12px !important; }
+// Comando como texto na mesma linha; "Editar" troca por um input compacto.
+.cmd-gate-input {
+  inline-size: min(420px, 40vw);
+  flex-shrink: 0;
+}
+.cmd-gate-input .cds--text-input { block-size: 32px; }
+.live-chat-entry-reason {
+  flex: 0 1 auto;
+  min-width: 0;
+  color: $txt-2;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 // ---- logs dos serviços residentes (altura fixa controlada SOMENTE pelo usuário) ----
 .logs-panel {
