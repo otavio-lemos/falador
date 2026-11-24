@@ -17,6 +17,14 @@ import {
   TabPanels,
   TabPanel,
   CodeSnippet,
+  ProgressIndicator,
+  ProgressStep,
+  StructuredListWrapper,
+  StructuredListHead,
+  StructuredListBody,
+  StructuredListRow,
+  StructuredListCell,
+  preview__IconIndicator as IconIndicator,
 } from '@carbon/react';
 import {
   Pause,
@@ -44,7 +52,7 @@ import {
   VoiceActivate,
   ErrorFilled,
 } from '@carbon/icons-react';
-import type { Runner, Gate, AgentStep, Caption } from '../useRunner';
+import type { Runner, Gate, AgentStep, Caption, AuditEvent } from '../useRunner';
 import { exportSession, type Flow, type ContextDoc, type ServiceStatusMap } from '../api';
 import {
   deriveStages,
@@ -101,9 +109,28 @@ interface Props {
 
 interface Item { id: string; label: string }
 
+interface GateHistoryItem {
+  id: string;
+  nodeId: string;
+  status: 'Aprovado' | 'Editado' | 'Rejeitado';
+  command: string;
+  tool?: string;
+  host?: string;
+  ts: number;
+}
+
+const TOOL_TO_NODE_ID: Record<string, string> = {
+  exec_ssh: 'exec_ssh',
+  search_runbooks: 'rag_search',
+  web_search: 'web_search',
+  crawler: 'crawler',
+  tool_mcp: 'tool_mcp',
+  tool_workflow: 'tool_workflow',
+};
+
 interface ConversationEntry {
   id: string;
-  kind: 'user' | 'stt' | 'agent' | 'audio' | 'thought' | 'decision' | 'agent-step';
+  kind: 'user' | 'stt' | 'agent' | 'audio' | 'thought' | 'decision' | 'agent-step' | 'goal-validation' | 'gate-history';
   nodeId: string;
   title: string;
   subtitle: string;
@@ -112,6 +139,12 @@ interface ConversationEntry {
   live?: boolean;
   tag?: string;
   nodeType?: string;
+  tool?: string;
+  step?: number;
+  auditEvent?: AuditEvent;
+  gateStatus?: GateHistoryItem['status'];
+  gateHost?: string;
+  gateTool?: string;
 }
 
 function stageItems(stage: Stage, models: { omlx: string[]; cache: string[] }, apps: string[]): Item[] {
@@ -345,6 +378,14 @@ export function LiveView({
   const [exportOpen, setExportOpen] = useState(false);
   const [execOpen, setExecOpen] = useState(false);
   const [execTab, setExecTab] = useState(0);
+  const [gateHistory, setGateHistory] = useState<GateHistoryItem[]>([]);
+  const wasRunningRef = useRef(runner.running);
+  useEffect(() => {
+    if (!wasRunningRef.current && runner.running) {
+      setGateHistory([]);
+    }
+    wasRunningRef.current = runner.running;
+  }, [runner.running]);
   const [exporting, setExporting] = useState(false);
   const [exportResult, setExportResult] = useState<string | null>(null);
   const [webhookUrl, setWebhookUrl] = useState(() => {
@@ -391,53 +432,6 @@ export function LiveView({
   const hasExec = execNodes.length > 0;
   const execActive = execNodes.some((n) => n.params.dryRun === false);
   const hasAgent = flow.nodes.some((n) => n.type === 'agent.tools');
-  const openConsolePopup = () => {
-    const consoleWindow = window.open('', 'falador-console', 'width=900,height=700,scrollbars=yes,resizable=yes');
-    if (consoleWindow) {
-      consoleWindow.document.title = 'Falador - Console do Agente';
-      consoleWindow.document.body.innerHTML = `
-        <style>
-          body { font-family: 'IBM Plex Mono', monospace; background: #161616; color: #f4f4f4; margin: 0; padding: 16px; }
-          .header { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #393939; margin-bottom: 16px; }
-          .title { font-family: 'IBM Plex Sans', sans-serif; font-weight: 600; }
-          .log-entry { padding: 4px 0; border-bottom: 1px solid #2a2a2a; font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
-          .log-entry .ts { color: #8d8d8d; font-size: 11px; margin-right: 8px; }
-          .log-entry .node { color: #f59e0b; font-weight: 600; margin-right: 8px; }
-          .log-entry .type { color: #22d3ee; font-size: 11px; margin-right: 8px; text-transform: uppercase; }
-          .log-entry .text { color: #f4f4f4; }
-          .log-entry.stderr .text { color: #ff8389; }
-          .log-entry.command .text { color: #4ade80; }
-          .log-entry.output .text { color: #f4f4f4; }
-        </style>
-        <div class="header">
-          <span class="title">Falador - Console do Agente (${new Date().toLocaleTimeString()})</span>
-          <button onclick="window.close()" style="background:#da1e28;border:none;color:white;padding:4px 12px;border-radius:0;cursor:pointer;">Fechar</button>
-        </div>
-        <div id="logs"></div>
-        <script>
-          const logsDiv = document.getElementById('logs');
-          function addLog(entry) {
-            const div = document.createElement('div');
-            div.className = 'log-entry ' + (entry.type || '');
-            div.innerHTML = '<span class="ts">[' + entry.ts + ']</span><span class="node">' + (entry.node || '') + '</span><span class="type">' + (entry.type || '') + '</span><span class="text">' + entry.text + '</span>';
-            logsDiv.appendChild(div);
-            logsDiv.scrollTop = logsDiv.scrollHeight;
-          }
-          window.addLog = addLog;
-          // Load existing logs from parent
-          if (window.opener && window.opener.runner) {
-            const events = window.opener.runner.events || [];
-            events.forEach(e => {
-              if (e.type === 'node_error' && e.nodeId) {
-                addLog({ ts: new Date().toLocaleTimeString(), node: e.nodeId, type: e.code, text: e.message || '' });
-              }
-            });
-          }
-        </script>
-      `;
-      consoleWindow.document.close();
-    }
-  };
   const isAssisted = flow.nodes.some(
     (n) => n.type === 'decision.llm' || n.type === 'human.approve' || n.type === 'exec.command' || n.type === 'agent.tools',
   );
@@ -461,17 +455,54 @@ export function LiveView({
   const approve = () => {
     if (!gate) return;
     if (gateInfo.isCommand) {
+      const wasEdited = cmdDraft.trim() !== gateInfo.command.trim();
+      setGateHistory((prev) => [
+        ...prev,
+        {
+          id: `gate-${gate.nodeId}-${Date.now()}-${prev.length}`,
+          nodeId: gate.nodeId,
+          status: wasEdited ? 'Editado' : 'Aprovado',
+          command: cmdDraft,
+          tool: gateInfo.tool,
+          host: gateInfo.host,
+          ts: Date.now(),
+        },
+      ]);
       const payload = gateInfo.host && gateInfo.host !== 'local'
         ? JSON.stringify({ command: cmdDraft, host: gateInfo.host, ...(gateInfo.reason ? { reason: gateInfo.reason } : {}) })
         : cmdDraft;
       runner.gate(gate.nodeId, payload);
       return;
     }
-    runner.gate(gate.nodeId, editing ? draft : suggestion);
+    const finalText = editing ? draft : suggestion;
+    const wasEdited = editing && draft.trim() !== suggestion.trim();
+    setGateHistory((prev) => [
+      ...prev,
+      {
+        id: `gate-${gate.nodeId}-${Date.now()}-${prev.length}`,
+        nodeId: gate.nodeId,
+        status: wasEdited ? 'Editado' : 'Aprovado',
+        command: finalText,
+        ts: Date.now(),
+      },
+    ]);
+    runner.gate(gate.nodeId, finalText);
     setEditing(false);
   };
   const rejectGate = () => {
     if (!gate) return;
+    setGateHistory((prev) => [
+      ...prev,
+      {
+        id: `gate-${gate.nodeId}-${Date.now()}-${prev.length}`,
+        nodeId: gate.nodeId,
+        status: 'Rejeitado',
+        command: gateInfo.isCommand ? cmdDraft : suggestion,
+        tool: gateInfo.tool,
+        host: gateInfo.host,
+        ts: Date.now(),
+      },
+    ]);
     runner.gate(gate.nodeId, null);
     setEditing(false);
   };
@@ -485,6 +516,7 @@ export function LiveView({
     setDraft('');
     setCmdDraft('');
     setChatInput('');
+    setGateHistory([]);
     setExportResult(null);
     setDocsOpen(false);
   }, [resetSignal]);
@@ -614,6 +646,49 @@ export function LiveView({
         title: label(s.nodeId), subtitle: `Passo ${s.step} · ${phase}`,
         text: `${s.tool}${duration}${s.dryRun ? ' · dry-run' : ''}${args}`, ts: s.ts,
         tag: `Passo ${s.step}`, nodeType: nodes.get(s.nodeId)?.type,
+        tool: s.tool, step: s.step,
+      });
+    }
+    for (const ev of runner.audit) {
+      if (ev.op === 'goal_validation' && ev.validation) {
+        items.push({
+          id: `audit-val-${ev.runId}-${ev.seq}`,
+          kind: 'goal-validation',
+          nodeId: ev.nodeId,
+          title: 'Validação de Objetivo',
+          subtitle: ev.validation.achieved ? 'Objetivo atingido' : 'Objetivo pendente',
+          text: ev.goal ?? '',
+          ts: ev.ts,
+          tag: ev.validation.achieved ? 'Atingido' : 'Pendente',
+          auditEvent: ev,
+        });
+      } else if (ev.op === 'agent_final' && ev.maxStepsReached) {
+        items.push({
+          id: `audit-final-${ev.runId}-${ev.seq}`,
+          kind: 'goal-validation',
+          nodeId: ev.nodeId,
+          title: 'Validação de Objetivo',
+          subtitle: 'Limite de passos atingido',
+          text: ev.text ?? 'Limite máximo de passos atingido.',
+          ts: ev.ts,
+          tag: 'Limite de passos',
+          auditEvent: ev,
+        });
+      }
+    }
+    for (const h of gateHistory) {
+      items.push({
+        id: h.id,
+        kind: 'gate-history',
+        nodeId: h.nodeId,
+        title: 'Aprovação',
+        subtitle: h.status,
+        text: h.command,
+        ts: h.ts,
+        tag: h.status,
+        gateStatus: h.status,
+        gateHost: h.host,
+        gateTool: h.tool,
       });
     }
     if (showThoughts) {
@@ -629,7 +704,15 @@ export function LiveView({
     if (liveStt) pushLive(liveStt, 'stt');
     if (liveAgent) pushLive(liveAgent, 'agent');
     return items.sort((a, b) => a.ts - b.ts);
-  }, [flow.nodes, flow.edges, runner.chatMessages, runner.captions, runner.events, runner.thoughts, runner.agentSteps, sinks, showThoughts, liveAgent, liveStt, captureApp, chatNode]);
+  }, [flow.nodes, flow.edges, runner.chatMessages, runner.captions, runner.events, runner.thoughts, runner.agentSteps, runner.audit, gateHistory, sinks, showThoughts, liveAgent, liveStt, captureApp, chatNode]);
+
+  const latestPlan = useMemo(() => {
+    for (let i = runner.audit.length - 1; i >= 0; i--) {
+      const a = runner.audit[i];
+      if (a.op === 'plan' && Array.isArray(a.plan) && a.plan.length > 0) return a.plan;
+    }
+    return null;
+  }, [runner.audit]);
   const chatLogRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = chatLogRef.current;
@@ -825,9 +908,16 @@ export function LiveView({
   const activeNodeIds = useMemo(() => {
     const active = new Set<string>();
     if (!runner.running) return active;
+    const flowNodeIds = new Set(flow.nodes.map((n) => n.id));
     for (const g of runner.gates) active.add(g.nodeId);
     for (const s of runner.agentSteps.slice(-4)) {
-      if (s.phase === 'calling') active.add(s.nodeId);
+      if (s.phase === 'calling') {
+        active.add(s.nodeId);
+        const mapped = TOOL_TO_NODE_ID[s.tool]
+          ?? (s.tool.includes('mcp') && flowNodeIds.has('tool_mcp') ? 'tool_mcp' : undefined)
+          ?? flow.nodes.find((n) => n.id === s.tool || n.params?.toolName === s.tool)?.id;
+        if (mapped && flowNodeIds.has(mapped)) active.add(mapped);
+      }
     }
     const recentEvents = runner.events.slice(-6);
     for (let i = recentEvents.length - 1; i >= 0; i--) {
@@ -944,6 +1034,118 @@ export function LiveView({
         </div>
       );
     }
+    if (m.kind === 'goal-validation' && m.auditEvent) {
+      const ev = m.auditEvent;
+      const v = ev.validation;
+      const isMaxSteps = ev.op === 'agent_final' && ev.maxStepsReached;
+      const achieved = Boolean(v?.achieved);
+      return (
+        <ChatCard
+          key={m.id}
+          kind="goal-validation"
+          nodeId={m.nodeId}
+          role="Validação de Objetivo"
+          tag={m.tag ?? (achieved ? 'Atingido' : 'Pendente')}
+          tagType={achieved ? 'green' : isMaxSteps ? 'red' : 'magenta'}
+          accent={achieved ? 'var(--cds-support-success)' : isMaxSteps ? 'var(--cds-support-error)' : 'var(--cds-support-warning)'}
+          icon={achieved ? <Checkmark size={18} /> : isMaxSteps ? <ErrorFilled size={18} /> : <Bot size={18} />}
+          ts={m.ts}
+          ariaLabel="Validação de Objetivo"
+          body={(
+            <div className="live-goal-validation">
+              <StructuredListWrapper isCondensed aria-label="Validação de Objetivo">
+                <StructuredListHead>
+                  <StructuredListRow head>
+                    <StructuredListCell head>Campo</StructuredListCell>
+                    <StructuredListCell head>Valor</StructuredListCell>
+                  </StructuredListRow>
+                </StructuredListHead>
+                <StructuredListBody>
+                  {v ? (
+                    <>
+                      <StructuredListRow>
+                        <StructuredListCell noWrap>Status</StructuredListCell>
+                        <StructuredListCell>
+                          <IconIndicator
+                            kind={v.achieved ? 'succeeded' : 'caution-major'}
+                            label={v.achieved ? 'Objetivo atingido' : 'Não atingido'}
+                          />
+                        </StructuredListCell>
+                      </StructuredListRow>
+                      <StructuredListRow>
+                        <StructuredListCell noWrap>Confiança</StructuredListCell>
+                        <StructuredListCell>{`${Math.round(v.confidence * 100)}%`}</StructuredListCell>
+                      </StructuredListRow>
+                      <StructuredListRow>
+                        <StructuredListCell noWrap>Lacunas</StructuredListCell>
+                        <StructuredListCell>{v.gaps.length > 0 ? v.gaps.join('; ') : 'Nenhuma'}</StructuredListCell>
+                      </StructuredListRow>
+                      <StructuredListRow>
+                        <StructuredListCell noWrap>Próximas ações</StructuredListCell>
+                        <StructuredListCell>{v.nextActions.length > 0 ? v.nextActions.join('; ') : 'Nenhuma'}</StructuredListCell>
+                      </StructuredListRow>
+                    </>
+                  ) : (
+                    <>
+                      <StructuredListRow>
+                        <StructuredListCell noWrap>Status</StructuredListCell>
+                        <StructuredListCell>
+                          <IconIndicator kind="failed" label="Limite de passos atingido" />
+                        </StructuredListCell>
+                      </StructuredListRow>
+                      {ev.text && (
+                        <StructuredListRow>
+                          <StructuredListCell noWrap>Resumo</StructuredListCell>
+                          <StructuredListCell>{ev.text}</StructuredListCell>
+                        </StructuredListRow>
+                      )}
+                    </>
+                  )}
+                </StructuredListBody>
+              </StructuredListWrapper>
+            </div>
+          )}
+        />
+      );
+    }
+    if (m.kind === 'gate-history') {
+      const status = m.gateStatus ?? 'Aprovado';
+      return (
+        <ChatCard
+          key={m.id}
+          kind="gate-history"
+          nodeId={m.nodeId}
+          role="Aprovação"
+          tag={status}
+          tagType={status === 'Aprovado' ? 'green' : status === 'Editado' ? 'cyan' : 'red'}
+          accent={status === 'Rejeitado' ? 'var(--cds-support-error)' : 'var(--cds-support-success)'}
+          icon={status === 'Rejeitado' ? <Close size={16} /> : <Checkmark size={16} />}
+          ts={m.ts}
+          ariaLabel={`Gate ${status}`}
+          body={(
+            <>
+              {(m.gateTool || m.gateHost) && (
+                <div className="live-chat-gate-tags">
+                  {m.gateTool && <Tag type="teal" size="sm">Tool: {m.gateTool}</Tag>}
+                  {m.gateHost && <Tag type="cyan" size="sm">Host: {m.gateHost}</Tag>}
+                </div>
+              )}
+              {m.text.includes('\n') || m.text.length > 160 ? (
+                <div className="live-chat-entry-text">{m.text}</div>
+              ) : (
+                <CodeSnippet type="single" hideCopyButton>{m.text}</CodeSnippet>
+              )}
+            </>
+          )}
+        />
+      );
+    }
+    const isExecStep = m.kind === 'agent-step' && Boolean(m.tool && (m.tool.startsWith('exec_') || m.tool.includes('mcp')));
+    const execIdx = isExecStep
+      ? runner.executions.findIndex(
+          (e) => e.id === `${m.nodeId}:${m.step ?? 0}` || (e.nodeId === m.nodeId && e.step === m.step),
+        )
+      : -1;
     return (
       <ChatCard
         key={m.id}
@@ -957,10 +1159,27 @@ export function LiveView({
         ts={m.ts}
         meta={meta}
         body={(
-          <div className="live-chat-entry-text">
-            {m.text}
-            {m.live && <span className="live-cursor" />}
-          </div>
+          <>
+            <div className="live-chat-entry-text">
+              {m.text}
+              {m.live && <span className="live-cursor" />}
+            </div>
+            {(isExecStep || execIdx >= 0) && (
+              <div className="live-chat-step-actions">
+                <Button
+                  kind="tertiary"
+                  size="sm"
+                  renderIcon={Terminal}
+                  onClick={() => {
+                    if (execIdx >= 0) setExecTab(execIdx);
+                    setExecOpen(true);
+                  }}
+                >
+                  Abrir no Console
+                </Button>
+              </div>
+            )}
+          </>
         )}
       />
     );
@@ -1164,6 +1383,39 @@ export function LiveView({
           <>
               <div className="live-chat">
                 <div className="live2-label">Conversa</div>
+                {latestPlan && (
+                  <div className="live-plan-panel">
+                    <Accordion size="sm">
+                      <AccordionItem
+                        open
+                        title={`Plano de execução (${latestPlan.filter((p) => p.status === 'verified').length}/${latestPlan.length} verificados)`}
+                      >
+                        <ProgressIndicator
+                          currentIndex={(() => {
+                            const idx = latestPlan.findIndex((p) => p.status === 'pending');
+                            return idx >= 0 ? idx : latestPlan.length;
+                          })()}
+                        >
+                          {latestPlan.map((p, idx) => {
+                            const firstPendingIdx = latestPlan.findIndex((x) => x.status === 'pending');
+                            return (
+                              <ProgressStep
+                                key={p.id}
+                                label={p.description}
+                                secondaryLabel={p.evidence ? `${p.verification} · ${p.evidence}` : p.verification}
+                                description={`Verificação: ${p.verification}${p.evidence ? ` | Evidência: ${p.evidence}` : ''}`}
+                                complete={p.status === 'verified'}
+                                invalid={p.status === 'failed'}
+                                current={p.status === 'pending' && idx === firstPendingIdx}
+                                disabled={p.status === 'pending' && firstPendingIdx >= 0 && idx > firstPendingIdx}
+                              />
+                            );
+                          })}
+                        </ProgressIndicator>
+                      </AccordionItem>
+                    </Accordion>
+                  </div>
+                )}
                 <div className="live-chat-log" ref={chatLogRef}>
                   {conversation.length === 0 && !liveAgent && !gateCard && !errorCard && (
                     <p className="live-chat-empty">
@@ -1299,7 +1551,7 @@ export function LiveView({
           try { localStorage.setItem(THOUGHTS_STORAGE_KEY, String(next)); } catch { /* ignore */ }
         }}
         hasAgent={hasAgent}
-        onOpenConsole={openConsolePopup}
+        onOpenConsole={() => setExecOpen(true)}
         audit={runner.audit}
       />
 
