@@ -9,8 +9,8 @@ test('builder loads a real workflow and canvas', async ({ page }) => {
   await expect(page.getByRole('tablist', { name: 'Modo da interface' })).toBeVisible();
   await expect(page.getByRole('combobox', { name: 'Workflow' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Testar' })).toBeVisible();
-  // a aba Workflow é o "live": só habilita com flow carregado
-  await expect(page.getByRole('button', { name: 'Workflow' })).toBeEnabled();
+  // a aba Runner é o "live": só habilita com flow carregado
+  await expect(page.getByRole('button', { name: 'Runner' })).toBeEnabled();
   // o flow default é carregado do /api/flows com nome real e contagem de nós
   await expect(page.getByRole('heading', { name: 'assistente-entrevista' })).toBeVisible();
   await expect(page.getByText(/9 nós[\s·]*9 conexões/)).toBeVisible();
@@ -97,17 +97,23 @@ test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed 
     { type: 'caption', nodeId: 'resposta', text: 'Opa, tudo bem? Como posso ajudar?', final: true },
     { type: 'node_error', nodeId: 'voz', code: 'log_info', message: 'fala: "Opa, tudo bem?" (42 KB)' },
     { type: 'node_error', nodeId: 'alto', code: 'log_info', message: 'playback ok (1,2s)' },
+    { type: 'node_error', nodeId: 'agente', code: 'EXEC_ERROR', message: 'Falha simulada na ferramenta' },
     { type: 'gate', nodeId: 'agente', text: 'Sugestão que precisa de revisão humana.' },
   ];
   const body = events.map((ev) => `event: runner\ndata: ${JSON.stringify(ev)}\n\n`).join('')
     + 'event: ended\ndata: {"code":0}\n\n';
+  const gatePayloads: unknown[] = [];
+  await page.route('**/api/gate', async (route) => {
+    gatePayloads.push(route.request().postDataJSON());
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
+  });
   await page.route('**/api/run', (route) => route.fulfill({
     status: 200,
     contentType: 'text/event-stream',
     body,
   }));
 
-  await page.getByRole('button', { name: 'Workflow' }).click();
+  await page.getByRole('button', { name: 'Runner' }).click();
   await page.getByRole('combobox', { name: 'Workflow' }).click();
   await page.getByRole('option', { name: 'agente-workflows' }).click();
   await page.getByRole('button', { name: 'Iniciar', exact: true }).click();
@@ -117,6 +123,11 @@ test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed 
   await expect(page.locator('.live-chat-entry--stt')).toContainText('Transcription');
   await expect(page.locator('.live-chat-entry--agent')).toContainText('Opa, tudo bem? Como posso ajudar?');
   await expect(page.locator('.live-chat-entry--agent')).toContainText('Agent');
+  await expect(page.locator('.live-chat-entry--agent-step')).toContainText('Passo 1');
+  await expect(page.locator('.live-chat-entry--agent-step')).toContainText('search_docs');
+  await expect(page.locator('.live2 .live2-error')).toHaveCount(0);
+  await expect(page.locator('.live-chat-entry--error')).toContainText('Erro');
+  await expect(page.locator('.live-chat-entry--error')).toContainText('Falha simulada na ferramenta');
   await expect(page.locator('[data-node-id="voz"]')).toContainText('TTS');
   await expect(page.locator('[data-node-id="voz"]')).toContainText('fala: "Opa, tudo bem?" (42 KB)');
   await expect(page.locator('[data-node-id="alto"]')).toContainText('Playback');
@@ -128,11 +139,12 @@ test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed 
   const agentBox = await page.locator('.live-chat-entry--agent').boundingBox();
   expect(userBox?.x).toBe(agentBox?.x);
 
-  await expect(page.getByRole('region', { name: 'Sugestão de resposta pendente' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Aprovar & Falar', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Editar', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Regerar', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Rejeitar', exact: true })).toBeVisible();
+  const gateEntry = page.locator('.live-chat-entry.live-chat-entry--gate');
+  await expect(gateEntry).toBeVisible();
+  await expect(gateEntry.getByRole('button', { name: 'Aprovar & Falar', exact: true })).toBeVisible();
+  await expect(gateEntry.getByRole('button', { name: 'Editar', exact: true })).toBeVisible();
+  await expect(gateEntry.getByRole('button', { name: 'Regerar', exact: true })).toBeVisible();
+  await expect(gateEntry.getByRole('button', { name: 'Rejeitar', exact: true })).toBeVisible();
 
   const thoughtsToggle = page.getByRole('button', { name: 'Pensamentos', exact: true });
   await thoughtsToggle.click();
@@ -147,9 +159,21 @@ test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed 
   await thoughtsToggle.click();
   await expect(page.locator('.live-chat-thought')).toHaveCount(0);
 
+  await gateEntry.getByRole('button', { name: 'Aprovar & Falar', exact: true }).click();
+  await expect.poll(() => gatePayloads.length).toBe(1);
+  expect(gatePayloads[0]).toEqual({ nodeId: 'agente', text: 'Sugestão que precisa de revisão humana.' });
+  await expect(gateEntry).toHaveCount(0);
+
   const logsPanel = page.locator('.live2 .logs-panel');
+  const viewTabs = logsPanel.locator('.logs-panel-view');
+  await expect(viewTabs.getByRole('tab', { name: 'Logs' })).toBeVisible();
+  await expect(viewTabs.getByRole('tab', { name: /^Auditoria/ })).toBeVisible();
+  await logsPanel.locator('.logs-panel-services button').first().click();
+  await expect(logsPanel.locator('.logs-panel-services').getByText('Auditoria')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+
   const badges = await logsPanel.locator('.logs-service-badges').boundingBox();
-  const title = await logsPanel.locator('.logs-panel-title').boundingBox();
+  const title = await viewTabs.boundingBox();
   const clear = await logsPanel.getByRole('button', { name: 'Limpar logs' }).boundingBox();
   const collapseButtons = logsPanel.getByRole('button', { name: 'Recolher logs' });
   expect(await collapseButtons.count()).toBe(2);
@@ -173,7 +197,7 @@ test('unified Input and Output stages use instance selectors and sync with topba
   });
   await page.reload();
 
-  await page.getByRole('button', { name: 'Workflow' }).click();
+  await page.getByRole('button', { name: 'Runner' }).click();
   // mini-mapa mostra o mesmo nome do componente no workflow
   await expect(page.locator('.wf-minimap text', { hasText: /^Output 3$/ })).toBeVisible();
 
@@ -192,6 +216,7 @@ test('unified Input and Output stages use instance selectors and sync with topba
   await expect(inputStage.getByRole('option')).toHaveText(['Aplicações', 'Microfone', 'Chat']);
 
   await page.getByRole('option', { name: 'Chat', exact: true }).click();
+  await expect(page.locator('.wf-minimap .wf-mm-node')).toHaveCount(9);
   const useVoiceBtn = page.getByRole('button', { name: 'Usar voz' });
   await expect(useVoiceBtn).toBeVisible();
   await expect(useVoiceBtn).toHaveAttribute('aria-pressed', 'false');

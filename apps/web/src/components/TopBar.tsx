@@ -111,7 +111,7 @@ export function TopBar(p: Props) {
               onClick={p.onGoLive}
               disabled={!p.currentFlow || p.canGoLive === false}
             >
-              Workflow
+              Runner
             </Button>
           </div>
           <div className="live-flow-select">

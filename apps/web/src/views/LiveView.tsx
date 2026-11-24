@@ -1,7 +1,7 @@
 // Tela de EXECUÇÃO — LIVE MODE + latência com breakdown + DRY-RUN/EXEC ATIVO + Limpar contexto +
 // Exportar sessão (.md / webhook) + card rico de aprovação (comandos/host/risco d1) +
 // sidebar de Documentos/Runbooks (RAG BM25 com tags e chunks).
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Accordion,
   AccordionItem,
@@ -42,6 +42,7 @@ import {
   VolumeUp,
   VolumeMute,
   VoiceActivate,
+  ErrorFilled,
 } from '@carbon/icons-react';
 import type { Runner, Gate, AgentStep, Caption } from '../useRunner';
 import { exportSession, type Flow, type ContextDoc, type ServiceStatusMap } from '../api';
@@ -61,7 +62,6 @@ import {
 } from '../live-utils';
 import { WorkflowMiniMap } from '../components/WorkflowMiniMap';
 import { LogsPanel } from '../components/LogsPanel';
-import { AuditPanel } from '../components/AuditPanel';
 
 const WEBHOOK_STORAGE_KEY = 'falador.webhookUrl';
 const THOUGHTS_STORAGE_KEY = 'falador.showThoughts';
@@ -103,7 +103,7 @@ interface Item { id: string; label: string }
 
 interface ConversationEntry {
   id: string;
-  kind: 'user' | 'stt' | 'agent' | 'audio' | 'thought';
+  kind: 'user' | 'stt' | 'agent' | 'audio' | 'thought' | 'decision' | 'agent-step';
   nodeId: string;
   title: string;
   subtitle: string;
@@ -252,6 +252,50 @@ function riskTagType(decision?: string): 'green' | 'warm-gray' | 'red' | 'magent
   return 'purple';
 }
 
+type ChatTagType = 'gray' | 'cyan' | 'green' | 'blue' | 'purple' | 'teal' | 'red' | 'magenta' | 'warm-gray';
+
+// Shell ÚNICO de toda ocorrência na conversa (referência do dono, 2026-11-23):
+// barra de acento, avatar, papel em negrito, Tag, hora e corpo. Vale para mensagem,
+// transcrição, resposta, áudio, passo, decisão, erro e aprovação.
+function ChatCard({
+  kind, nodeId, role, tag, tagType, accent, icon, ts, meta, body, ariaLabel,
+}: {
+  kind: string;
+  nodeId: string;
+  role: string;
+  tag: string;
+  tagType: ChatTagType;
+  accent: string;
+  icon: ReactNode;
+  ts?: number;
+  meta?: ReactNode;
+  body: ReactNode;
+  ariaLabel?: string;
+}) {
+  return (
+    <article
+      className={`live-chat-entry live-chat-entry--${kind}`}
+      data-node-id={nodeId}
+      style={{ ['--accent' as string]: accent }}
+      aria-label={ariaLabel}
+    >
+      <span className="live-chat-accent" aria-hidden="true" />
+      <span className="live-chat-avatar" aria-hidden="true">{icon}</span>
+      <div className="live-chat-block-body">
+        <span className="live-chat-entry-head">
+          <strong className="live-chat-entry-role">{role}</strong>
+          <Tag type={tagType} size="sm">{tag}</Tag>
+          <span className="live-chat-entry-meta">
+            {meta}
+            {ts != null && <time>{new Date(ts).toLocaleTimeString()}</time>}
+          </span>
+        </span>
+        {body}
+      </div>
+    </article>
+  );
+}
+
 export function LiveView({
   runner, flow, scenarioName, theme, onToggleTheme,
   inputMode, outputMode, inputResetTick = 0, outputResetTick = 0, onToggleMicMute, onToggleOutputMode,
@@ -301,7 +345,6 @@ export function LiveView({
   const [exportOpen, setExportOpen] = useState(false);
   const [execOpen, setExecOpen] = useState(false);
   const [execTab, setExecTab] = useState(0);
-  const [footerTab, setFooterTab] = useState(0);
   const [exporting, setExporting] = useState(false);
   const [exportResult, setExportResult] = useState<string | null>(null);
   const [webhookUrl, setWebhookUrl] = useState(() => {
@@ -413,7 +456,7 @@ export function LiveView({
     if (e.type !== 'node_error') return false;
     const code = String((e as { code?: string }).code ?? '');
     return code !== 'log_info' && code !== 'log_warn';
-  }) as { message?: string; error?: string; nodeId?: string } | undefined;
+  }) as { message?: string; error?: string; nodeId?: string; _uiTs?: number } | undefined;
 
   const approve = () => {
     if (!gate) return;
@@ -527,6 +570,22 @@ export function LiveView({
     for (const [i, ev] of runner.events.entries()) {
       const nodeId = String(ev.nodeId ?? '');
       const type = nodes.get(nodeId)?.type;
+      if (ev.type === 'node_error' && (ev.code === 'log_info' || ev.code === 'log_warn') && (type === 'decision.llm' || type === 'turn.detector')) {
+        const text = String(ev.message ?? '').trim();
+        if (!text) continue;
+        items.push({
+          id: `decision-${i}`,
+          kind: 'decision',
+          nodeId,
+          title: label(nodeId),
+          subtitle: type === 'turn.detector' ? 'Fim de turno' : 'Decisão',
+          text,
+          ts: Number(ev._uiTs ?? 0),
+          tag: type === 'turn.detector' ? 'Turno' : 'Decisão',
+          nodeType: type,
+        });
+        continue;
+      }
       if (ev.type !== 'node_error' || ev.code !== 'log_info') continue;
       const text = String(ev.message ?? '').trim();
       if (!text) continue;
@@ -541,6 +600,22 @@ export function LiveView({
         tag: isTts ? 'TTS' : 'Playback', nodeType: type,
       });
     }
+    const latestSteps = new Map<string, AgentStep>();
+    for (const s of runner.agentSteps) {
+      const key = `${s.nodeId}:${s.step}`;
+      latestSteps.set(key, { ...s, ts: latestSteps.get(key)?.ts ?? s.ts });
+    }
+    for (const [key, s] of latestSteps) {
+      const phase = s.phase === 'calling' ? 'chamando' : s.phase === 'rejected' ? 'rejeitada' : s.phase === 'repeated' ? 'repetida' : s.ok === false ? 'erro' : 'concluída';
+      const args = s.args && Object.keys(s.args).length > 0 ? `\n${JSON.stringify(s.args)}` : '';
+      const duration = typeof s.durationMs === 'number' ? ` · ${Math.round(s.durationMs)} ms` : '';
+      items.push({
+        id: `agent-step-${key}`, kind: 'agent-step', nodeId: s.nodeId,
+        title: label(s.nodeId), subtitle: `Passo ${s.step} · ${phase}`,
+        text: `${s.tool}${duration}${s.dryRun ? ' · dry-run' : ''}${args}`, ts: s.ts,
+        tag: `Passo ${s.step}`, nodeType: nodes.get(s.nodeId)?.type,
+      });
+    }
     if (showThoughts) {
       for (const t of runner.thoughts) {
         items.push({
@@ -548,22 +623,6 @@ export function LiveView({
           title: label(t.nodeId), subtitle: t.final ? 'Pensamento' : 'Pensamento · em andamento',
           text: t.text, ts: t.ts,
           tag: 'Roteamento', nodeType: nodes.get(t.nodeId)?.type,
-        });
-      }
-      const latestSteps = new Map<string, AgentStep>();
-      for (const s of runner.agentSteps) {
-        const key = `${s.nodeId}:${s.step}`;
-        latestSteps.set(key, { ...s, ts: latestSteps.get(key)?.ts ?? s.ts });
-      }
-      for (const [key, s] of latestSteps) {
-        const phase = s.phase === 'calling' ? 'chamando' : s.phase === 'rejected' ? 'rejeitada' : s.phase === 'repeated' ? 'repetida' : s.ok === false ? 'erro' : 'concluída';
-        const args = s.args && Object.keys(s.args).length > 0 ? `\n${JSON.stringify(s.args)}` : '';
-        const duration = typeof s.durationMs === 'number' ? ` · ${Math.round(s.durationMs)} ms` : '';
-        items.push({
-          id: `agent-step-${key}`, kind: 'thought', nodeId: s.nodeId,
-          title: label(s.nodeId), subtitle: `Passo ${s.step} · ${phase}`,
-          text: `${s.tool}${duration}${s.dryRun ? ' · dry-run' : ''}${args}`, ts: s.ts,
-          tag: `Passo ${s.step}`, nodeType: nodes.get(s.nodeId)?.type,
         });
       }
     }
@@ -575,7 +634,7 @@ export function LiveView({
   useEffect(() => {
     const el = chatLogRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [conversation]);
+  }, [conversation, gate, lastError, runner.lastRunError]);
 
   const handleSendChat = async () => {
     const text = chatInput.trim();
@@ -620,46 +679,103 @@ export function LiveView({
 
   const bd = runner.latencyBreakdown;
 
-  // Card de aprovação de comando (exec.command / agent.tools) — compartilhado pelo layout
-  // de chat (flows com input.chat) e pelo layout clássico de sugestão.
-  const commandGateCard = gate && gateInfo.isCommand ? (
-    <div className="cmd-gate-card">
-      <div className="cmd-gate-head">
-        <span className="cmd-gate-title"><Terminal size={16} /> Approval of Command ({gate.nodeId})</span>
-        <div className="cmd-gate-badges">
-          {gateInfo.tool && (
-            <Tag type="teal" size="sm">Tool: {gateInfo.tool}</Tag>
+  // Aprovação/comando pendente: MESMO card de conversa (.live-chat-entry) usado por
+  // todas as ocorrências — nada de bloco próprio. Ações ficam dentro do card.
+  const gateCard = hasGate && gate ? (
+    <ChatCard
+      kind="gate"
+      nodeId={gate.nodeId}
+      role="Aprovação"
+      tag={gateInfo.isCommand ? 'Comando' : 'Revisão'}
+      tagType={gateInfo.isCommand ? 'teal' : 'purple'}
+      accent="var(--cds-support-warning, #f1c21b)"
+      icon={<Checkmark size={18} />}
+      ts={gate.ts}
+      ariaLabel={gateInfo.isCommand ? 'Aprovação de comando pendente' : 'Aprovação de resposta pendente'}
+      body={(
+        <>
+          <div className="live-chat-gate-tags">
+            {gateInfo.isCommand && gateInfo.tool && <Tag type="teal" size="sm">Tool: {gateInfo.tool}</Tag>}
+            {gateInfo.isCommand && gateInfo.host && <Tag type="cyan" size="sm">Host: {gateInfo.host}</Tag>}
+            {gateInfo.isCommand && gateInfo.decision && (
+              <Tag type={riskTagType(gateInfo.decision)} size="sm">Risco d1: {gateInfo.decision}</Tag>
+            )}
+            {gateInfo.isCommand && hasExec && (
+              <Tag type={execActive ? 'red' : 'blue'} size="sm">{execActive ? 'EXEC ATIVO' : 'DRY-RUN'}</Tag>
+            )}
+            {runner.testMode && <Tag type="magenta" size="sm">TESTE</Tag>}
+          </div>
+          {gateInfo.isCommand ? (
+            <>
+              {gateInfo.reason && <p className="live-chat-entry-text">{gateInfo.reason}</p>}
+              <TextArea
+                id="cmd-gate-input"
+                labelText="Comando (editável antes da execução)"
+                rows={3}
+                className="cmd-gate-textarea"
+                value={cmdDraft}
+                onChange={(e) => setCmdDraft(e.target.value)}
+              />
+            </>
+          ) : editing ? (
+            <TextArea
+              id="edit-chat-suggestion"
+              labelText="Editar sugestão"
+              hideLabel
+              rows={3}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+            />
+          ) : (
+            <div className="live-chat-entry-text">{suggestion}</div>
           )}
-          <Tag type="cyan" size="sm">Host: {gateInfo.host}</Tag>
-          {gateInfo.decision && (
-            <Tag type={riskTagType(gateInfo.decision)} size="sm">Risco d1: {gateInfo.decision}</Tag>
-          )}
-          {hasExec && (
-            <Tag type={execActive ? 'red' : 'blue'} size="sm">{execActive ? 'EXEC ATIVO' : 'DRY-RUN'}</Tag>
-          )}
-          {runner.testMode && (
-            <Tag type="magenta" size="sm">TESTE</Tag>
-          )}
-        </div>
-      </div>
-      {gateInfo.reason && <p className="cmd-gate-reason">{gateInfo.reason}</p>}
-      <TextArea
-        id="cmd-gate-input"
-        labelText="Comando (editável antes da execução)"
-        rows={3}
-        className="cmd-gate-textarea"
-        value={cmdDraft}
-        onChange={(e) => setCmdDraft(e.target.value)}
-      />
-      <div className="live2-actions">
-        <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
-          Aprovar e Executar
-        </Button>
-        <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>
-          Rejeitar
-        </Button>
-      </div>
-    </div>
+          <div className="live2-actions live-chat-gate-actions">
+            {gateInfo.isCommand ? (
+              <>
+                <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
+                  Aprovar e Executar
+                </Button>
+                <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>
+                  Rejeitar
+                </Button>
+              </>
+            ) : editing ? (
+              <>
+                <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={approve}>Enviar editada</Button>
+                <Button kind="ghost" size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
+              </>
+            ) : (
+              <>
+                <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
+                  {hasTTS ? 'Aprovar & Falar' : 'Aprovar'}
+                </Button>
+                <Button kind="tertiary" size="sm" renderIcon={Edit} onClick={startEdit}>Editar</Button>
+                {hasLLM && <Button kind="tertiary" size="sm" renderIcon={Renew} onClick={onRegenerate}>Regerar</Button>}
+                <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>Rejeitar</Button>
+              </>
+            )}
+          </div>
+        </>
+      )}
+    />
+  ) : null;
+
+  const errorText = lastError
+    ? `${lastError.nodeId ? `[${lastError.nodeId}] ` : ''}${lastError.message ?? lastError.error ?? 'Erro na execução'}`
+    : runner.lastRunError ?? '';
+  const errorCard = errorText ? (
+    <ChatCard
+      kind="error"
+      nodeId={lastError?.nodeId ?? 'runner'}
+      role="Erro"
+      tag={lastError?.nodeId ? (names.get(lastError.nodeId)?.label ?? lastError.nodeId) : 'Execução'}
+      tagType="red"
+      accent="var(--cds-support-error)"
+      icon={<ErrorFilled size={16} />}
+      ts={typeof lastError?._uiTs === 'number' ? lastError._uiTs : undefined}
+      ariaLabel="Erro na execução"
+      body={<div className="live-chat-entry-text">{errorText}</div>}
+    />
   ) : null;
 
   const sessionStats = useMemo(() => {
@@ -778,9 +894,10 @@ export function LiveView({
       : m.kind === 'stt' ? 'Transcription'
         : m.kind === 'agent' ? 'Agent'
           : m.kind === 'audio' ? 'Playback'
-            : 'Orquestrador';
+            : m.kind === 'decision' ? 'Decisão'
+              : 'Agent';
     const tag = m.tag ?? m.subtitle;
-    let tagType: 'gray' | 'cyan' | 'green' | 'blue' | 'purple' = 'gray';
+    let tagType: ChatTagType = 'gray';
     let accent = 'var(--cds-support-info)';
     let icon = <User size={18} />;
     if (m.kind === 'stt') {
@@ -789,23 +906,17 @@ export function LiveView({
       tagType = 'green'; accent = 'var(--cds-support-success-inverse)'; icon = <Bot size={18} />;
     } else if (m.kind === 'audio') {
       tagType = 'blue'; accent = 'var(--cds-interactive)'; icon = <VolumeUp size={18} />;
-    } else if (m.kind === 'thought') {
-      tagType = 'purple'; accent = 'var(--cds-support-purple, var(--cds-interactive))'; icon = <Router size={18} />;
+    } else if (m.kind === 'thought' || m.kind === 'decision') {
+      tagType = m.kind === 'decision' ? 'blue' : 'purple';
+      accent = 'var(--cds-support-purple, var(--cds-interactive))'; icon = <Router size={18} />;
+    } else if (m.kind === 'agent-step') {
+      tagType = 'warm-gray'; accent = 'var(--cds-support-info)'; icon = <Terminal size={18} />;
     }
-    const head = (
-      <span className="live-chat-entry-head">
-        <strong className="live-chat-entry-role">{role}</strong>
-        <Tag type={tagType} size="sm">{tag}</Tag>
-        <span className="live-chat-entry-meta">
-          {metricsByNode[m.nodeId] && (
-            <span className="live-chat-metrics" title="Contexto / Tokens por segundo / Tempo">
-              {metricsByNode[m.nodeId]}
-            </span>
-          )}
-          <time>{new Date(m.ts).toLocaleTimeString()}</time>
-        </span>
+    const meta = metricsByNode[m.nodeId] ? (
+      <span className="live-chat-metrics" title="Contexto / Tokens por segundo / Tempo">
+        {metricsByNode[m.nodeId]}
       </span>
-    );
+    ) : undefined;
     const style = { ['--accent' as string]: accent };
     if (m.kind === 'thought') {
       return (
@@ -814,7 +925,18 @@ export function LiveView({
           <span className="live-chat-avatar" aria-hidden="true">{icon}</span>
           <div className="live-chat-block-body">
             <Accordion>
-              <AccordionItem title={head}>
+              <AccordionItem
+                title={(
+                  <span className="live-chat-entry-head">
+                    <strong className="live-chat-entry-role">{role}</strong>
+                    <Tag type={tagType} size="sm">{tag}</Tag>
+                    <span className="live-chat-entry-meta">
+                      {meta}
+                      <time>{new Date(m.ts).toLocaleTimeString()}</time>
+                    </span>
+                  </span>
+                )}
+              >
                 <div className="live-chat-thought-text">{m.text}</div>
               </AccordionItem>
             </Accordion>
@@ -823,24 +945,31 @@ export function LiveView({
       );
     }
     return (
-      <article key={m.id} className={`live-chat-entry live-chat-entry--${m.kind}`} data-node-id={m.nodeId} style={style}>
-        <span className="live-chat-accent" aria-hidden="true" />
-        <span className="live-chat-avatar" aria-hidden="true">{icon}</span>
-        <div className="live-chat-block-body">
-          {head}
+      <ChatCard
+        key={m.id}
+        kind={m.kind}
+        nodeId={m.nodeId}
+        role={role}
+        tag={tag}
+        tagType={tagType}
+        accent={accent}
+        icon={icon}
+        ts={m.ts}
+        meta={meta}
+        body={(
           <div className="live-chat-entry-text">
             {m.text}
             {m.live && <span className="live-cursor" />}
           </div>
-        </div>
-      </article>
+        )}
+      />
     );
   };
 
   return (
       <div className="live2">
         {runner.testMode && (
-          <div className="live2-test-banner" style={{ background: '#da1e28', color: '#fff', padding: '6px 12px', fontWeight: 600, textAlign: 'center' }}>
+          <div className="live2-test-banner">
             ⚠ MODO TESTE — dryRun forçado, nenhum comando real será executado
           </div>
         )}
@@ -852,7 +981,7 @@ export function LiveView({
                 Builder
               </Button>
               <Button kind="primary" size="sm" aria-current="page">
-                Workflow
+                Runner
               </Button>
             </div>
             <div className="live-flow-select">
@@ -1032,58 +1161,19 @@ export function LiveView({
 
       <div className="live2-body">
         <main className="live2-main">
-          {lastError && <div className="live2-error">⚠ {lastError.nodeId ? `[${lastError.nodeId}] ` : ''}{lastError.message ?? lastError.error}</div>}
-          {!lastError && runner.lastRunError && <div className="live2-error">⚠ {runner.lastRunError}</div>}
-
           <>
-              {commandGateCard}
               <div className="live-chat">
                 <div className="live2-label">Conversa</div>
                 <div className="live-chat-log" ref={chatLogRef}>
-                  {conversation.length === 0 && !liveAgent && (
+                  {conversation.length === 0 && !liveAgent && !gateCard && !errorCard && (
                     <p className="live-chat-empty">
                       {runner.running ? 'Envie uma mensagem para conversar com o agente.' : 'Inicie a sessão para conversar com o agente.'}
                     </p>
                   )}
                   {conversation.map(renderConversationEntry)}
+                  {gateCard}
+                  {errorCard}
                 </div>
-                {hasGate && gate && !gateInfo.isCommand && (
-                  <section className="live-chat-suggestion" aria-label="Sugestão de resposta pendente">
-                    <div className="live-chat-suggestion-head">
-                      <strong>Sugestão de resposta</strong>
-                      <Tag type="warm-gray" size="sm">Revisão pendente</Tag>
-                    </div>
-                    {editing ? (
-                      <TextArea
-                        id="edit-chat-suggestion"
-                        labelText="Editar sugestão"
-                        hideLabel
-                        rows={3}
-                        value={draft}
-                        onChange={(e) => setDraft(e.target.value)}
-                      />
-                    ) : (
-                      <div className="live-chat-suggestion-text">{suggestion}</div>
-                    )}
-                    <div className="live2-actions live-chat-gate-actions">
-                      {editing ? (
-                        <>
-                          <Button kind="primary" size="sm" renderIcon={Checkmark} onClick={approve}>Enviar editada</Button>
-                          <Button kind="ghost" size="sm" onClick={() => setEditing(false)}>Cancelar</Button>
-                        </>
-                      ) : (
-                        <>
-                          <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={approve}>
-                            {hasTTS ? 'Aprovar & Falar' : 'Aprovar'}
-                          </Button>
-                          <Button kind="tertiary" size="sm" renderIcon={Edit} onClick={startEdit}>Editar</Button>
-                          {hasLLM && <Button kind="tertiary" size="sm" renderIcon={Renew} onClick={onRegenerate}>Regerar</Button>}
-                          <Button kind="danger--tertiary" size="sm" renderIcon={Close} onClick={rejectGate}>Rejeitar</Button>
-                        </>
-                      )}
-                    </div>
-                  </section>
-                )}
                 {runner.testMode && !runner.running && (
                   <section className="live-test-checklist" aria-label="Resultado do teste">
                     <strong>Resultado do teste</strong>
@@ -1178,7 +1268,7 @@ export function LiveView({
                   <Checkmark size={12} /> {d.chunksCount ?? 0} chunks · {d.points.length} pontos
                 </div>
                 {d.tags && d.tags.length > 0 && (
-                  <div className="ctx-chips" style={{ marginTop: 4 }}>
+                  <div className="ctx-chips">
                     {d.tags.map((t, i) => <Tag key={i} type="cool-gray" size="sm">{t}</Tag>)}
                   </div>
                 )}
@@ -1199,32 +1289,19 @@ export function LiveView({
         </div>
       </Modal>
 
-      <Tabs selectedIndex={footerTab} onChange={({ selectedIndex }) => setFooterTab(selectedIndex ?? 0)}>
-        <TabList aria-label="Painéis inferiores">
-          <Tab>Logs</Tab>
-          <Tab>Auditoria{runner.audit.length > 0 ? ` (${runner.audit.length})` : ''}</Tab>
-        </TabList>
-        <TabPanels>
-          <TabPanel>
-            <LogsPanel
-              flowNodes={flow.nodes}
-              onServiceStatus={onServiceStatus}
-              resetSignal={resetSignal}
-              thoughtsOn={showThoughts}
-              onToggleThoughts={(next) => {
-                setShowThoughts(next);
-                try { localStorage.setItem(THOUGHTS_STORAGE_KEY, String(next)); } catch { /* ignore */ }
-              }}
-              hasAgent={hasAgent}
-              onOpenConsole={openConsolePopup}
-              audit={runner.audit}
-            />
-          </TabPanel>
-          <TabPanel>
-            <AuditPanel audit={runner.audit} />
-          </TabPanel>
-        </TabPanels>
-      </Tabs>
+      <LogsPanel
+        flowNodes={flow.nodes}
+        onServiceStatus={onServiceStatus}
+        resetSignal={resetSignal}
+        thoughtsOn={showThoughts}
+        onToggleThoughts={(next) => {
+          setShowThoughts(next);
+          try { localStorage.setItem(THOUGHTS_STORAGE_KEY, String(next)); } catch { /* ignore */ }
+        }}
+        hasAgent={hasAgent}
+        onOpenConsole={openConsolePopup}
+        audit={runner.audit}
+      />
 
       <Modal
         open={exportOpen}

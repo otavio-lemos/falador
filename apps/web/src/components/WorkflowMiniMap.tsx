@@ -16,6 +16,7 @@ interface PlacedNode {
   id: string;
   label: string;
   accent: string;
+  off: boolean;
   col: number;
   row: number;
   x: number;
@@ -25,7 +26,8 @@ interface PlacedNode {
 export function WorkflowMiniMap({ flow, activeNodeIds, running }: Props) {
   const layout = useMemo(() => {
     const names = nodeDisplayNames(flow.nodes, flow.edges);
-    const activeNodes = flow.nodes.filter((n) => n.enabled !== false);
+    // TODOS os nós, desligados inclusive: o mapa tem que ser o mesmo workflow do Builder.
+    const activeNodes = flow.nodes;
     const idSet = new Set(activeNodes.map((n) => n.id));
     const edges = flow.edges
       .map((e) => ({ from: e.from.split('.')[0], to: e.to.split('.')[0] }))
@@ -95,6 +97,7 @@ export function WorkflowMiniMap({ flow, activeNodeIds, running }: Props) {
           id: n.id,
           label: names.get(n.id)?.label ?? n.id,
           accent: accentOf(n.type),
+          off: n.enabled === false,
           col: ci,
           row: ri,
           x: padX + ci * (nodeW + colGap),
@@ -153,13 +156,15 @@ export function WorkflowMiniMap({ flow, activeNodeIds, running }: Props) {
 
         {layout.placed.map((n) => {
           const isActive = running && activeNodeIds.has(n.id);
+          const opacity = n.off && !isActive ? 0.45 : 1;
           const cx = n.x + layout.nodeW / 2;
           const cy = n.y + layout.nodeH / 2;
           return (
             <g
               key={n.id}
-              className={`wf-mm-node${isActive ? ' wf-mm-node--active' : ''}`}
+              className={`wf-mm-node${isActive ? ' wf-mm-node--active' : ''}${n.off ? ' wf-mm-node--off' : ''}`}
               style={{ transformOrigin: `${cx}px ${cy}px` }}
+              opacity={opacity}
             >
               <rect
                 x={n.x}
@@ -171,6 +176,7 @@ export function WorkflowMiniMap({ flow, activeNodeIds, running }: Props) {
                 fillOpacity={isActive ? 0.24 : 1}
                 stroke={isActive ? n.accent : 'var(--cds-border-subtle-01, #393939)'}
                 strokeWidth={isActive ? 2 : 1}
+                strokeDasharray={n.off ? '4 3' : undefined}
               />
               <rect
                 x={n.x}

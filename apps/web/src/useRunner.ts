@@ -84,6 +84,8 @@ export interface Caption {
 export interface Gate {
   nodeId: string;
   text: string;
+  /** Hora de recebimento do evento gate (não é timestamp do modelo). */
+  ts: number;
   meta?: GateMeta;
 }
 
@@ -253,7 +255,7 @@ export function useRunner() {
             const meta = ev.meta && typeof ev.meta === 'object' ? (ev.meta as GateMeta) : undefined;
             setGates((g) => [
               ...g.filter((x) => x.nodeId !== ev.nodeId),
-              { nodeId: String(ev.nodeId), text: String(ev.text ?? ''), ...(meta ? { meta } : {}) },
+              { nodeId: String(ev.nodeId), text: String(ev.text ?? ''), ts: Date.now(), ...(meta ? { meta } : {}) },
             ]);
           } else if (ev.type === 'gate_cancelled') {
             setGates((g) => g.filter((x) => x.nodeId !== ev.nodeId));

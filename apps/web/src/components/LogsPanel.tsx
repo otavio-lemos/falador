@@ -2,7 +2,7 @@
 // Altura 100% fixa controlada pelo usuário (resizer + recolher), MultiSelect de serviços,
 // e retângulos coloridos identificando visualmente quais componentes do workflow escrevem em cada log.
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
-import { Button, MultiSelect } from '@carbon/react';
+import { Button, MultiSelect, Tab, TabList, TabPanel, TabPanels, Tabs } from '@carbon/react';
 import { ChevronDown, ChevronUp, Close, Terminal, TrashCan } from '@carbon/icons-react';
 import type { AuditEvent } from '../useRunner';
 import { clearLogs, fetchLogs, fetchServiceStatus, type ServiceStatusMap } from '../api';
@@ -71,11 +71,10 @@ const BASE_SERVICES: BaseServiceConfig[] = [
 const LOG_SERVICES_KEY = 'falador.logServices';
 const LOG_HEIGHT_KEY = 'falador.logsHeight';
 const LOG_COLLAPSED_KEY = 'falador.logsCollapsed';
+const LOG_VIEW_KEY = 'falador.logsView';
 const MIN_LOGS_H = 110;
 const MAX_LOGS_H = 520;
 const DEFAULT_LOGS_H = 180;
-const AUDIT_SERVICE_ID = 'audit';
-const AUDIT_COLOR = '#0284c7';
 
 interface FlowNodeRef {
   id: string;
@@ -102,11 +101,20 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onTo
   onServiceStatusRef.current = onServiceStatus;
   const [clearing, setClearing] = useState(false);
   const [serviceStatus, setServiceStatus] = useState<ServiceStatusMap | null>(null);
+  // Alterna Logs ⇄ Auditoria no MESMO painel (proposto pelo dono em 2026-11-23).
+  const [view, setView] = useState<0 | 1>(() => {
+    try { return localStorage.getItem(LOG_VIEW_KEY) === 'audit' ? 1 : 0; } catch { return 0; }
+  });
+  const changeView = (index: number) => {
+    const next: 0 | 1 = index === 1 ? 1 : 0;
+    setView(next);
+    try { localStorage.setItem(LOG_VIEW_KEY, next === 1 ? 'audit' : 'logs'); } catch { /* ignore */ }
+  };
   const [logServices, setLogServices] = useState<string[]>(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(LOG_SERVICES_KEY) ?? 'null');
       if (Array.isArray(saved)) {
-        return saved.filter((s) => BASE_SERVICES.some((x) => x.id === s) || s === AUDIT_SERVICE_ID);
+        return saved.filter((s) => BASE_SERVICES.some((x) => x.id === s));
       }
     } catch { /* ignore */ }
     return ['web'];
@@ -146,13 +154,7 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onTo
         colors,
       };
     });
-    const audit: LogServiceMeta = {
-      id: AUDIT_SERVICE_ID,
-      shortLabel: 'Auditoria',
-      label: 'Auditoria',
-      colors: [{ color: AUDIT_COLOR, label: 'Audit' }],
-    };
-    return [...base, audit];
+    return base;
   }, [flowNodes]);
   const [logsByService, setLogsByService] = useState<Record<string, string[]>>({});
   const [logsHeight, setLogsHeight] = useState<number>(() => {
@@ -214,7 +216,7 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onTo
 
   const handleClearLogs = async () => {
     if (logServices.length === 0 || clearing) return;
-    const targets = logServices.filter((s) => s !== AUDIT_SERVICE_ID);
+    const targets = logServices;
     clearEpochRef.current += 1;
     setClearing(true);
     setLogsByService((prev) => {
@@ -280,7 +282,6 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onTo
       try {
         const entries = await Promise.all(
           logServices.map(async (svc) => {
-            if (svc === AUDIT_SERVICE_ID) return [svc, [] as string[]] as const;
             try {
               const r = await fetchLogs(svc, 250);
               return [svc, r.lines] as const;
@@ -348,7 +349,18 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onTo
           tooltipPosition="right"
           onClick={toggleLogsCollapsed}
         />
-        <span className="logs-panel-title"><Terminal size={16} /> Logs dos serviços</span>
+        <div className="logs-panel-view">
+          <Tabs selectedIndex={view} onChange={({ selectedIndex }) => changeView(selectedIndex ?? 0)}>
+            <TabList size="sm" aria-label="Painel inferior">
+              <Tab>Logs</Tab>
+              <Tab>{`Auditoria${audit.length > 0 ? ` (${audit.length})` : ''}`}</Tab>
+            </TabList>
+            <TabPanels>
+              <TabPanel />
+              <TabPanel />
+            </TabPanels>
+          </Tabs>
+        </div>
         <div className="logs-panel-services">
           <MultiSelect
             id="logs-services"
@@ -367,7 +379,7 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onTo
           size="sm"
           renderIcon={TrashCan}
           onClick={() => void handleClearLogs()}
-          disabled={logServices.length === 0 || clearing}
+          disabled={view === 1 || logServices.length === 0 || clearing}
         >
           Limpar logs
         </Button>
@@ -417,41 +429,17 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onTo
         />
       </div>
       {!logsCollapsed && (
-        <div className="logs-panel-body">
+        <div className={`logs-panel-body${view === 1 ? ' logs-panel-body--audit' : ''}`}>
+          {view === 1 ? (
+            <AuditPanel audit={audit} />
+          ) : (
+            <>
           {logServices.length === 0 && (
             <p className="logs-panel-empty">Nenhum bloco selecionado — escolha acima.</p>
           )}
           {logServices.map((svc) => {
             const meta = servicesMeta.find((s) => s.id === svc);
             const lines = logsByService[svc] ?? [];
-            if (svc === AUDIT_SERVICE_ID) {
-              return (
-                <div key={svc} className="logs-block logs-block--audit">
-                  <div className="logs-block-head">
-                    <span className="logs-block-title logs-block-title--audit">Auditoria</span>
-                    <code className="logs-block-path">sessions/audit.jsonl</code>
-                    {meta && meta.colors.length > 0 && (
-                      <span className="logs-color-swatches" aria-label="Audit">
-                        {meta.colors.map((c, idx) => (
-                          <span
-                            key={idx}
-                            className="logs-color-swatch"
-                            style={{ background: c.color }}
-                            tabIndex={0}
-                            aria-label={c.label}
-                          >
-                            <span className="logs-color-tip" role="tooltip">{c.label}</span>
-                          </span>
-                        ))}
-                      </span>
-                    )}
-                  </div>
-                  <div className="logs-block-body">
-                    <AuditPanel audit={audit} />
-                  </div>
-                </div>
-              );
-            }
             return (
               <div key={svc} className="logs-block">
                 <div className="logs-block-head">
@@ -489,6 +477,8 @@ export function LogsPanel({ flowNodes, onServiceStatus, thoughtsOn = false, onTo
               </div>
             );
           })}
+            </>
+          )}
         </div>
       )}
     </section>

@@ -580,6 +580,13 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 
 .live2-main { display: flex; flex: 1; flex-direction: column; gap: $spacing-03; min-width: 0; min-height: 0; overflow: hidden; }
 .live2-error { @include type-style('body-01'); color: var(--cds-support-error, #ff8389); background: rgba(218, 30, 40, 0.12); border: 1px solid var(--cds-support-error, #da1e28); border-radius: 0; padding: $spacing-03 $spacing-04; }
+.live2-test-banner {
+  background: var(--cds-support-error);
+  color: $text-on-color;
+  padding: $spacing-02 $spacing-04;
+  text-align: center;
+  @include type-style('productive-heading-01');
+}
 .live2-label { @include type-style('helper-text-01'); color: $txt-2; text-transform: uppercase; letter-spacing: 0.05em; }
 .live2-transcription {
   background: $bg-panel; border: 1px solid $border-1; border-radius: 0;
@@ -611,6 +618,7 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 .ctx-block--warn .ctx-block-title { color: #f59e0b; }
 .ctx-text { @include type-style('body-01'); color: $txt-2; margin: 0; line-height: 1.5; }
 .ctx-chips { display: flex; flex-wrap: wrap; gap: $spacing-02; }
+.ctx-doc .ctx-chips { margin-top: $spacing-02; }
 .ctx-empty { @include type-style('helper-text-01'); color: #6f6f6f; font-style: italic; }
 .ctx-mic { display: flex; gap: $spacing-03; align-items: center; border-top: 1px solid $border-1; padding-top: $spacing-04; color: $txt-2; }
 .ctx-mic-info { flex: 1; }
@@ -748,18 +756,17 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   max-height: 240px;
   overflow-y: auto;
 }
-.live-chat-suggestion {
+.live-chat-gate-tags {
   display: flex;
-  flex-direction: column;
-  gap: $spacing-03;
-  padding: $spacing-04;
-  background: $bg-app;
-  border: 1px solid $border-1;
-  border-left: 3px solid var(--cds-support-success-inverse);
+  flex-wrap: wrap;
+  gap: $spacing-02;
+  margin-bottom: $spacing-02;
 }
-.live-chat-suggestion-head { display: flex; align-items: center; justify-content: space-between; gap: $spacing-03; }
-.live-chat-suggestion-head strong { @include type-style('productive-heading-01'); }
-.live-chat-suggestion-text { @include type-style('body-01'); color: $txt-1; white-space: pre-wrap; }
+.live-chat-entry--gate .cds--text-area__wrapper,
+.live-chat-entry--gate .cmd-gate-textarea {
+  margin-top: $spacing-02;
+  margin-bottom: $spacing-03;
+}
 .live-chat-input {
   display: flex;
   flex-shrink: 0;
@@ -770,7 +777,10 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   padding: $spacing-01;
   .cds--form-item { flex: 1; }
 }
-.live-chat-gate-actions { flex-wrap: wrap; }
+.live-chat-gate-actions {
+  flex-wrap: wrap;
+  margin-top: $spacing-03;
+}
 
 // ---- logs dos serviços residentes (altura fixa controlada SOMENTE pelo usuário) ----
 .logs-panel {
@@ -853,6 +863,25 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 .logs-panel-services {
   min-width: 240px;
   .cds--multi-select__wrapper { width: 100%; }
+}
+// Abas Logs ⇄ Auditoria dentro do cabeçalho do painel (mesmo frame, mesmo layout).
+.logs-panel-view {
+  flex-shrink: 0;
+  .cds--tabs { min-height: 0; }
+  .cds--tab--list { min-height: 32px; }
+  .cds--tabs .cds--tab {
+    height: 32px;
+    min-height: 32px;
+    padding: 0 $spacing-05;
+    justify-content: center;
+  }
+  .cds--tabs__nav-item-label { @include type-style('label-01'); }
+  .cds--tab-content { display: none; padding: 0; }
+}
+.logs-panel-body--audit {
+  display: block;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 .logs-panel-title {
   @include type-style('label-01');
@@ -1044,26 +1073,6 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   white-space: nowrap;
 }
 .agent-step-dur { @include type-style('helper-text-01'); color: $txt-2; white-space: nowrap; }
-
-.logs-block--audit {
-  .logs-block-head {
-    background: $bg-bar;
-    border-bottom: 1px solid $border-1;
-  }
-  .logs-block-body {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    padding: $spacing-03;
-    background: $bg-app;
-  }
-}
-
-.logs-block-title--audit {
-  @include type-style('label-01');
-  color: $txt-1;
-  font-weight: 600;
-}
 
 .audit-empty {
   @include type-style('helper-text-01');
