@@ -1151,6 +1151,12 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   min-width: 240px;
   .cds--multi-select__wrapper { width: 100%; }
 }
+// Pill de status do turno centralizado na barra (Parado/Pensando/.../Aguardando).
+.logs-panel-status {
+  margin-inline: auto;
+  display: flex;
+  align-items: center;
+}
 // Abas Logs ⇄ Auditoria dentro do cabeçalho do painel (mesmo frame, mesmo layout).
 .logs-panel-view {
   flex-shrink: 0;

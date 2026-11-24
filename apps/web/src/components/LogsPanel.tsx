@@ -2,8 +2,8 @@
 // Altura 100% fixa controlada pelo usuário (resizer + recolher), MultiSelect de serviços,
 // e retângulos coloridos identificando visualmente quais componentes do workflow escrevem em cada log.
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
-import { Button, MultiSelect, Tab, TabList, TabPanel, TabPanels, Tabs } from '@carbon/react';
-import { ChevronDown, ChevronUp, Close, Terminal, TrashCan } from '@carbon/icons-react';
+import { Button, Dropdown, MultiSelect, Tab, TabList, TabPanel, TabPanels, Tabs, Tag } from '@carbon/react';
+import { ChevronDown, ChevronUp, Close, TrashCan } from '@carbon/icons-react';
 import type { AuditEvent, Thought, Execution, Gate } from '../useRunner';
 import { clearLogs, fetchLogs, fetchServiceStatus, type ServiceStatusMap } from '../api';
 import { accentOf, serviceOfNode, shortNodeName } from '../data';
@@ -106,7 +106,19 @@ interface LogsPanelProps {
   gates?: Gate[];
   onApproveGate?: (gate: Gate, text: string) => Promise<void> | void;
   onRejectGate?: (gate: Gate, reason?: string) => Promise<void> | void;
+  /** Pill de status do turno (Parado/Pensando/.../Aguardando aprovação) — fica no centro da barra. */
+  turnStatus?: { label: string; type: 'gray' | 'cyan' | 'green' | 'blue' | 'purple' | 'teal' | 'red' | 'magenta' | 'warm-gray' };
+  /** Nível de aprovação global (A/B/C) exibido na barra, antes de Pensamentos. */
+  approvalLevel?: string;
+  onSetApprovalLevel?: (level: string) => void;
 }
+
+// Níveis de aprovação A/B/C (mesmo rótulo do fluxo).
+const APPROVAL_LEVEL_OPTIONS: { id: string; label: string }[] = [
+  { id: 'ask_all', label: 'A · Perguntar tudo' },
+  { id: 'non_readonly', label: 'B · Só destrutivos/alteração' },
+  { id: 'approve_all', label: 'C · Aprovar tudo' },
+];
 
 export function LogsPanel({
   flowNodes,
@@ -123,6 +135,9 @@ export function LogsPanel({
   gates = [],
   onApproveGate,
   onRejectGate,
+  turnStatus,
+  approvalLevel,
+  onSetApprovalLevel,
 }: LogsPanelProps) {
   const logsRefs = useRef<Record<string, HTMLPreElement | null>>({});
   const clearEpochRef = useRef(0);
@@ -466,19 +481,25 @@ export function LogsPanel({
         >
           Limpar logs
         </Button>
-        {hasAgent && (
-          <Button
-            kind={view === 2 ? 'primary' : 'tertiary'}
-            size="sm"
-            renderIcon={Terminal}
-            onClick={() => {
-              changeView(2);
-              setLogsCollapsed(false);
-            }}
-            title="Abrir Terminal de execuções"
-          >
-            Terminal
-          </Button>
+        {turnStatus && (
+          <div className="logs-panel-status">
+            <Tag type={turnStatus.type} size="sm" data-testid="turn-status">{turnStatus.label}</Tag>
+          </div>
+        )}
+        {onSetApprovalLevel && (
+          <div className="approval-level-wrap">
+            <Dropdown
+              id="approval-level"
+              size="sm"
+              hideLabel
+              titleText="Nível de aprovação"
+              label="Nível de aprovação"
+              items={APPROVAL_LEVEL_OPTIONS}
+              itemToString={(it) => (it ? it.label : '')}
+              selectedItem={APPROVAL_LEVEL_OPTIONS.find((o) => o.id === (approvalLevel ?? 'non_readonly')) ?? APPROVAL_LEVEL_OPTIONS[1]}
+              onChange={({ selectedItem }) => selectedItem && onSetApprovalLevel(selectedItem.id)}
+            />
+          </div>
         )}
         {onToggleThoughts && (
           <div className="thoughts-wrap">

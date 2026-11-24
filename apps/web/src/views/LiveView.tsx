@@ -344,14 +344,6 @@ function riskTagType(decision?: string): 'green' | 'warm-gray' | 'red' | 'magent
 
 type ChatTagType = 'gray' | 'cyan' | 'green' | 'blue' | 'purple' | 'teal' | 'red' | 'magenta' | 'warm-gray';
 
-// Níveis de aprovação global (A/B/C) — governam QUANDO o gate abre
-// (exec.command + agent.tools). human.approve explícito NÃO é governado.
-const APPROVAL_LEVEL_OPTIONS: { id: string; label: string }[] = [
-  { id: 'ask_all', label: 'A · Perguntar tudo' },
-  { id: 'non_readonly', label: 'B · Só destrutivos/alteração' },
-  { id: 'approve_all', label: 'C · Aprovar tudo' },
-];
-
 // Shell ÚNICO de toda ocorrência na conversa (referência do dono, 2026-11-23):
 // barra de acento, avatar, papel em negrito, Tag, hora e corpo. Vale para mensagem,
 // transcrição, resposta, áudio, passo, decisão, erro e aprovação.
@@ -1598,26 +1590,9 @@ export function LiveView({
         <main className="live2-main">
           <>
               <div className="live-chat">
-                <div className="live-chat-head-row">
-                  <div className="live2-label">Conversa</div>
-                  <Tag type={turnStatus.type} size="sm" data-testid="turn-status">{turnStatus.label}</Tag>
-                  {onSetApprovalLevel && (
-                    <div className="approval-level-wrap">
-                      <Dropdown
-                        id="approval-level"
-                        size="sm"
-                        hideLabel
-                        titleText="Nível de aprovação"
-                        label="Nível de aprovação"
-                        items={APPROVAL_LEVEL_OPTIONS}
-                        itemToString={(it) => (it ? it.label : '')}
-                        selectedItem={APPROVAL_LEVEL_OPTIONS.find((o) => o.id === (flow.approvalLevel ?? 'non_readonly')) ?? APPROVAL_LEVEL_OPTIONS[1]}
-                        onChange={({ selectedItem }) => selectedItem && onSetApprovalLevel(selectedItem.id)}
-                      />
-                    </div>
-                  )}
-                </div>
-                <p className="live-chat-empty" style={{ marginTop: '-0.25rem' }}>{turnStatus.hint}</p>
+                {(gate || runner.running) && (
+                  <p className="live-chat-empty" style={{ marginTop: '-0.25rem' }}>{turnStatus.hint}</p>
+                )}
                 {latestPlan && (
                   <div className="live-plan-panel">
                     <ContainedList
@@ -1786,6 +1761,9 @@ export function LiveView({
       <LogsPanel
         flowNodes={flow.nodes}
         onServiceStatus={onServiceStatus}
+        turnStatus={turnStatus}
+        approvalLevel={flow.approvalLevel}
+        onSetApprovalLevel={onSetApprovalLevel}
         resetSignal={resetSignal}
         thoughtsOn={showThoughts}
         thoughts={runner.thoughts}
