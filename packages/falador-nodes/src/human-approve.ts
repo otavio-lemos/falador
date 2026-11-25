@@ -54,6 +54,8 @@ function extractGateMeta(text: string, msgMeta?: Record<string, unknown>): GateM
   return out;
 }
 
+export type HumanApproveMode = 'ask_all' | 'non_readonly' | 'approve_all';
+
 export const humanApprove: NodeTypeDef = {
   type: 'human.approve',
   paramNames: ['mode'],
@@ -65,20 +67,31 @@ export const humanApprove: NodeTypeDef = {
     { name: 'gate', type: 'gate', required: false },
   ],
   validateParams: (p) => {
-    if (p.mode !== undefined && p.mode !== 'manual' && p.mode !== 'auto') {
-      return [{ path: 'params.mode', code: 'INVALID_PARAM', message: "mode deve ser 'manual' | 'auto'" }];
+    if (
+      p.mode !== undefined &&
+      p.mode !== 'ask_all' &&
+      p.mode !== 'non_readonly' &&
+      p.mode !== 'approve_all'
+    ) {
+      return [
+        {
+          path: 'params.mode',
+          code: 'INVALID_PARAM',
+          message: "mode deve ser 'ask_all' | 'non_readonly' | 'approve_all'",
+        },
+      ];
     }
     return [];
   },
   create: (ctx: NodeCtx): NodeRuntime => {
     const gate = ctx.bindings.__gate as GateHolder;
-    const mode = (ctx.params.mode as 'manual' | 'auto' | undefined) ?? 'manual';
+    const mode = (ctx.params.mode as HumanApproveMode | undefined) ?? 'non_readonly';
     let inFlight = false;
     let cancelPending: ((reason: string) => void) | null = null;
 
     const gateProvider: GateProvider = {
       async request(text: string, meta?: Record<string, unknown>): Promise<string | null> {
-        if (mode === 'auto') {
+        if (mode === 'approve_all') {
           ctx.metrics.counter('human.approve.bypassed', 1);
           return text;
         }
@@ -105,7 +118,7 @@ export const humanApprove: NodeTypeDef = {
         if (!pl.final) return; // age só no fechamento (parciais do LLM passam direto)
         const text = (pl.text ?? '').trim();
         if (!text) return;
-        if (mode === 'auto') {
+        if (mode === 'approve_all') {
           ctx.metrics.counter('human.approve.bypassed', 1);
           await ctx.emit('out', text, {
             meta: { ...msg.meta, ...inheritTrace(msg, {}) },

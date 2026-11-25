@@ -172,7 +172,7 @@ test('P3-N1: agent.tools usa decision.llm + human.approve + goal.validator expl√
           defaultOption: 'sensivel',
         },
       },
-      { id: 'gate_humano', type: 'human.approve', params: { mode: 'manual' } },
+      { id: 'gate_humano', type: 'human.approve', params: { mode: 'non_readonly' } },
       {
         id: 'validador_objetivo',
         type: 'goal.validator',
@@ -268,7 +268,7 @@ test('P3-N2: ask_user (Guided Q&A) usa gate kind=respond e devolve resposta do h
       stopWhenSourcesDone: true,
       nodes: [
         { id: 'src', type: 'src.one' },
-        { id: 'gate_humano', type: 'human.approve', params: { mode: 'manual' } },
+        { id: 'gate_humano', type: 'human.approve', params: { mode: 'non_readonly' } },
         { id: 'agente', type: 'agent.tools', params: { baseUrl: srv.url, model: 'exec-model', maxSteps: 4 } },
         { id: 'out', type: 'sink.one' },
       ],
@@ -354,7 +354,7 @@ test('P3-N3: falha do decisor √© logada como warn e aplica fail-safe (sensivel)'
           type: 'decision.llm',
           params: { baseUrl: srv.url, model: 'd1', mode: 'systemone', options: ['seguro', 'sensivel'] },
         },
-        { id: 'gate_humano', type: 'human.approve', params: { mode: 'auto' } },
+        { id: 'gate_humano', type: 'human.approve', params: { mode: 'approve_all' } },
         {
           id: 'agente',
           type: 'agent.tools',

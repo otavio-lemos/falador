@@ -89,7 +89,7 @@
       "id": "revisao",
       "type": "human.approve",
       "params": {
-        "mode": "manual"
+        "mode": "non_readonly"
       }
     },
     {

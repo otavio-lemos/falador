@@ -11,7 +11,7 @@ import {
   sinkCollect,
   type FlowSpec,
 } from '../../falador-graph/src/index.ts';
-import { registerFaladorNodes } from '../src/index.ts';
+import { registerFaladorNodes, humanApprove } from '../src/index.ts';
 import { validateFlow } from '../../falador-graph/src/index.ts';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -138,7 +138,13 @@ describe('translate.llm, human.approve e asr.lfm3', () => {
     }
   });
 
-  test('human.approve com mode="auto" emite direto sem chamar __gate; mode="manual" chama __gate', async () => {
+  test('human.approve com mode="approve_all" emite direto sem chamar __gate; mode="ask_all" e "non_readonly" chamam __gate; rejeita "manual"/"auto"', async () => {
+    assert.equal(humanApprove.validateParams?.({ mode: 'manual' })?.length, 1);
+    assert.equal(humanApprove.validateParams?.({ mode: 'auto' })?.length, 1);
+    assert.deepEqual(humanApprove.validateParams?.({ mode: 'ask_all' }), []);
+    assert.deepEqual(humanApprove.validateParams?.({ mode: 'non_readonly' }), []);
+    assert.deepEqual(humanApprove.validateParams?.({ mode: 'approve_all' }), []);
+
     let autoGateCalls = 0;
     const autoCollected = { received: [] as Array<{ payload: unknown }> };
     const autoFlow: FlowSpec = {
@@ -147,7 +153,7 @@ describe('translate.llm, human.approve e asr.lfm3', () => {
       nodes: [
         { id: 'src', type: 'source.tone', params: { count: 1, prefix: 'resp' } },
         { id: 'pp', type: 'pipe.parcs', params: {} },
-        { id: 'app', type: 'human.approve', params: { mode: 'auto' } },
+        { id: 'app', type: 'human.approve', params: { mode: 'approve_all' } },
         { id: 'snk', type: 'sink.collect' },
       ],
       edges: [
@@ -174,7 +180,7 @@ describe('translate.llm, human.approve e asr.lfm3', () => {
       nodes: [
         { id: 'src', type: 'source.tone', params: { count: 1, prefix: 'resp' } },
         { id: 'pp', type: 'pipe.parcs', params: {} },
-        { id: 'app', type: 'human.approve', params: { mode: 'manual' } },
+        { id: 'app', type: 'human.approve', params: { mode: 'non_readonly' } },
         { id: 'snk', type: 'sink.collect' },
       ],
       bindings: {
