@@ -169,6 +169,12 @@ export interface SshArgvOptions {
   useSshAgent?: boolean;
   strictHostKeyChecking?: 'yes' | 'accept-new';
   connectTimeoutSec?: number;
+  /** Mantém sessão SSH conectada via ControlMaster/ControlPersist (default: true). */
+  persistSession?: boolean;
+  /** Tempo em segundos para manter a conexão SSH viva entre comandos (default: 600). */
+  controlPersistSec?: number;
+  /** Caminho do socket de controle OpenSSH (default: '/tmp/falador-ssh-%C'). */
+  controlPath?: string;
 }
 
 export interface ExecPolicy {
@@ -330,6 +336,18 @@ export function buildSshArgv(opts: SshArgvOptions): string[] {
     '-o', `StrictHostKeyChecking=${strict}`,
     '-o', `ConnectTimeout=${Math.round(timeout)}`,
   ];
+
+  if (opts.persistSession !== false) {
+    const persistSec = opts.controlPersistSec ?? 600;
+    const controlPath = opts.controlPath ?? '/tmp/falador-ssh-%C';
+    const chk = validateSshPath(controlPath);
+    if (!chk.ok) throw new Error(chk.reason);
+    args.push(
+      '-o', 'ControlMaster=auto',
+      '-o', `ControlPersist=${Math.max(10, Math.round(persistSec))}`,
+      '-o', `ControlPath=${controlPath}`,
+    );
+  }
 
   if (opts.identityFile) {
     args.push('-o', 'IdentitiesOnly=yes', '-i', opts.identityFile);
@@ -1160,6 +1178,25 @@ export const execCommand: NodeTypeDef = {
 
     let execSeq = 0;
     const activeRuns = new Set<{ markInterrupted: () => void }>();
+    const activeSshTargets = new Set<string>();
+    const sshControlPath = '/tmp/falador-ssh-%C';
+
+    const closePersistentSshSessions = () => {
+      for (const target of [...activeSshTargets]) {
+        try {
+          const closer = spawn(
+            'ssh',
+            ['-O', 'exit', '-o', `ControlPath=${sshControlPath}`, '-p', String(sshPort), '--', target],
+            { shell: false, stdio: 'ignore' },
+          );
+          closer.on('error', () => {});
+          closer.unref?.();
+        } catch {
+          /* ignore */
+        }
+      }
+      activeSshTargets.clear();
+    };
 
     const interruptAllActive = () => {
       for (const run of [...activeRuns]) {
@@ -1588,6 +1625,8 @@ export const execCommand: NodeTypeDef = {
             });
           } else {
             const remoteCommand = buildSshRemoteCommand(argv);
+            const target = sshUser ? `${sshUser}@${host}` : host;
+            activeSshTargets.add(target);
             const sshArgs = buildSshArgv({
               host,
               sshUser,
@@ -1600,6 +1639,7 @@ export const execCommand: NodeTypeDef = {
               useSshAgent,
               strictHostKeyChecking,
               connectTimeoutSec,
+              controlPath: sshControlPath,
             });
             child = spawn('ssh', sshArgs, {
               shell: false,
@@ -1903,6 +1943,7 @@ export const execCommand: NodeTypeDef = {
         if (activeRuns.size > 0) {
           interruptAllActive();
         }
+        closePersistentSshSessions();
       },
     };
   },

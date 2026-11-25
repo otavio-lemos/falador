@@ -70,6 +70,9 @@ describe('P1 — Hardening SSH/Bastion (-J) & hostPolicies', () => {
       'ServerAliveCountMax=3',
       'StrictHostKeyChecking=yes',
       'ConnectTimeout=5',
+      'ControlMaster=auto',
+      'ControlPersist=600',
+      'ControlPath=/tmp/falador-ssh-%C',
       'IdentitiesOnly=yes',
     ]) {
       const idx = argv1.indexOf(opt);

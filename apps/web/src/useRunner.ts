@@ -258,23 +258,65 @@ export function applyRunnerEvent(ev: RunnerEvent, h: RunnerHandlers): void {
         ev.args && typeof ev.args === 'object' && typeof (ev.args as Record<string, unknown>).command === 'string'
           ? String((ev.args as Record<string, unknown>).command)
           : '';
+      const hostStr = typeof ev.host === 'string' ? ev.host : 'local';
       const stepExecId = `${String(ev.nodeId ?? '')}:${typeof ev.step === 'number' ? ev.step : 0}`;
-      const outStr = typeof ev.output === 'string' ? ev.output : '';
+      const rawOut = typeof ev.output === 'string' ? ev.output : '';
+      const rawErr = typeof ev.stderr === 'string' ? ev.stderr : '';
+      // Se o output vier embrulhado pelo formatReport("[EXEC ...]\n--- stdout ---\n..."), extrai só o conteúdo limpo
+      let cleanStdout = rawOut;
+      if (cleanStdout.startsWith('[EXEC ') || cleanStdout.startsWith('[DRY-RUN]')) {
+        const marker = '\n--- stdout ---\n';
+        const mIdx = cleanStdout.indexOf(marker);
+        if (mIdx >= 0) {
+          cleanStdout = cleanStdout.slice(mIdx + marker.length);
+          const errMarker = '\n--- stderr ---\n';
+          const eIdx = cleanStdout.indexOf(errMarker);
+          if (eIdx >= 0) cleanStdout = cleanStdout.slice(0, eIdx);
+        }
+      }
       h.setExecutions((x) => {
-        const idx = x.findIndex((item) => item.id === stepExecId);
+        // Evita duplicar comando já registrado por exec_start/exec_end/execution
+        let idx = x.findIndex((item) => item.id === stepExecId);
+        if (idx < 0 && cmd) {
+          for (let i = x.length - 1; i >= 0; i--) {
+            if (x[i].command === cmd && x[i].host === hostStr && Math.abs(Date.now() - x[i].ts) < 15000) {
+              idx = i;
+              break;
+            }
+          }
+        }
+        if (idx >= 0) {
+          const prev = x[idx];
+          const copy = [...x];
+          copy[idx] = {
+            ...prev,
+            step: typeof ev.step === 'number' ? ev.step : prev.step,
+            tool: String(ev.tool ?? prev.tool),
+            stdout: prev.stdout || cleanStdout,
+            stderr: prev.stderr || rawErr,
+            output: prev.output || cleanStdout || rawErr,
+            status: 'done',
+            exitCode: typeof ev.exitCode === 'number' ? ev.exitCode : prev.exitCode,
+            ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : {}),
+            ...(typeof ev.dryRun === 'boolean' ? { dryRun: ev.dryRun } : {}),
+            ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : {}),
+            ...(typeof ev.truncated === 'boolean' ? { truncated: ev.truncated } : {}),
+          };
+          return copy;
+        }
         const nextItem: Execution = {
           id: stepExecId,
           ts: Date.now(),
           nodeId: String(ev.nodeId ?? ''),
           step: typeof ev.step === 'number' ? ev.step : 0,
           tool: String(ev.tool ?? ''),
-          host: typeof ev.host === 'string' ? ev.host : 'local',
+          host: hostStr,
           ...(typeof ev.bastion === 'string' && ev.bastion ? { bastion: ev.bastion } : {}),
           transport: typeof ev.transport === 'string' ? ev.transport : 'local',
           command: cmd,
-          output: outStr,
-          stdout: outStr,
-          stderr: '',
+          output: cleanStdout || rawErr,
+          stdout: cleanStdout,
+          stderr: rawErr,
           status: 'done',
           exitCode: typeof ev.exitCode === 'number' ? ev.exitCode : null,
           ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : {}),
@@ -282,11 +324,6 @@ export function applyRunnerEvent(ev: RunnerEvent, h: RunnerHandlers): void {
           ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : {}),
           ...(typeof ev.truncated === 'boolean' ? { truncated: ev.truncated } : {}),
         };
-        if (idx >= 0) {
-          const copy = [...x];
-          copy[idx] = { ...copy[idx], ...nextItem };
-          return copy;
-        }
         return [...x.slice(-99), nextItem];
       });
     }
