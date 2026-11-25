@@ -497,3 +497,86 @@ test('human.approve.params.mode controla roteamento decision.llm -> human.approv
     await new Promise((r) => srv.close(r));
   }
 });
+
+test('workflow com agent.tools sem human.approve respeita agent.tools.params.approvalPolicy quando flow.approvalLevel está ausente', async () => {
+  let step = 0;
+  const srv = http.createServer((_req, res) => {
+    step++;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    if (step === 1) {
+      res.end(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'call_1',
+                    type: 'function',
+                    function: { name: 'exec_local', arguments: JSON.stringify({ command: 'ls' }) },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      );
+    } else {
+      res.end(
+        JSON.stringify({
+          choices: [{ message: { role: 'assistant', content: 'concluido' } }],
+        }),
+      );
+    }
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const baseUrl = `http://127.0.0.1:${srv.address().port}`;
+  try {
+    const flowPath = writeFlow({
+      version: 1,
+      stopWhenSourcesDone: true,
+      nodes: [
+        { id: 'src', type: 'source.tone', params: { count: 1, prefix: 'listar' } },
+        {
+          id: 'exec_local',
+          type: 'exec.command',
+          params: { transport: 'local', mode: 'readonly', dryRun: true },
+        },
+        {
+          id: 'agente',
+          type: 'agent.tools',
+          params: { baseUrl, model: 'test-model', approvalPolicy: 'always', maxSteps: 3 },
+        },
+        { id: 'out', type: 'sink.captions', params: { mode: 'callback' } },
+      ],
+      edges: [
+        { from: 'src.out', to: 'agente.in' },
+        { from: 'exec_local.tool', to: 'agente.tools' },
+        { from: 'agente.out', to: 'out.in' },
+      ],
+    });
+    const res = await new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [CLI, flowPath], { stdio: ['pipe', 'pipe', 'pipe'] });
+      let out = '';
+      let answered = false;
+      const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('timeout agent approvalPolicy=always')); }, 15000);
+      child.stdout.on('data', (d) => {
+        out += String(d);
+        if (!answered && out.includes('"type":"gate"')) {
+          const gateEv = parseNdjson(out).find((e) => e.type === 'gate');
+          if (gateEv) {
+            answered = true;
+            child.stdin.write(JSON.stringify({ type: 'gate_action', nodeId: gateEv.nodeId, text: '' }) + '\n');
+          }
+        }
+      });
+      child.on('close', (code) => { clearTimeout(timer); resolve({ code, out }); });
+    });
+    const events = parseNdjson(res.out);
+    assert.ok(events.some((e) => e.type === 'gate'), 'approvalPolicy=always deve abrir gate mesmo em tool readonly');
+  } finally {
+    await new Promise((r) => srv.close(r));
+  }
+});

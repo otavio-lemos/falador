@@ -1,6 +1,6 @@
 # AGENTS.md — Falador
 
-> **MEMÓRIA VIVA DO PROJETO. Toda sessão de agente deve ler este arquivo primeiro e ATUALIZÁ-LO ao final de cada conquista.** Última atualização: 2026-11-24.
+> **MEMÓRIA VIVA DO PROJETO. Toda sessão de agente deve ler este arquivo primeiro e ATUALIZÁ-LO ao final de cada conquista.** Última atualização: 2026-11-25.
 > **Operação (subir/usar/derrubar serviços): ver `run.md`** — guia dedicado com comandos exatos, health checks e armadilhas.
 
 ## 1. O que é o Falador
@@ -304,5 +304,12 @@ App local (macOS, Apple Silicon M4 Pro 48 GB) que traduz conversas de conferênc
   - **Barra de Etapas Completa & Conversa Rica**: `live-utils.ts` expande todas as etapas do `assistente-especialista-ti` (`Decision`, `Approval`, `Validator`, `Exec/SSH`, `RAG`, `WebSearch`, `Crawler`); cards de ferramentas recolhidos com `Accordion` Carbon, `AILabel` em nós de IA e cards de Pergunta Guiada para `ask_user`.
   - **Conformidade Carbon & A11y**: status via `preview__IconIndicator`, listagem de gates via `StructuredListWrapper`, detalhes no console via `TableExpandRow`/`TableExpandedRow`, correções WCAG 2.2 AA (`Button hasIconOnly`, `role="group"` para modos, `TabPanel` com conteúdo real).
   - **Verificação**: `npx tsc --noEmit` limpo, `npx vite build` 1013 módulos verdes, Playwright `ui-smoke.spec.ts` 9/9 testes passando, merge limpo na `main`.
+
+- **APROVAÇÃO UNIFICADA A/B/C NO COMPONENTE `Approval` + CONSOLIDAÇÃO DOS 3 WORKFLOWS (2026-11-25)**:
+  - **`human.approve` unificado (`ask_all` | `non_readonly` | `approve_all`)**: removidos os modos legados `'manual'` e `'auto'`; o componente `Approval` (`human.approve`) no Builder (`data.ts`, `BuilderView.tsx`) e no box `Approval` da barra superior do Runner (`LiveView.tsx`, `live-utils.ts`, `App.tsx`) exibe as 3 opções canônicas: `A · Perguntar tudo` (`ask_all`), `B · Só destrutivos/alteração` (`non_readonly`) e `C · Aprovar tudo` (`approve_all`). Removido o dropdown duplicado `.approval-level-wrap` ao lado de `Pensamentos` em `LogsPanel.tsx`.
+  - **Propagação no `run-flow.mjs` (Agentes e Decisão)**: o runner lê `human.approve.params.mode` (ou `flow.approvalLevel` quando não há `human.approve`) e sincroniza `human.approve`, `agent.tools` (`approvalPolicy`), `exec.command` (`approvalLevel`) e `decision.llm` (via `__forceOption` em `ask_all`, garantindo que mesmo o ramo `auto` de `entrevista.json` passe pelo gate humano quando em modo `A`, e faça bypass quando em modo `C`).
+  - **Consolidação em 3 workflows canônicos (`apps/tui/flows/`)**: mantidos exclusivamente `especialista-ti.json`, `agente-workflows.json` e `entrevista.json` (removidos `ti-diagnostico.json` e `traducao-transcricao.json`).
+  - **Terminal 100% dedicado + Sessão SSH persistente (`ControlMaster`)**: removido o box PTY local de 170px da aba `Terminal` (`TerminalPanel.tsx`), deduplicadas as entradas de comando (`useRunner.ts`), e ativada multiplexação OpenSSH (`ControlMaster=auto`, `ControlPersist=600`, `ControlPath=/tmp/falador-ssh-%C`) em `exec.command` com fluxo em 3 fases (`ask_user` → `update_plan` → `exec_ssh`) no `especialista-ti.json`.
+
 
 

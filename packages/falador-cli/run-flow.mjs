@@ -79,8 +79,19 @@ async function main() {
     non_readonly: { agent: 'non_readonly', exec: 'non_readonly' },
     approve_all: { agent: 'never', exec: 'approve_all' },
   };
+  const POLICY_TO_LEVEL = {
+    always: 'ask_all',
+    non_readonly: 'non_readonly',
+    never: 'approve_all',
+  };
   const approveNode = (flow.nodes ?? []).find((n) => n.type === 'human.approve' && n.enabled !== false);
-  const rawLevel = approveNode?.params?.mode ?? flow.approvalLevel;
+  const agentNode = (flow.nodes ?? []).find((n) => n.type === 'agent.tools' && n.enabled !== false);
+  const rawLevel =
+    approveNode?.params?.mode ??
+    flow.approvalLevel ??
+    (typeof agentNode?.params?.approvalPolicy === 'string'
+      ? POLICY_TO_LEVEL[agentNode.params.approvalPolicy]
+      : undefined);
   const approvalLevel =
     typeof rawLevel === 'string' && APPROVAL_LEVELS[rawLevel]
       ? rawLevel
