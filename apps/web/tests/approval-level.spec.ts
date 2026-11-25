@@ -1,9 +1,12 @@
 import { test, expect } from '@playwright/test';
 
-// Nível de aprovação global A/B/C: seletor na barra da Conversa; o run leva
-// `flow.approvalLevel` (o runner mapeia para agent.tools/exec.command).
-test('seletor A/B/C aparece, default B, e o run leva approvalLevel=approve_all', async ({ page }) => {
-  let posted: { flow?: { approvalLevel?: string } } | null = null;
+test('box Approval na barra do Runner exibe A/B/C (default B), não existe duplicata ao lado de Pensamentos e o run leva mode=approve_all', async ({ page }) => {
+  let posted: {
+    flow?: {
+      approvalLevel?: string;
+      nodes?: Array<{ id: string; type: string; params?: Record<string, unknown> }>;
+    };
+  } | null = null;
   await page.route('**/api/run', async (route) => {
     posted = JSON.parse(route.request().postData() ?? '{}');
     await route.fulfill({
@@ -15,16 +18,22 @@ test('seletor A/B/C aparece, default B, e o run leva approvalLevel=approve_all',
   await page.goto('/');
   await page.getByRole('button', { name: 'Runner' }).click();
 
-  const wrap = page.locator('.approval-level-wrap');
-  await expect(wrap).toBeVisible();
-  // default = B (non_readonly)
-  await expect(wrap.getByText(/Só destrutivos/)).toBeVisible();
+  // Não existe mais o dropdown duplicado ao lado de Pensamentos
+  await expect(page.locator('.approval-level-wrap')).toHaveCount(0);
 
-  // escolhe C · Aprovar tudo
-  await wrap.click();
-  await page.getByRole('option', { name: /Aprovar tudo/ }).click();
-  await expect(wrap.getByText(/Aprovar tudo/)).toBeVisible();
+  // Box Approval na barra de etapas do Runner mostra default B · Só destrutivos/alteração
+  const approvalStage = page.locator('.live2-stages > .stage-dd').filter({ hasText: 'Approval' }).first();
+  await expect(approvalStage).toBeVisible();
+  await expect(approvalStage.getByText(/B · Só destrutivos\/alteração/)).toBeVisible();
+
+  // Escolhe C · Aprovar tudo no box Approval
+  await approvalStage.locator('.stage-main-select button').click();
+  await page.getByRole('option', { name: /C · Aprovar tudo/ }).click();
+  await expect(approvalStage.getByText(/C · Aprovar tudo/)).toBeVisible();
 
   await page.getByRole('button', { name: 'Iniciar', exact: true }).click();
-  await expect.poll(() => posted?.flow?.approvalLevel).toBe('approve_all');
+  await expect.poll(() => {
+    const gateNode = posted?.flow?.nodes?.find((n) => n.type === 'human.approve');
+    return gateNode?.params?.mode;
+  }).toBe('approve_all');
 });

@@ -109,9 +109,6 @@ interface LogsPanelProps {
   onRejectGate?: (gate: Gate, reason?: string) => Promise<void> | void;
   /** Pill de status do turno (Parado/Pensando/.../Aguardando aprovação) — fica no centro da barra. */
   turnStatus?: { label: string; type: 'gray' | 'cyan' | 'green' | 'blue' | 'purple' | 'teal' | 'red' | 'magenta' | 'warm-gray' };
-  /** Nível de aprovação global (A/B/C) exibido na barra, antes de Pensamentos. */
-  approvalLevel?: string;
-  onSetApprovalLevel?: (level: string) => void;
   /** Aba inicial no modo pop-out (janela própria). */
   forceView?: 'logs' | 'audit' | 'terminal';
   /** Filtra para mostrar apenas um serviço de log específico (para popout individual). */
@@ -121,13 +118,6 @@ interface LogsPanelProps {
   /** Abre um serviço de log específico em janela própria. */
   onLogPopout?: (serviceId: string) => void;
 }
-
-// Níveis de aprovação A/B/C (mesmo rótulo do fluxo).
-const APPROVAL_LEVEL_OPTIONS: { id: string; label: string }[] = [
-  { id: 'ask_all', label: 'A · Perguntar tudo' },
-  { id: 'non_readonly', label: 'B · Só destrutivos/alteração' },
-  { id: 'approve_all', label: 'C · Aprovar tudo' },
-];
 
 export function LogsPanel({
   flowNodes,
@@ -145,8 +135,6 @@ export function LogsPanel({
   onApproveGate,
   onRejectGate,
   turnStatus,
-  approvalLevel,
-  onSetApprovalLevel,
   forceView,
   forceService,
   onPopout,
@@ -517,21 +505,6 @@ export function LogsPanel({
         {turnStatus && (
           <div className="logs-panel-status">
             <Tag type={turnStatus.type} size="sm" data-testid="turn-status">{turnStatus.label}</Tag>
-          </div>
-        )}
-        {!forceService && onSetApprovalLevel && (
-          <div className="approval-level-wrap">
-            <Dropdown
-              id="approval-level"
-              size="sm"
-              hideLabel
-              titleText="Nível de aprovação"
-              label="Nível de aprovação"
-              items={APPROVAL_LEVEL_OPTIONS}
-              itemToString={(it) => (it ? it.label : '')}
-              selectedItem={APPROVAL_LEVEL_OPTIONS.find((o) => o.id === (approvalLevel ?? 'non_readonly')) ?? APPROVAL_LEVEL_OPTIONS[1]}
-              onChange={({ selectedItem }) => selectedItem && onSetApprovalLevel(selectedItem.id)}
-            />
           </div>
         )}
         {!forceService && onToggleThoughts && (

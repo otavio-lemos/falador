@@ -379,12 +379,13 @@ export const PARAM_HELP: Record<string, Record<string, ParamDoc>> = {
   },
   'human.approve': {
     mode: {
-      help: 'manual = aguarda aprovação humana; auto = aprova direto (bypass)',
-      def: 'manual',
+      help: 'A = pergunta tudo no gate humano; B = só ações destrutivas/alteração ou sensíveis (decisão); C = aprova tudo direto (bypass)',
+      def: 'non_readonly',
       control: 'dropdown',
       options: [
-        { val: 'manual', label: 'manual — aprovação humana' },
-        { val: 'auto', label: 'auto — passar direto' },
+        { val: 'ask_all', label: 'A · Perguntar tudo' },
+        { val: 'non_readonly', label: 'B · Só destrutivos/alteração' },
+        { val: 'approve_all', label: 'C · Aprovar tudo' },
       ],
     },
   },

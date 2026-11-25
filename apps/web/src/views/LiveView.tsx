@@ -100,7 +100,6 @@ interface Props {
   currentFlow: string;
   onSwitchFlow: (name: string) => void;
   onUpdateStage: (nodeId: string, param: string, value: unknown) => void;
-  onSetApprovalLevel?: (level: string) => void;
   onRegenerate: () => void;
   onRefreshApps?: () => void;
   onServiceStatus?: (status: ServiceStatusMap) => void;
@@ -159,11 +158,9 @@ interface ConversationEntry {
 function stageItems(stage: Stage, models: { omlx: string[]; cache: string[] }, apps: string[]): Item[] {
   if (stage.kind === 'approve-mode') {
     return [
-      { id: 'always', label: 'Always' },
-      { id: 'manual', label: 'Manual' },
-      { id: 'non_readonly', label: 'Non-readonly' },
-      { id: 'auto', label: 'Auto (bypass)' },
-      { id: 'never', label: 'Never' },
+      { id: 'ask_all', label: 'A · Perguntar tudo' },
+      { id: 'non_readonly', label: 'B · Só destrutivos/alteração' },
+      { id: 'approve_all', label: 'C · Aprovar tudo' },
     ];
   }
   if (stage.kind === 'output-mode') {
@@ -411,7 +408,7 @@ export function LiveView({
   inputMode, outputMode, inputResetTick = 0, outputResetTick = 0, onToggleMicMute, onToggleOutputMode,
   models, apps, contextDocs,
   onUploadDoc, onRemoveDoc, onStart, flows, currentFlow,
-  onSwitchFlow, onUpdateStage, onSetApprovalLevel, onRegenerate, onServiceStatus, onNotify, onGoBuilder, onExit, onReset, resetSignal, popout, popoutServiceId,
+  onSwitchFlow, onUpdateStage, onRegenerate, onServiceStatus, onNotify, onGoBuilder, onExit, onReset, resetSignal, popout, popoutServiceId,
 }: Props) {
   const stages = useMemo(() => deriveStages(flow), [flow]);
   const stageGroups = useMemo(() => deriveStageGroups(flow), [flow]);
@@ -1530,8 +1527,6 @@ export function LiveView({
         flowNodes={flow.nodes}
         onServiceStatus={onServiceStatus}
         turnStatus={turnStatus}
-        approvalLevel={flow.approvalLevel}
-        onSetApprovalLevel={onSetApprovalLevel}
         resetSignal={resetSignal}
         thoughtsOn={showThoughts}
         thoughts={runner.thoughts}

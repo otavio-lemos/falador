@@ -120,7 +120,7 @@ export function BuilderView({
                       : type === 'translate.llm'
                         ? { model: 'LiquidAI--LFM3-1.7B-MLX-4bit', targetLanguage: 'Portuguese', enableThinking: false }
                         : type === 'human.approve'
-                          ? { mode: 'manual' }
+                          ? { mode: 'non_readonly' }
                           : {};
     const node: FNode = {
       id, type: 'falador', position: pos,

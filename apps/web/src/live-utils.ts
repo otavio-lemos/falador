@@ -291,7 +291,7 @@ export function deriveStages(flow: Flow): Stage[] {
         nodeType: n.type,
         param: 'mode',
         kind: 'approve-mode',
-        value: String(p.mode ?? 'manual'),
+        value: String(p.mode ?? 'non_readonly'),
       });
     } else if (n.type === 'goal.validator') {
       out.push({
@@ -410,6 +410,13 @@ export function deriveStages(flow: Flow): Stage[] {
       });
     }
     if (!out.some((s) => s.label === 'Approval')) {
+      const rawPolicy = String(ap.approvalPolicy ?? 'non_readonly');
+      const mappedMode =
+        rawPolicy === 'always' || rawPolicy === 'ask_all'
+          ? 'ask_all'
+          : rawPolicy === 'never' || rawPolicy === 'approve_all'
+            ? 'approve_all'
+            : 'non_readonly';
       out.push({
         key: `approve-${agentNode.id}`,
         label: 'Approval',
@@ -418,7 +425,7 @@ export function deriveStages(flow: Flow): Stage[] {
         nodeType: 'human.approve',
         param: 'approvalPolicy',
         kind: 'approve-mode',
-        value: String(ap.approvalPolicy ?? 'always'),
+        value: mappedMode,
       });
     }
     if (!out.some((s) => s.label === 'Validator')) {

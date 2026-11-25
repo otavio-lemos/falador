@@ -357,6 +357,24 @@ export function App() {
       setOutputModeAndSync(mode, liveFlow, nodeId);
       return;
     }
+    if (
+      (target?.type === 'human.approve' && param === 'mode') ||
+      (target?.type === 'agent.tools' && param === 'approvalPolicy')
+    ) {
+      const level = value === 'ask_all' || value === 'approve_all' ? value : 'non_readonly';
+      const policy = level === 'ask_all' ? 'always' : level === 'approve_all' ? 'never' : 'non_readonly';
+      const next: Flow = {
+        ...liveFlow,
+        approvalLevel: level,
+        nodes: liveFlow.nodes.map((n) => {
+          if (n.type === 'human.approve') return { ...n, params: { ...n.params, mode: level } };
+          if (n.type === 'agent.tools') return { ...n, params: { ...n.params, approvalPolicy: policy } };
+          return n;
+        }),
+      };
+      setLiveFlow(next);
+      return;
+    }
     const next: Flow = {
       ...liveFlow,
       nodes: liveFlow.nodes.map((n) => {
@@ -390,13 +408,6 @@ export function App() {
     };
     setLiveFlow(next);
     if (runner.running) startWithContext(next);
-  };
-  const onSetApprovalLevel = (level: string) => {
-    if (!liveFlow) return;
-    const next: Flow = { ...liveFlow, approvalLevel: level };
-    setLiveFlow(next);
-    // NÃO reinicia o run: approvalLevel afeta apenas gates/execuções futuras
-    // O runner já lê o nível atual do flow no momento do gate/exec
   };
   const onRegenerate = () => { if (liveFlow && runner.running) startWithContext(liveFlow); };
   const onExit = () => { runner.stop(); };
@@ -513,7 +524,7 @@ export function App() {
               contextDocs={contextDocs} onUploadDoc={onUploadDoc} onRemoveDoc={onRemoveDoc}
               onStart={startWithContext}
               flows={flows} currentFlow={currentFlow} onSwitchFlow={onSwitchLiveFlow}
-              onUpdateStage={onUpdateStage} onSetApprovalLevel={onSetApprovalLevel} onRegenerate={onRegenerate}
+              onUpdateStage={onUpdateStage} onRegenerate={onRegenerate}
               onServiceStatus={handleServiceStatus}
               onNotify={(msg) => setToast(msg)}
               onGoBuilder={() => setView('builder')}
