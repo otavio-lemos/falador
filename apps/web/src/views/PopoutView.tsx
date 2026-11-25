@@ -90,6 +90,49 @@ export function PopoutView() {
     );
   }
 
+  if (panel === 'terminal') {
+    if (!flow) {
+      return (
+        <Theme theme="g100">
+          <div className="popout-fallback">Carregando fluxo…</div>
+        </Theme>
+      );
+    }
+    return (
+      <Theme theme="g100">
+        <LiveView
+          popout={"terminal"}
+          runner={runner}
+          flow={flow}
+          scenarioName=""
+          theme="g100"
+          onToggleTheme={noop}
+          inputMode={inputMode}
+          outputMode="write"
+          onToggleMicMute={noop}
+          onToggleOutputMode={noop}
+          models={{ omlx: [], cache: [] }}
+          apps={[]}
+          contextDocs={[]}
+          onUploadDoc={noop}
+          onRemoveDoc={noop}
+          onStart={noop}
+          flows={[]}
+          currentFlow={flowName}
+          onSwitchFlow={noop}
+          onUpdateStage={noop}
+          onRegenerate={noop}
+          onServiceStatus={noop}
+          onNotify={noop}
+          onGoBuilder={noop}
+          onExit={noop}
+          onReset={noop}
+          resetSignal={0}
+        />
+      </Theme>
+    );
+  }
+
   return (
     <Theme theme="g100">
       {error ? (
