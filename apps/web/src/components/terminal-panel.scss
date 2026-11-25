@@ -70,3 +70,42 @@
     background-color: #0d1117 !important;
   }
 }
+
+/* Transcrito sequencial dos comandos executados pelo agente (aba Terminal).
+   A aba mostra o resultado dos exec_*; o shell xterm fica abaixo, menor. */
+.falador-terminal-transcript {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  background: #0d1117;
+  color: #e6edf3;
+  font-family: 'IBM Plex Mono', Menlo, Monaco, Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 6px 12px;
+  border-bottom: 1px solid #30363d;
+}
+.ftr-exec {
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.ftr-exec:last-child { border-bottom: none; }
+.ftr-cmd { display: flex; align-items: baseline; gap: 8px; }
+.ftr-prompt { color: #3fb950; font-weight: 700; }
+.ftr-cmd-text { color: #f0f6fc; overflow-wrap: anywhere; word-break: break-word; }
+.ftr-exec--fail .ftr-cmd-text { color: #ffa198; }
+.ftr-meta { margin-inline-start: auto; white-space: nowrap; color: #8b949e; font-size: 11px; }
+.ftr-out,
+.ftr-err {
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  font: inherit;
+}
+.ftr-out { color: #c9d1d9; }
+.ftr-err { color: #ff7b72; }
+.falador-xterm-container--secondary {
+  flex: 0 0 170px;
+  min-height: 0;
+}

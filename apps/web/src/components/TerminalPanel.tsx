@@ -22,8 +22,9 @@ function decodeBase64Bytes(b64: string): Uint8Array {
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }
 
-export function TerminalPanel(_props: TerminalPanelProps) {
+export function TerminalPanel({ executions = [] }: TerminalPanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -219,6 +220,12 @@ export function TerminalPanel(_props: TerminalPanelProps) {
     };
   }, [connectSession, flushInput]);
 
+  // Rola o transcrito para o fim conforme novos comandos chegam (sequencial).
+  useEffect(() => {
+    const el = transcriptRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [executions]);
+
   const handleNewSession = async () => {
     const term = termRef.current;
     if (!term) return;
@@ -300,7 +307,29 @@ export function TerminalPanel(_props: TerminalPanelProps) {
           />
         </div>
       </div>
-      <div className="falador-xterm-container" ref={containerRef} />
+      {executions.length > 0 && (
+        <div className="falador-terminal-transcript" ref={transcriptRef} aria-label="Comandos executados">
+          {executions.map((e, i) => {
+            const failed = e.status === 'done' && e.exitCode !== 0;
+            return (
+              <div key={e.id || i} className={`ftr-exec${failed ? ' ftr-exec--fail' : e.status === 'running' ? ' ftr-exec--run' : ' ftr-exec--ok'}`}>
+                <div className="ftr-cmd">
+                  <span className="ftr-prompt">$</span>
+                  <span className="ftr-cmd-text">{e.command || '—'}</span>
+                  <span className="ftr-meta">
+                    {e.host && e.host !== 'local' ? `${e.host} · ` : ''}{e.transport}
+                    {e.exitCode != null ? ` · exit ${e.exitCode}` : e.status === 'running' ? ' · rodando…' : ''}
+                    {typeof e.durationMs === 'number' ? ` · ${Math.round(e.durationMs)} ms` : ''}
+                  </span>
+                </div>
+                {e.stdout ? <pre className="ftr-out">{e.stdout}</pre> : null}
+                {e.stderr ? <pre className="ftr-err">{e.stderr}</pre> : null}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <div className={`falador-xterm-container${executions.length > 0 ? ' falador-xterm-container--secondary' : ''}`} ref={containerRef} />
     </div>
   );
 }
