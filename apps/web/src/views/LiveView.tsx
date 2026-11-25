@@ -1239,12 +1239,9 @@ export function LiveView({
   }
 
   const renderConversationEntry = (m: ConversationEntry) => {
-    const role = m.kind === 'user' ? 'Você'
-      : m.kind === 'stt' ? 'Transcription'
-        : m.kind === 'agent' ? 'Agent'
-          : m.kind === 'audio' ? 'Playback'
-            : m.kind === 'decision' ? 'Decisão'
-              : 'Agent';
+    // Nome exibido = nome do COMPONENTE (display name do nó, ADR-011), não um
+    // rótulo genérico por tipo. 'Você' é a única exceção (mensagem do humano).
+    const role = m.kind === 'user' ? 'Você' : (m.title || m.subtitle || '—');
     const tag = m.tag ?? m.subtitle;
     let tagType: ChatTagType = 'gray';
     let accent = 'var(--cds-support-info)';

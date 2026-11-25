@@ -878,7 +878,7 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 .live-chat-entry,
 .live-chat-thought {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: $spacing-02;
   width: 100%;
   min-width: 0;
@@ -887,7 +887,7 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   // piso de altura mínima, então flex-shrink:0 é obrigatório aqui.
   flex-shrink: 0;
   overflow: hidden;
-  padding: $spacing-01 $spacing-03;
+  padding: $spacing-02 $spacing-03;
   background: $bg-card;
 }
 .live-chat-accent { width: 3px; align-self: stretch; background: var(--accent); }
@@ -947,20 +947,23 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   @include type-style('body-compact-01');
   color: $txt-1;
   font-size: 12px;
+  line-height: 1.35;
   flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  // QUEBRA a linha ao chegar no fim (nunca corta com "…" — o texto sobe e a
+  // conversa ganha rolagem). Vale para transcrição de mic/app e demais mensagens.
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .live-chat-entry-code {
   @include type-style('code-01');
   color: $txt-1;
   flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .live-chat-thought-text {
   @include type-style('body-compact-01');
