@@ -98,10 +98,12 @@ export function PopoutView() {
         </Theme>
       );
     }
+    // terminal popout pode ter serviceId (filtra um serviço) ou não (mostra tudo)
     return (
       <Theme theme="g100">
         <LiveView
           popout={"terminal"}
+          popoutServiceId={serviceId}
           runner={runner}
           flow={flow}
           scenarioName=""

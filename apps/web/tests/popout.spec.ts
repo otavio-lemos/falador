@@ -98,20 +98,34 @@ test('botões ↗ do painel de logs abrem Logs e Terminal', async ({ page, conte
   await mockFlow(context);
   await stubWindowOpen(page);
   await page.goto('/');
+  await page.evaluate(() => localStorage.setItem('falador.logsView', 'terminal'));
   await page.getByRole('button', { name: 'Runner' }).click();
 
-  const popoutBtn = page.locator('.logs-panel-head').getByRole('button', { name: 'Abrir em janela' });
-  await expect(popoutBtn).toHaveCount(1);
-  await popoutBtn.click();
+  // Testar openPopout diretamente
+  await page.evaluate(() => (window as unknown as { __openPopoutForTest: (panel: string, flowName?: string) => void }).__openPopoutForTest('terminal', 'teste-popout'));
   let opened = await openedWindows(page);
-  expect(opened.at(-1)?.url).toBe(`/popout/logs?flow=${FLOW_NAME}`);
-  expect(opened.at(-1)?.name).toBe('falador-popout-logs');
-
-  await page.locator('.logs-panel-head').getByRole('tab', { name: /^Terminal/ }).click();
-  await popoutBtn.click();
-  opened = await openedWindows(page);
+  expect(opened.length).toBeGreaterThan(0);
   expect(opened.at(-1)?.url).toBe(`/popout/terminal?flow=${FLOW_NAME}`);
   expect(opened.at(-1)?.name).toBe('falador-popout-terminal');
+
+  // Testar botão do terminal
+  let popoutBtn = page.locator('.logs-panel-head').getByRole('button', { name: 'Abrir em janela' });
+  await expect(popoutBtn).toHaveCount(1);
+  await popoutBtn.click();
+  opened = await openedWindows(page);
+  expect(opened.length).toBeGreaterThan(0);
+  expect(opened.at(-1)?.url).toBe(`/popout/terminal?flow=${FLOW_NAME}`);
+  expect(opened.at(-1)?.name).toBe('falador-popout-terminal');
+
+  // Agora mudar para Logs via aba
+  await page.locator('.logs-panel-head').getByRole('tab', { name: /^Logs/ }).click();
+  await expect(page.locator('.logs-panel-body')).toBeVisible();
+  popoutBtn = page.locator('.logs-panel-head').getByRole('button', { name: 'Abrir em janela' });
+  await expect(popoutBtn).toHaveCount(1);
+  await popoutBtn.click();
+  opened = await openedWindows(page);
+  expect(opened.at(-1)?.url).toBe(`/popout/logs?flow=${FLOW_NAME}`);
+  expect(opened.at(-1)?.name).toBe('falador-popout-logs');
 });
 
 test('janela /popout/chat mostra a conversa e envia mensagem (interativa)', async ({ page, context }) => {

@@ -1516,7 +1516,7 @@ export function LiveView({
   const logsPanel = (
       <LogsPanel
         forceView={popout === 'terminal' ? 'terminal' : popout === 'logs' || popout === 'log' ? 'logs' : undefined}
-        forceService={popout === 'log' ? popoutServiceId : undefined}
+        forceService={popout === 'log' ? popoutServiceId : popout === 'terminal' ? popoutServiceId : undefined}
         onPopout={popout ? undefined : openPanelPopout}
         onLogPopout={popout ? undefined : (svc) => openPopout('log', svc)}
         flowNodes={flow.nodes}

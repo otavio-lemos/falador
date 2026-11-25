@@ -11,9 +11,10 @@ export interface PopoutOptions {
 }
 
 // Referências por painel para focar em vez de recarregar.
-// Para 'log', a chave inclui o serviceId.
+// Para 'log' e 'terminal', a chave inclui o serviceId.
 const openWindows: Partial<Record<PopoutPanel, Window | null>> = {};
 const openLogWindows: Record<string, Window | null> = {};
+const openTerminalWindows: Record<string, Window | null> = {};
 
 export function openPopout(panel: PopoutPanel, flowName?: string, opts: PopoutOptions = {}): Window | null {
   if (panel === 'log') {
@@ -36,6 +37,29 @@ export function openPopout(panel: PopoutPanel, flowName?: string, opts: PopoutOp
     win?.focus();
     return win;
   }
+  if (panel === 'terminal') {
+    const svc = opts.serviceId;
+    const existing = svc ? openTerminalWindows[svc] : openTerminalWindows['all'];
+    if (existing && !existing.closed) {
+      existing.focus();
+      return existing;
+    }
+    const width = opts.width ?? 980;
+    const height = opts.height ?? 640;
+    const query = flowName ? `?flow=${encodeURIComponent(flowName)}${svc ? `&service=${encodeURIComponent(svc)}` : ''}` : (svc ? `?service=${encodeURIComponent(svc)}` : '');
+    const win = window.open(
+      `/popout/terminal${query}`,
+      svc ? `falador-popout-terminal-${svc}` : 'falador-popout-terminal',
+      `popup=yes,width=${width},height=${height}`,
+    );
+    if (svc) {
+      openTerminalWindows[svc] = win;
+    } else {
+      openTerminalWindows['all'] = win;
+    }
+    win?.focus();
+    return win;
+  }
   const existing = openWindows[panel];
   if (existing && !existing.closed) {
     existing.focus();
@@ -52,4 +76,9 @@ export function openPopout(panel: PopoutPanel, flowName?: string, opts: PopoutOp
   openWindows[panel] = win;
   win?.focus();
   return win;
+}
+
+// Export for testing
+if (typeof window !== 'undefined') {
+  (window as unknown as { __openPopoutForTest: typeof openPopout }).__openPopoutForTest = openPopout;
 }
