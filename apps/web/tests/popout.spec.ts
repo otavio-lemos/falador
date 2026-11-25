@@ -130,8 +130,8 @@ test('janela /popout/chat mostra a conversa e envia mensagem (interativa)', asyn
   // No pop-out não há botão que abra outro pop-out.
   await expect(page.locator('.live2-popout-bar')).toBeHidden();
 
-  await page.locator('#live-chat-input').fill('mensagem do popup');
-  await page.locator('#live-chat-input').press('Enter');
+  await page.locator('.live2--popout-chat #live-chat-input').first().fill('mensagem do popup');
+  await page.locator('.live2--popout-chat #live-chat-input').first().press('Enter');
   await expect.poll(() => chats.length).toBe(1);
   expect(chats[0].text).toBe('mensagem do popup');
   expect(chats[0].nodeId).toBe('entrada');

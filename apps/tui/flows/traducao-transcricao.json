@@ -20,27 +20,8 @@
       "params": {
         "model": "/Users/otaviolemos/.cache/huggingface/hub/models--mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit/snapshots/fdebf7b2af834a1db4b8a3c99ab7480b333adf9e",
         "serverVad": true,
-        "inputRate": 16000
-      }
-    },
-    {
-      "id": "tradutor",
-      "type": "translate.llm",
-      "params": {
-        "model": "LiquidAI--LFM3-1.7B-MLX-4bit",
-        "targetLanguage": "Portuguese",
-        "enableThinking": false
-      }
-    },
-    {
-      "id": "legenda",
-      "type": "sink.captions",
-      "params": {
-        "mode": "callback",
-        "showParcials": true,
-        "outputMode": "write",
-        "isDefault": true,
-        "language": "Portuguese"
+        "inputRate": 16000,
+        "emitInterruptOnSpeech": false
       }
     }
   ],
@@ -51,24 +32,6 @@
       "capacity": 32,
       "overflow": "drop_oldest",
       "ttlMs": 1500
-    },
-    {
-      "from": "input.out_text",
-      "to": "tradutor.in",
-      "capacity": 16,
-      "overflow": "drop_oldest"
-    },
-    {
-      "from": "asr.out",
-      "to": "tradutor.parcs",
-      "capacity": 16,
-      "overflow": "drop_oldest"
-    },
-    {
-      "from": "tradutor.out",
-      "to": "legenda.in",
-      "capacity": 16,
-      "overflow": "drop_oldest"
     }
   ]
 }

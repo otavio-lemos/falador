@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "skills": {
+    "browser": {
+      "source": "browserbase/skills",
+      "commit": "bac30e266488dc133cb8fa6d45638a05600acfe4",
+      "sourceType": "github",
+      "skillPath": "skills/browser/SKILL.md",
+      "computedHash": "93bfd9f0401e12ca8a11ca815d20d6fe14469a628b518a4da2d59addefd2ec49"
+    }
+  }
+}
