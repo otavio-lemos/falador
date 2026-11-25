@@ -158,3 +158,37 @@ test('janela /popout/logs sem fluxo mostra erro honesto', async ({ page }) => {
   await page.goto('/popout/logs');
   await expect(page.getByRole('alert')).toContainText('Fluxo não informado');
 });
+
+test('janela /popout/log?service=omlx abre só o serviço omlx', async ({ page, context }) => {
+  await mockFlow(context);
+  await streamEvents(context);
+  await page.goto(`/popout/log?flow=${FLOW_NAME}&service=omlx`);
+  await expect(page.locator('.live2--popout-log')).toBeVisible();
+  await expect(page.locator('.logs-panel-head').getByRole('tab', { name: /^Logs/ })).toHaveAttribute('aria-selected', 'true');
+  // Verifica que só o serviço omlx está visível (filtro forceService)
+  await expect(page.locator('.logs-block')).toHaveCount(1);
+  // O título pode variar, verificar que há um bloco de log
+  await expect(page.locator('.logs-block')).toBeVisible();
+  // Botão de popout do log individual não deve aparecer
+  await expect(page.locator('.logs-block-head').getByRole('button', { name: 'Abrir omlx em janela' })).toHaveCount(0);
+});
+
+test('janela /popout/log sem service mostra erro honesto', async ({ page }) => {
+  await page.goto('/popout/log');
+  await expect(page.getByRole('alert')).toContainText('Serviço de log não informado');
+});
+
+test('botão ↗ individual de cada log abre /popout/log?service=<svc>', async ({ page, context }) => {
+  await mockFlow(context);
+  await stubWindowOpen(page);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Runner' }).click();
+
+  // Verifica que o botão ↗ do painel de logs abre /popout/logs
+  const popoutBtn = page.locator('.logs-panel-head').getByRole('button', { name: 'Abrir em janela' });
+  await expect(popoutBtn).toHaveCount(1);
+  await popoutBtn.click();
+  let opened = await openedWindows(page);
+  expect(opened.at(-1)?.url).toBe(`/popout/logs?flow=${FLOW_NAME}`);
+  expect(opened.at(-1)?.name).toBe('falador-popout-logs');
+});

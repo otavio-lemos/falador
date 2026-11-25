@@ -110,7 +110,9 @@ interface Props {
   onReset: () => void;
   resetSignal: number;
   /** Modo janela pop-out: renderiza só um painel (idêntico), para outra tela. */
-  popout?: 'chat' | 'terminal' | 'logs';
+  popout?: 'chat' | 'terminal' | 'logs' | 'log';
+  /** Service ID para popout 'log' individual (ex.: 'omlx', 'asr', 'tts', 'web'). */
+  popoutServiceId?: string;
 }
 
 interface Item { id: string; label: string }
@@ -409,7 +411,7 @@ export function LiveView({
   inputMode, outputMode, inputResetTick = 0, outputResetTick = 0, onToggleMicMute, onToggleOutputMode,
   models, apps, contextDocs,
   onUploadDoc, onRemoveDoc, onStart, flows, currentFlow,
-  onSwitchFlow, onUpdateStage, onSetApprovalLevel, onRegenerate, onServiceStatus, onNotify, onGoBuilder, onExit, onReset, resetSignal, popout,
+  onSwitchFlow, onUpdateStage, onSetApprovalLevel, onRegenerate, onServiceStatus, onNotify, onGoBuilder, onExit, onReset, resetSignal, popout, popoutServiceId,
 }: Props) {
   const stages = useMemo(() => deriveStages(flow), [flow]);
   const stageGroups = useMemo(() => deriveStageGroups(flow), [flow]);
@@ -1513,8 +1515,10 @@ export function LiveView({
 
   const logsPanel = (
       <LogsPanel
-        forceView={popout === 'terminal' ? 'terminal' : popout === 'logs' ? 'logs' : undefined}
+        forceView={popout === 'terminal' ? 'terminal' : popout === 'logs' || popout === 'log' ? 'logs' : undefined}
+        forceService={popout === 'log' ? popoutServiceId : undefined}
         onPopout={popout ? undefined : openPanelPopout}
+        onLogPopout={popout ? undefined : (svc) => openPopout('log', svc)}
         flowNodes={flow.nodes}
         onServiceStatus={onServiceStatus}
         turnStatus={turnStatus}

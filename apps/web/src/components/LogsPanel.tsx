@@ -114,8 +114,12 @@ interface LogsPanelProps {
   onSetApprovalLevel?: (level: string) => void;
   /** Aba inicial no modo pop-out (janela própria). */
   forceView?: 'logs' | 'audit' | 'terminal';
+  /** Filtra para mostrar apenas um serviço de log específico (para popout individual). */
+  forceService?: string;
   /** Abre o painel atual em janela própria (botão ↗). Ausente = sem botão. */
   onPopout?: (panel: PopoutPanel) => void;
+  /** Abre um serviço de log específico em janela própria. */
+  onLogPopout?: (serviceId: string) => void;
 }
 
 // Níveis de aprovação A/B/C (mesmo rótulo do fluxo).
@@ -144,7 +148,9 @@ export function LogsPanel({
   approvalLevel,
   onSetApprovalLevel,
   forceView,
+  forceService,
   onPopout,
+  onLogPopout,
 }: LogsPanelProps) {
   const logsRefs = useRef<Record<string, HTMLPreElement | null>>({});
   const clearEpochRef = useRef(0);
@@ -467,35 +473,39 @@ export function LogsPanel({
             </TabPanels>
           </Tabs>
         </div>
-        <div className="logs-panel-services">
-          <MultiSelect
-            id="logs-services"
-            size="sm"
-            titleText="Componentes"
-            hideLabel
-            label="Selecionar componentes"
-            disabled={view !== 0}
-            items={servicesMeta}
-            itemToString={(it) => (it ? it.label : '')}
-            selectedItems={servicesMeta.filter((s) => logServices.includes(s.id))}
-            onChange={({ selectedItems }) => onLogServicesChange(selectedItems ?? [])}
-          />
-        </div>
-        <Button
-          kind="tertiary"
-          size="sm"
-          renderIcon={TrashCan}
-          onClick={() => void handleClearLogs()}
-          disabled={view !== 0 || logServices.length === 0 || clearing}
-        >
-          Limpar logs
-        </Button>
+        {!forceService && (
+          <>
+            <div className="logs-panel-services">
+              <MultiSelect
+                id="logs-services"
+                size="sm"
+                titleText="Componentes"
+                hideLabel
+                label="Selecionar componentes"
+                disabled={view !== 0}
+                items={servicesMeta}
+                itemToString={(it) => (it ? it.label : '')}
+                selectedItems={servicesMeta.filter((s) => logServices.includes(s.id))}
+                onChange={({ selectedItems }) => onLogServicesChange(selectedItems ?? [])}
+              />
+            </div>
+            <Button
+              kind="tertiary"
+              size="sm"
+              renderIcon={TrashCan}
+              onClick={() => void handleClearLogs()}
+              disabled={view !== 0 || logServices.length === 0 || clearing}
+            >
+              Limpar logs
+            </Button>
+          </>
+        )}
         {turnStatus && (
           <div className="logs-panel-status">
             <Tag type={turnStatus.type} size="sm" data-testid="turn-status">{turnStatus.label}</Tag>
           </div>
         )}
-        {onSetApprovalLevel && (
+        {!forceService && onSetApprovalLevel && (
           <div className="approval-level-wrap">
             <Dropdown
               id="approval-level"
@@ -510,7 +520,7 @@ export function LogsPanel({
             />
           </div>
         )}
-        {onToggleThoughts && (
+        {!forceService && onToggleThoughts && (
           <div className="thoughts-wrap">
             <Button
               kind={thoughtsOn ? 'primary' : 'tertiary'}
@@ -539,7 +549,7 @@ export function LogsPanel({
             )}
           </div>
         )}
-        {onPopout && (
+        {!forceService && onPopout && (
           <Button
             kind="ghost"
             size="sm"
@@ -580,7 +590,14 @@ export function LogsPanel({
           {logServices.length === 0 && (
             <p className="logs-panel-empty">Nenhum bloco selecionado — escolha acima.</p>
           )}
-          {logServices.map((svc) => {
+          {forceService && !logServices.includes(forceService) && (
+            <p className="logs-panel-empty" style={{ color: 'var(--cds-support-warning, #ff832a)' }}>
+              Serviço "{forceService}" não está selecionado nos logs. Use o seletor acima para adicioná-lo.
+            </p>
+          )}
+          {logServices
+            .filter((svc) => !forceService || svc === forceService)
+            .map((svc) => {
             const meta = servicesMeta.find((s) => s.id === svc);
             const lines = logsByService[svc] ?? [];
             const up = serviceStatus ? Boolean(serviceStatus[svc as keyof ServiceStatusMap]) : false;
@@ -609,6 +626,17 @@ export function LogsPanel({
                         </span>
                       ))}
                     </span>
+                  )}
+                  {onLogPopout && (
+                    <Button
+                      kind="ghost"
+                      size="sm"
+                      hasIconOnly
+                      renderIcon={Launch}
+                      iconDescription={`Abrir ${svc} em janela`}
+                      tooltipPosition="left"
+                      onClick={() => onLogPopout(svc)}
+                    />
                   )}
                   <Button
                     kind="ghost"
