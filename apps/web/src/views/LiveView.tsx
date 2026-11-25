@@ -971,13 +971,14 @@ export function LiveView({
                     </div>
                   )}
                   {(gateInfo.fields ?? []).length > 0 ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    <div className="live-chat-askuser-fields">
                       {(gateInfo.fields ?? []).map((f) => (
                         f.type === 'select' ? (
                           <Select
                             key={f.name}
                             id={`field-${f.name}`}
                             labelText={f.label}
+                            hideLabel
                             size="sm"
                             value={fieldValues[f.name] ?? ''}
                             onChange={(e) => setFieldValues((v) => ({ ...v, [f.name]: e.target.value }))}
@@ -990,18 +991,17 @@ export function LiveView({
                             key={f.name}
                             id={`field-${f.name}`}
                             labelText={f.label}
+                            hideLabel
                             type={f.type === 'password' ? 'password' : 'text'}
                             size="sm"
-                            placeholder={f.placeholder ?? ''}
+                            placeholder={f.placeholder ?? f.label}
                             value={fieldValues[f.name] ?? ''}
                             onChange={(e) => setFieldValues((v) => ({ ...v, [f.name]: e.target.value }))}
                             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); approve(); } }}
                           />
                         )
                       ))}
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.25rem' }}>
-                        <Button kind="primary" size="sm" renderIcon={Send} className="approve-btn" onClick={() => approve()}>Enviar</Button>
-                      </div>
+                      <Button kind="primary" size="sm" renderIcon={Send} className="approve-btn" onClick={() => approve()}>Enviar</Button>
                     </div>
                   ) : (
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end' }}>

@@ -1056,6 +1056,16 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   overflow: hidden;
   text-overflow: ellipsis;
 }
+// Campos do ask_user (IP/usuário/bastion) LADO A LADO, rótulo DENTRO do campo.
+.live-chat-askuser-fields {
+  display: flex;
+  align-items: flex-end;
+  gap: $spacing-02;
+  flex: 3 1 auto;
+  min-width: 0;
+  .cds--form-item { flex: 1 1 0; min-width: 0; }
+  .approve-btn { flex: 0 0 auto; }
+}
 
 // ---- logs dos serviços residentes (altura fixa controlada SOMENTE pelo usuário) ----
 .logs-panel {
