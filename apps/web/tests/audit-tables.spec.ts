@@ -74,3 +74,25 @@ test('busca única fica visível em todas as abas e filtra', async ({ page }) =>
   await expect(audit.getByText('Execução iniciada')).toHaveCount(0);
   await expect(audit.getByText('exec_local', { exact: false }).first()).toBeVisible();
 });
+
+test('faixa de sub-abas (.audit-bar) não oscila de largura entre re-renders periódicos', async ({ page }) => {
+  const measure = () =>
+    page.evaluate(() => {
+      const list = document.querySelector('.audit-bar .cds--tab--list') as HTMLElement | null;
+      const items = [...document.querySelectorAll('.audit-bar .cds--tabs__nav-item')] as HTMLElement[];
+      const last = items.at(-1)?.getBoundingClientRect();
+      return {
+        clientW: list?.clientWidth ?? 0,
+        scrollW: list?.scrollWidth ?? 0,
+        lastRight: last ? Math.round(last.x + last.width) : 0,
+      };
+    });
+
+  const s0 = await measure();
+  expect(s0.scrollW).toBeLessThanOrEqual(s0.clientW);
+  await page.waitForTimeout(3400); // atravessa poll de status (3s) e logs (1.5s)
+  const s1 = await measure();
+  expect(s1.scrollW).toBeLessThanOrEqual(s1.clientW);
+  expect(s1.clientW).toBe(s0.clientW);
+  expect(s1.lastRight).toBe(s0.lastRight);
+});

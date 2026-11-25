@@ -247,6 +247,7 @@ async function readSse(r: Response, onEvent: (ev: RunnerEvent) => void, onEnd: (
       if (!data) continue;
       let parsed: unknown; try { parsed = JSON.parse(data); } catch { continue; }
       if (evName === 'runner') onEvent(parsed as RunnerEvent);
+      else if (evName === 'attached') onEvent({ type: 'run_attached', ...(parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {}) });
       else if (evName === 'runner_stderr') onEvent({ type: 'runner_stderr', ...(parsed as Record<string, unknown>) });
       else if (evName === 'ended') { onEnd((parsed as { code: number }).code ?? 0); return; }
     }

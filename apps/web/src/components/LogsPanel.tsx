@@ -201,6 +201,10 @@ export function LogsPanel({
     } catch { /* ignore */ }
     return ['web'];
   });
+  const activeLogServices = useMemo<string[]>(
+    () => (forceService ? [forceService] : logServices),
+    [forceService, logServices],
+  );
 
   const servicesMeta = useMemo<LogServiceMeta[]>(() => {
     const activeNodes = (flowNodes ?? []).filter((n) => n.enabled !== false);
@@ -309,8 +313,8 @@ export function LogsPanel({
   };
 
   const handleClearLogs = async () => {
-    if (logServices.length === 0 || clearing) return;
-    const targets = logServices;
+    if (activeLogServices.length === 0 || clearing) return;
+    const targets = activeLogServices;
     clearEpochRef.current += 1;
     setClearing(true);
     setLogsByService((prev) => {
@@ -348,12 +352,22 @@ export function LogsPanel({
       try {
         const res = await fetchServiceStatus();
         if (!alive) return;
-        setServiceStatus(res.services);
+        setServiceStatus((prev) =>
+          prev &&
+          prev.web === res.services.web &&
+          prev.asr === res.services.asr &&
+          prev.omlx === res.services.omlx &&
+          prev.tts === res.services.tts
+            ? prev
+            : res.services,
+        );
         onServiceStatusRef.current?.(res.services);
       } catch {
         if (alive) {
           const down: ServiceStatusMap = { web: false, asr: false, omlx: false, tts: false };
-          setServiceStatus(down);
+          setServiceStatus((prev) =>
+            prev && !prev.web && !prev.asr && !prev.omlx && !prev.tts ? prev : down,
+          );
           onServiceStatusRef.current?.(down);
         }
       } finally {
@@ -366,7 +380,7 @@ export function LogsPanel({
   }, []);
 
   useEffect(() => {
-    if (logsCollapsed || logServices.length === 0) return;
+    if (logsCollapsed || view !== 0 || activeLogServices.length === 0) return;
     let alive = true;
     let inFlight = false;
     const load = async () => {
@@ -375,7 +389,7 @@ export function LogsPanel({
       const epoch = clearEpochRef.current;
       try {
         const entries = await Promise.all(
-          logServices.map(async (svc) => {
+          activeLogServices.map(async (svc) => {
             try {
               const r = await fetchLogs(svc, 250);
               return [svc, r.lines] as const;
@@ -405,14 +419,14 @@ export function LogsPanel({
     void load();
     const t = setInterval(() => void load(), 1500);
     return () => { alive = false; clearInterval(t); };
-  }, [logServices, logsCollapsed]);
+  }, [activeLogServices, logsCollapsed, view]);
 
   useEffect(() => {
-    for (const svc of logServices) {
+    for (const svc of activeLogServices) {
       const el = logsRefs.current[svc];
       if (el) el.scrollTop = el.scrollHeight;
     }
-  }, [logsByService, logServices]);
+  }, [logsByService, activeLogServices]);
 
   const toggleLogsExpanded = () => {
     if (logsCollapsed) {
@@ -557,7 +571,7 @@ export function LogsPanel({
             renderIcon={Launch}
             iconDescription="Abrir em janela"
             tooltipPosition="top"
-            onClick={() => onPopout(view === 2 ? 'terminal' : 'logs')}
+            onClick={() => onPopout(view === 2 ? 'terminal' : view === 1 ? 'audit' : 'logs')}
           />
         )}
         <Button
@@ -584,20 +598,14 @@ export function LogsPanel({
               gates={gates}
               onApprove={onApproveGate}
               onReject={onRejectGate}
+              forceService={forceService}
             />
           ) : (
             <>
-          {logServices.length === 0 && (
+          {activeLogServices.length === 0 && (
             <p className="logs-panel-empty">Nenhum bloco selecionado — escolha acima.</p>
           )}
-          {forceService && !logServices.includes(forceService) && (
-            <p className="logs-panel-empty" style={{ color: 'var(--cds-support-warning, #ff832a)' }}>
-              Serviço "{forceService}" não está selecionado nos logs. Use o seletor acima para adicioná-lo.
-            </p>
-          )}
-          {logServices
-            .filter((svc) => !forceService || svc === forceService)
-            .map((svc) => {
+          {activeLogServices.map((svc) => {
             const meta = servicesMeta.find((s) => s.id === svc);
             const lines = logsByService[svc] ?? [];
             const up = serviceStatus ? Boolean(serviceStatus[svc as keyof ServiceStatusMap]) : false;
@@ -627,7 +635,7 @@ export function LogsPanel({
                       ))}
                     </span>
                   )}
-                  {onLogPopout && (
+                  {!forceService && onLogPopout && (
                     <Button
                       kind="ghost"
                       size="sm"
@@ -638,15 +646,17 @@ export function LogsPanel({
                       onClick={() => onLogPopout(svc)}
                     />
                   )}
-                  <Button
-                    kind="ghost"
-                    size="sm"
-                    hasIconOnly
-                    renderIcon={Close}
-                    iconDescription={`Remover logs de ${svc}`}
-                    tooltipPosition="left"
-                    onClick={() => removeLogService(svc)}
-                  />
+                  {!forceService && (
+                    <Button
+                      kind="ghost"
+                      size="sm"
+                      hasIconOnly
+                      renderIcon={Close}
+                      iconDescription={`Remover logs de ${svc}`}
+                      tooltipPosition="left"
+                      onClick={() => removeLogService(svc)}
+                    />
+                  )}
                 </div>
                 <pre
                   className="logs-terminal"

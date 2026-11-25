@@ -110,7 +110,7 @@ interface Props {
   onReset: () => void;
   resetSignal: number;
   /** Modo janela pop-out: renderiza só um painel (idêntico), para outra tela. */
-  popout?: 'chat' | 'terminal' | 'logs' | 'log';
+  popout?: 'chat' | 'terminal' | 'logs' | 'audit' | 'log';
   /** Service ID para popout 'log' individual (ex.: 'omlx', 'asr', 'tts', 'web'). */
   popoutServiceId?: string;
 }
@@ -1515,10 +1515,18 @@ export function LiveView({
 
   const logsPanel = (
       <LogsPanel
-        forceView={popout === 'terminal' ? 'terminal' : popout === 'logs' || popout === 'log' ? 'logs' : undefined}
+        forceView={
+          popout === 'terminal'
+            ? 'terminal'
+            : popout === 'audit'
+              ? 'audit'
+              : popout === 'logs' || popout === 'log'
+                ? 'logs'
+                : undefined
+        }
         forceService={popout === 'log' ? popoutServiceId : popout === 'terminal' ? popoutServiceId : undefined}
         onPopout={popout ? undefined : openPanelPopout}
-        onLogPopout={popout ? undefined : (svc) => openPopout('log', svc)}
+        onLogPopout={popout ? undefined : (svc) => { openPopout('log', currentFlow, { serviceId: svc }); }}
         flowNodes={flow.nodes}
         onServiceStatus={onServiceStatus}
         turnStatus={turnStatus}
@@ -1550,38 +1558,7 @@ export function LiveView({
     return (
       <div className={`live2 live2--popout live2--popout-${popout}`}>
         {popout === 'chat' ? (
-          <>
-            {liveBody}
-            {inputMode === 'chat' && (
-              <div className="live-chat-input">
-                <TextInput
-                  id="live-chat-input"
-                  labelText="Mensagem"
-                  hideLabel
-                  size="sm"
-                  placeholder={runner.running ? chatPlaceholder : 'Inicie a sessão para conversar...'}
-                  value={chatInput}
-                  disabled={!runner.running || sendingChat || !chatNode}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      void handleSendChat();
-                    }
-                  }}
-                />
-                <Button
-                  kind="primary"
-                  size="sm"
-                  renderIcon={Play}
-                  disabled={!runner.running || sendingChat || !chatInput.trim() || !chatNode}
-                  onClick={() => void handleSendChat()}
-                >
-                  Enviar
-                </Button>
-              </div>
-            )}
-          </>
+          liveBody
         ) : popout === 'terminal' ? (
           <>
             {logsPanel}

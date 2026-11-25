@@ -742,10 +742,10 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 // Botão ↗ (pop-out) flutuando no canto — NÃO ocupa linha.
 .live2-popout-bar { position: absolute; top: $spacing-02; right: $spacing-02; z-index: 6; }
 // Janela pop-out: só o painel escolhido, ocupando a janela inteira.
-.live2--popout { height: 100vh; overflow: hidden; }
-.live2--popout .live2-body { flex: 1; min-height: 0; padding: 0; }
+.live2--popout { height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+.live2--popout .live2-body { flex: 1; min-height: 0; padding: $spacing-03; }
 .live2--popout .live2-popout-bar { display: none; }
-.live2--popout .logs-panel { height: 100%; }
+.live2--popout .logs-panel { flex: 1 1 0; min-height: 0; height: auto; margin: 0; }
 .live2-error { @include type-style('body-01'); color: var(--cds-support-error, #ff8389); background: rgba(218, 30, 40, 0.12); border: 1px solid var(--cds-support-error, #da1e28); border-radius: 0; padding: $spacing-03 $spacing-04; }
 .live2-test-banner {
   background: var(--cds-support-error);
@@ -1254,6 +1254,7 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 .audit-bar .cds--tab--list {
   padding-inline-end: 272px;
   display: flex;
+  overflow-x: hidden;
 }
 .audit-bar .cds--tabs__nav-item {
   flex: 1 1 0;
@@ -1261,8 +1262,10 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   justify-content: center;
   text-align: center;
 }
+.audit-bar .cds--tab--overflow-nav-button,
+.audit-bar .cds--tabs__nav-item--close,
 .audit-bar .cds--tabs__nav-item--close--hidden {
-  flex: 0 0 0;
+  display: none !important;
 }
 .audit-search {
   position: absolute;

@@ -1,6 +1,6 @@
 // TerminalPanel — Terminal PTY real embutido na tela com xterm.js + PTY backend.
 // Suporte a shell interativo real, ANSI colors, redimensionamento (SIGWINCH), reconexão via buffer e fila ordenada de digitação.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Tag } from '@carbon/react';
 import { Copy, Renew, TrashCan } from '@carbon/icons-react';
 import { Terminal } from '@xterm/xterm';
@@ -14,6 +14,8 @@ export interface TerminalPanelProps {
   gates?: Gate[];
   onApprove?: (gate: Gate, text: string) => Promise<void> | void;
   onReject?: (gate: Gate, reason?: string) => Promise<void> | void;
+  /** Filtra execuções por serviço (omlx, asr, tts, web) */
+  forceService?: string;
 }
 
 const STORAGE_KEY = 'falador.terminalSessionId';
@@ -22,7 +24,7 @@ function decodeBase64Bytes(b64: string): Uint8Array {
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }
 
-export function TerminalPanel({ executions = [] }: TerminalPanelProps) {
+export function TerminalPanel({ executions = [], forceService }: TerminalPanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -126,6 +128,26 @@ export function TerminalPanel({ executions = [] }: TerminalPanelProps) {
       if (!disposedRef.current) setConnected(false);
     }
   }, []);
+
+  const filteredExecutions = useMemo(() => {
+    if (!forceService) return executions;
+    return executions.filter((e) => {
+      const tool = (e.tool || '').toLowerCase();
+      const host = (e.host || '').toLowerCase();
+      switch (forceService) {
+        case 'omlx':
+          return tool.includes('omlx') || tool.includes('llm') || tool.includes('agent') || tool.includes('decision') || tool.includes('goal') || tool.includes('exec_') || tool.includes('rag') || tool.includes('workflow') || tool.includes('mcp');
+        case 'asr':
+          return tool.includes('asr') || tool.includes('voxtral') || tool.includes('whisper') || host.includes('asr');
+        case 'tts':
+          return tool.includes('tts') || tool.includes('speech') || host.includes('tts');
+        case 'web':
+          return tool.includes('web') || tool.includes('search') || tool.includes('crawler') || tool.includes('fetch') || host.includes('web');
+        default:
+          return true;
+      }
+    });
+  }, [executions, forceService]);
 
   useEffect(() => {
     if (!containerRef.current || termRef.current) return;
@@ -307,9 +329,9 @@ export function TerminalPanel({ executions = [] }: TerminalPanelProps) {
           />
         </div>
       </div>
-      {executions.length > 0 && (
+      {filteredExecutions.length > 0 && (
         <div className="falador-terminal-transcript" ref={transcriptRef} aria-label="Comandos executados">
-          {executions.map((e, i) => {
+          {filteredExecutions.map((e, i) => {
             const failed = e.status === 'done' && e.exitCode !== 0;
             return (
               <div key={e.id || i} className={`ftr-exec${failed ? ' ftr-exec--fail' : e.status === 'running' ? ' ftr-exec--run' : ' ftr-exec--ok'}`}>
@@ -329,7 +351,7 @@ export function TerminalPanel({ executions = [] }: TerminalPanelProps) {
           })}
         </div>
       )}
-      <div className={`falador-xterm-container${executions.length > 0 ? ' falador-xterm-container--secondary' : ''}`} ref={containerRef} />
+      <div className={`falador-xterm-container${filteredExecutions.length > 0 ? ' falador-xterm-container--secondary' : ''}`} ref={containerRef} />
     </div>
   );
 }

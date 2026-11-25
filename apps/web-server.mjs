@@ -653,6 +653,10 @@ function readBody(req) {
 function broadcast(event, data) {
   if (!currentRun) return;
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  if (Array.isArray(currentRun.history)) {
+    currentRun.history.push(payload);
+    if (currentRun.history.length > 500) currentRun.history.shift();
+  }
   for (const res of currentRun.clients) res.write(payload);
 }
 
@@ -665,16 +669,18 @@ function startRun(flow, runSeconds, flowName, testMode) {
   if (testMode) args.push('--test-mode');
   const child = spawn('node', args, { stdio: ['pipe', 'pipe', 'pipe'] });
   const clients = new Set();
+  const history = [];
   const transcriptionSinks = classifyFlowTranscriptionSinks(flow);
   sessionBuffer = createEmptySession(flowName || flow?.name || 'sessao');
   let resolveExit;
   const exitPromise = new Promise((r) => { resolveExit = r; });
-  const runEntry = { child, clients, stopRequested: false, exitPromise, testMode: !!testMode, runId: null, sse: null };
+  const runEntry = { child, clients, history, stopRequested: false, exitPromise, testMode: !!testMode, runId: null, sse: null };
   currentRun = runEntry;
   let clientStopTimer = null;
   const sses = (res) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     res.write(`event: attached\ndata: {}\n\n`);
+    for (const item of history) res.write(item);
     clients.add(res);
     // um cliente (re)conectou: cancela a parada agendada por desconexão
     if (clientStopTimer) { clearTimeout(clientStopTimer); clientStopTimer = null; }
