@@ -16,7 +16,7 @@ const DEFAULT_MODEL = 'LiquidAI--LFM3-1.7B-MLX-4bit';
 export const decisionLlm: NodeTypeDef = {
   type: 'decision.llm',
   paramNames: ['baseUrl', 'model', 'mode', 'options', 'criteria', 'instructions', 'temperature', 'maxTokens', 'enableThinking', 'defaultOption'],
-  bindingNames: ['__onThought'],
+  bindingNames: ['__onThought', '__forceOption'],
   inputs: [{ name: 'in', type: 'tokens_parcial' }],
   outputs: [], // dinâmicas: uma por opção (preenchidas em validate/create via options)
   validateParams: (p) => {
@@ -59,6 +59,10 @@ export const decisionLlm: NodeTypeDef = {
     const onThought = ctx.bindings.__onThought as
       | ((ev: { thoughtId: string; text: string; final: boolean }) => void)
       | undefined;
+    const forceOption =
+      typeof ctx.bindings.__forceOption === 'string' && options.includes(ctx.bindings.__forceOption)
+        ? ctx.bindings.__forceOption
+        : undefined;
     let thoughtSeq = 0;
 
     function pickOption(answer: string, optList: string[], fallback: string): string {
@@ -165,7 +169,10 @@ export const decisionLlm: NodeTypeDef = {
         let chosen: string;
         let decisionMeta: Record<string, unknown> | undefined;
         const t0 = Date.now();
-        if (mode === 'systemone') {
+        if (forceOption) {
+          chosen = forceOption;
+          decisionMeta = { mode: 'forced', forced: forceOption };
+        } else if (mode === 'systemone') {
           try {
             const r = await decideSystemOne(text);
             if (!r) throw new Error('resposta sem choice');

@@ -69,25 +69,45 @@ async function main() {
   const { readFileSync } = await import('node:fs');
   const flow = JSON.parse(readFileSync(flowPath, 'utf-8'));
 
-  // Nível de aprovação global do fluxo (A/B/C) → params dos nós em runtime.
-  // O grafo SALVO não muda (igual aos perfis).
-  //   A (ask_all)      → agent.tools: 'always'      · exec.command: 'ask_all'
-  //   B (non_readonly) → agent.tools: 'non_readonly' · exec.command: 'non_readonly'
-  //   C (approve_all)  → agent.tools: 'never'       · exec.command: 'approve_all'
+  // Nível de aprovação do fluxo (A/B/C): governado pelo nó human.approve (params.mode)
+  // ou, quando não há human.approve no grafo, por flow.approvalLevel.
+  //   A (ask_all)      → human.approve: 'ask_all'      · agent.tools: 'always'       · exec.command: 'ask_all'
+  //   B (non_readonly) → human.approve: 'non_readonly' · agent.tools: 'non_readonly' · exec.command: 'non_readonly'
+  //   C (approve_all)  → human.approve: 'approve_all'  · agent.tools: 'never'        · exec.command: 'approve_all'
   const APPROVAL_LEVELS = {
     ask_all: { agent: 'always', exec: 'ask_all' },
     non_readonly: { agent: 'non_readonly', exec: 'non_readonly' },
     approve_all: { agent: 'never', exec: 'approve_all' },
   };
+  const approveNode = (flow.nodes ?? []).find((n) => n.type === 'human.approve' && n.enabled !== false);
+  const rawLevel = approveNode?.params?.mode ?? flow.approvalLevel;
   const approvalLevel =
-    typeof flow.approvalLevel === 'string' && APPROVAL_LEVELS[flow.approvalLevel]
-      ? flow.approvalLevel
+    typeof rawLevel === 'string' && APPROVAL_LEVELS[rawLevel]
+      ? rawLevel
       : 'non_readonly';
+  const approveIds = new Set(
+    (flow.nodes ?? []).filter((n) => n.type === 'human.approve' && n.enabled !== false).map((n) => n.id),
+  );
+  flow.bindings = { ...(flow.bindings ?? {}) };
   for (const n of flow.nodes ?? []) {
-    if (n.type === 'agent.tools') {
+    if (n.type === 'human.approve') {
+      n.params = { ...(n.params ?? {}), mode: approvalLevel };
+    } else if (n.type === 'agent.tools') {
       n.params = { ...(n.params ?? {}), approvalPolicy: APPROVAL_LEVELS[approvalLevel].agent };
     } else if (n.type === 'exec.command') {
       n.params = { ...(n.params ?? {}), approvalLevel: APPROVAL_LEVELS[approvalLevel].exec };
+    } else if (n.type === 'decision.llm' && approvalLevel === 'ask_all') {
+      const toApproveEdge = (flow.edges ?? []).find((e) => {
+        const [fromId] = e.from.split('.');
+        const [toId, toPort] = e.to.split('.');
+        return fromId === n.id && approveIds.has(toId) && toPort === 'in';
+      });
+      if (toApproveEdge) {
+        const approvePort = toApproveEdge.from.split('.')[1];
+        if (approvePort) {
+          flow.bindings[n.id] = { ...(flow.bindings[n.id] ?? {}), __forceOption: approvePort };
+        }
+      }
     }
   }
 

@@ -5,11 +5,13 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import http from 'node:http';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { createRegistry, validateFlow, sourceTone, pipeDelay, pipeParcs, sinkCollect } from '../../falador-graph/src/index.ts';
+import { registerFaladorNodes } from '../../falador-nodes/src/index.ts';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'run-flow.mjs');
 const tmp = mkdtempSync(join(tmpdir(), 'falador-cli-test-'));
@@ -353,7 +355,7 @@ test('gate_action com rejectionText registra a mensagem recusada no stream', asy
     nodes: [
       { id: 'src', type: 'source.tone', params: { count: 1, prefix: 'pedido' } },
       { id: 'pipe', type: 'pipe.parcs' },
-      { id: 'gate', type: 'human.approve', params: { mode: 'manual' } },
+      { id: 'gate', type: 'human.approve', params: { mode: 'ask_all' } },
       { id: 'snk', type: 'sink.collect' },
     ],
     edges: [
@@ -379,4 +381,119 @@ test('gate_action com rejectionText registra a mensagem recusada no stream', asy
   const rejected = events.find((e) => e.type === 'gate_rejected');
   assert.equal(rejected?.text, 'use outro host', 'texto da recusa precisa chegar ao stream');
   assert.ok(!events.some((e) => e.type === 'execution'), 'recusa não executa comando');
+});
+
+test('apps/tui/flows contém apenas os 3 workflows canônicos e todos passam em validateFlow sem modo legado', () => {
+  const flowsDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'apps', 'tui', 'flows');
+  const jsonFiles = readdirSync(flowsDir).filter((f) => !f.startsWith('.') && f.endsWith('.json')).sort();
+  assert.deepEqual(jsonFiles, ['agente-workflows.json', 'entrevista.json', 'especialista-ti.json']);
+  const reg = registerFaladorNodes(createRegistry())
+    .register(sourceTone)
+    .register(pipeDelay)
+    .register(pipeParcs)
+    .register(sinkCollect);
+  for (const file of jsonFiles) {
+    const raw = JSON.parse(readFileSync(join(flowsDir, file), 'utf-8'));
+    const bindings = {};
+    for (const n of raw.nodes ?? []) {
+      if (n.type === 'sink.captions') bindings[n.id] = { __onCaption: () => {} };
+      if (n.type === 'human.approve' || n.type === 'agent.tools' || n.type === 'exec.command') {
+        bindings[n.id] = { ...(bindings[n.id] ?? {}), __gate: { request: async () => null } };
+      }
+    }
+    const v = validateFlow({ ...raw, bindings }, reg);
+    assert.equal(v.nodes.size, raw.nodes.length, `${file} deve validar sem erros`);
+  }
+});
+
+test('human.approve.params.mode controla roteamento decision.llm -> human.approve em ask_all e bypass em approve_all', async () => {
+  const srv = http.createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ answers: { route: { choice: 'auto', confidence: 0.99 } } }));
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const baseUrl = `http://127.0.0.1:${srv.address().port}`;
+  try {
+    const askFlowPath = writeFlow({
+      version: 1,
+      stopWhenSourcesDone: true,
+      nodes: [
+        { id: 'src', type: 'source.tone', params: { count: 1, prefix: 'sugestao' } },
+        { id: 'pipe', type: 'pipe.parcs' },
+        {
+          id: 'dec',
+          type: 'decision.llm',
+          params: { baseUrl, model: 'd1', mode: 'systemone', options: ['auto', 'humano'], defaultOption: 'humano' },
+        },
+        { id: 'out_auto', type: 'sink.captions', params: { mode: 'callback' } },
+        { id: 'gate', type: 'human.approve', params: { mode: 'ask_all' } },
+        { id: 'out_gate', type: 'sink.captions', params: { mode: 'callback' } },
+      ],
+      edges: [
+        { from: 'src.out', to: 'pipe.in' },
+        { from: 'pipe.out', to: 'dec.in' },
+        { from: 'dec.auto', to: 'out_auto.in' },
+        { from: 'dec.humano', to: 'gate.in' },
+        { from: 'gate.out', to: 'out_gate.phrase' },
+      ],
+    });
+
+    const askRes = await new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [CLI, askFlowPath], { stdio: ['pipe', 'pipe', 'pipe'] });
+      let out = '';
+      let answered = false;
+      const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('timeout ask_all')); }, 15000);
+      child.stdout.on('data', (d) => {
+        out += String(d);
+        if (!answered && out.includes('"type":"gate"')) {
+          answered = true;
+          child.stdin.write(JSON.stringify({ type: 'gate_action', nodeId: 'gate', text: 'REVISADO_A' }) + '\n');
+        }
+      });
+      child.on('close', (code) => { clearTimeout(timer); resolve({ code, out }); });
+    });
+    const askEvents = parseNdjson(askRes.out);
+    assert.ok(askEvents.some((e) => e.type === 'gate' && e.nodeId === 'gate'), 'ask_all deve abrir o gate');
+    assert.ok(askEvents.some((e) => e.type === 'caption' && e.nodeId === 'out_gate' && e.text === 'REVISADO_A'));
+
+    const srvHumano = http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ answers: { route: { choice: 'humano', confidence: 0.99 } } }));
+    });
+    await new Promise((r) => srvHumano.listen(0, '127.0.0.1', r));
+    const urlHumano = `http://127.0.0.1:${srvHumano.address().port}`;
+    try {
+      const approveAllPath = writeFlow({
+        version: 1,
+        stopWhenSourcesDone: true,
+        nodes: [
+          { id: 'src', type: 'source.tone', params: { count: 1, prefix: 'direto' } },
+          { id: 'pipe', type: 'pipe.parcs' },
+          {
+            id: 'dec',
+            type: 'decision.llm',
+            params: { baseUrl: urlHumano, model: 'd1', mode: 'systemone', options: ['auto', 'humano'], defaultOption: 'humano' },
+          },
+          { id: 'out_auto', type: 'sink.captions', params: { mode: 'callback' } },
+          { id: 'gate', type: 'human.approve', params: { mode: 'approve_all' } },
+          { id: 'out_gate', type: 'sink.captions', params: { mode: 'callback' } },
+        ],
+        edges: [
+          { from: 'src.out', to: 'pipe.in' },
+          { from: 'pipe.out', to: 'dec.in' },
+          { from: 'dec.auto', to: 'out_auto.in' },
+          { from: 'dec.humano', to: 'gate.in' },
+          { from: 'gate.out', to: 'out_gate.phrase' },
+        ],
+      });
+      const appRes = await runCli([approveAllPath]);
+      const appEvents = parseNdjson(appRes.stdout);
+      assert.ok(!appEvents.some((e) => e.type === 'gate'), 'approve_all não deve abrir gate');
+      assert.ok(appEvents.some((e) => e.type === 'caption' && e.nodeId === 'out_gate' && e.text === 'direto-1'));
+    } finally {
+      await new Promise((r) => srvHumano.close(r));
+    }
+  } finally {
+    await new Promise((r) => srv.close(r));
+  }
 });

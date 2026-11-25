@@ -42,7 +42,7 @@
         "model": "Qwen3-Coder-30B-A3B-Instruct-4bit",
         "enableThinking": false,
         "maxSteps": 50,
-        "approvalPolicy": "always",
+        "approvalPolicy": "non_readonly",
         "historyMax": 20,
         "historyCharBudget": 8000,
         "maxToolOutputChars": 16000,
@@ -77,7 +77,7 @@
       "id": "gate_humano",
       "type": "human.approve",
       "params": {
-        "mode": "manual"
+        "mode": "non_readonly"
       }
     },
     {
