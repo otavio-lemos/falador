@@ -882,6 +882,10 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   gap: $spacing-02;
   width: 100%;
   min-width: 0;
+  // NÃO encolher dentro da coluna flex do .live-chat-log (senão as linhas
+  // "diminuem" em vez de o container rolar). O overflow:hidden abaixo tira o
+  // piso de altura mínima, então flex-shrink:0 é obrigatório aqui.
+  flex-shrink: 0;
   overflow: hidden;
   padding: $spacing-01 $spacing-03;
   background: $bg-card;
