@@ -395,7 +395,8 @@ export function App() {
     if (!liveFlow) return;
     const next: Flow = { ...liveFlow, approvalLevel: level };
     setLiveFlow(next);
-    if (runner.running) startWithContext(next);
+    // NÃO reinicia o run: approvalLevel afeta apenas gates/execuções futuras
+    // O runner já lê o nível atual do flow no momento do gate/exec
   };
   const onRegenerate = () => { if (liveFlow && runner.running) startWithContext(liveFlow); };
   const onExit = () => { runner.stop(); };
