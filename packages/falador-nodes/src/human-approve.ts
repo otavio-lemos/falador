@@ -91,7 +91,7 @@ export const humanApprove: NodeTypeDef = {
 
     const gateProvider: GateProvider = {
       async request(text: string, meta?: Record<string, unknown>): Promise<string | null> {
-        if (mode === 'approve_all') {
+        if (mode === 'approve_all' && meta?.kind !== 'respond') {
           ctx.metrics.counter('human.approve.bypassed', 1);
           return text;
         }

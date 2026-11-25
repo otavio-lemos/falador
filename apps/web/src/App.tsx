@@ -373,6 +373,7 @@ export function App() {
         }),
       };
       setLiveFlow(next);
+      if (runner.running) startWithContext(next);
       return;
     }
     const next: Flow = {

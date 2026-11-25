@@ -237,7 +237,7 @@ test('P3-N1: agent.tools usa decision.llm + human.approve + goal.validator explÃ
   }
 });
 
-test('P3-N2: ask_user (Guided Q&A) usa gate kind=respond e devolve resposta do humano ao LLM', async () => {
+test('P3-N2: ask_user (Guided Q&A) usa gate kind=respond e devolve resposta do humano ao LLM mesmo com mode=approve_all', async () => {
   const llmBodies: Array<Record<string, unknown>> = [];
   const execQ = [
     toolCallResp('ask_user', {
@@ -268,7 +268,7 @@ test('P3-N2: ask_user (Guided Q&A) usa gate kind=respond e devolve resposta do h
       stopWhenSourcesDone: true,
       nodes: [
         { id: 'src', type: 'src.one' },
-        { id: 'gate_humano', type: 'human.approve', params: { mode: 'non_readonly' } },
+        { id: 'gate_humano', type: 'human.approve', params: { mode: 'approve_all' } },
         { id: 'agente', type: 'agent.tools', params: { baseUrl: srv.url, model: 'exec-model', maxSteps: 4 } },
         { id: 'out', type: 'sink.one' },
       ],
