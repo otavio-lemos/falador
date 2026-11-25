@@ -45,9 +45,11 @@ import {
   VoiceActivate,
   ErrorFilled,
   Send,
+  Launch,
 } from '@carbon/icons-react';
 import type { Runner, Gate, AgentStep, Caption, AuditEvent } from '../useRunner';
 import { exportSession, gateAction, type Flow, type ContextDoc, type ServiceStatusMap } from '../api';
+import { openPopout, type PopoutPanel } from '../popout';
 import {
   deriveStages,
   deriveStageGroups,
@@ -107,6 +109,8 @@ interface Props {
   onExit: () => void;
   onReset: () => void;
   resetSignal: number;
+  /** Modo janela pop-out: renderiza só um painel (idêntico), para outra tela. */
+  popout?: 'chat' | 'terminal' | 'logs';
 }
 
 interface Item { id: string; label: string }
@@ -405,7 +409,7 @@ export function LiveView({
   inputMode, outputMode, inputResetTick = 0, outputResetTick = 0, onToggleMicMute, onToggleOutputMode,
   models, apps, contextDocs,
   onUploadDoc, onRemoveDoc, onStart, flows, currentFlow,
-  onSwitchFlow, onUpdateStage, onSetApprovalLevel, onRegenerate, onServiceStatus, onNotify, onGoBuilder, onExit, onReset, resetSignal,
+  onSwitchFlow, onUpdateStage, onSetApprovalLevel, onRegenerate, onServiceStatus, onNotify, onGoBuilder, onExit, onReset, resetSignal, popout,
 }: Props) {
   const stages = useMemo(() => deriveStages(flow), [flow]);
   const stageGroups = useMemo(() => deriveStageGroups(flow), [flow]);
@@ -1379,6 +1383,173 @@ export function LiveView({
     );
   };
 
+  const openPanelPopout = (panel: PopoutPanel) => { openPopout(panel, currentFlow); };
+
+  const liveBody = (
+      <div className="live2-body">
+        <main className="live2-main">
+          {!popout && (
+            <div className="live2-popout-bar">
+              <Button
+                kind="ghost"
+                size="sm"
+                hasIconOnly
+                renderIcon={Launch}
+                iconDescription="Abrir conversa em janela"
+                tooltipPosition="bottom"
+                onClick={() => openPanelPopout('chat')}
+              />
+            </div>
+          )}
+          <>
+              <div className="live-chat">
+                {(gate || runner.running) && (
+                  <p className="live-chat-empty" style={{ marginTop: '-0.25rem' }}>{turnStatus.hint}</p>
+                )}
+                {latestPlan && (
+                  <div className="live-plan-panel">
+                    <ContainedList
+                      size="sm"
+                      kind="on-page"
+                      label={`Plano de execução (${latestPlan.filter((p) => p.status === 'verified').length}/${latestPlan.length} verificados)`}
+                    >
+                      {latestPlan.map((p) => (
+                        <ContainedListItem
+                          key={p.id}
+                          action={
+                            <IconIndicator
+                              kind={p.status === 'verified' ? 'succeeded' : p.status === 'failed' ? 'failed' : 'in-progress'}
+                              label={p.status === 'verified' ? 'verificado' : p.status === 'failed' ? 'falhou' : 'pendente'}
+                              size={16}
+                            />
+                          }
+                        >
+                          <span className="live-plan-item">
+                            <strong>{p.description}</strong>
+                            <span className="live-plan-verify">
+                              {p.verification}{p.evidence ? ` · evidência: ${p.evidence}` : ''}
+                            </span>
+                          </span>
+                        </ContainedListItem>
+                      ))}
+                    </ContainedList>
+                  </div>
+                )}
+                <div className="live-chat-log" ref={chatLogRef}>
+                  {conversation.length === 0 && !liveAgent && !gateCard && !errorCard && (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.5rem' }}>
+                      <p className="live-chat-empty" style={{ margin: 0 }}>
+                        {runner.running ? 'Envie uma mensagem para conversar com o agente.' : 'Inicie a sessão para conversar com o agente.'}
+                      </p>
+                      {inputMode === 'chat' && !runner.running && (
+                        <>
+                          {SUGGESTED_PROMPTS.map((p) => (
+                            <Button
+                              key={p}
+                              kind="ghost"
+                              size="sm"
+                              onClick={() => setChatInput(p)}
+                            >
+                              {p}
+                            </Button>
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  )}
+                  {conversation.map(renderConversationEntry)}
+                  {gateCard}
+                  {errorCard}
+                </div>
+                {runner.testMode && !runner.running && (
+                  <section className="live-test-checklist" aria-label="Resultado do teste">
+                    <strong>Resultado do teste</strong>
+                    <ul>
+                      {flow.nodes.map((n) => {
+                        const hadError = runner.events.some((e) => e.type === 'node_error' && e.nodeId === n.id);
+                        return (
+                          <li key={n.id}>
+                            {hadError ? '✗' : '✓'} {n.id} ({n.type})
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </section>
+                )}
+                {inputMode === 'chat' && (
+                  <div className="live-chat-input">
+                    <TextInput
+                      id="live-chat-input"
+                      labelText="Mensagem"
+                      hideLabel
+                      size="sm"
+                      placeholder={runner.running ? chatPlaceholder : 'Inicie a sessão para conversar...'}
+                      value={chatInput}
+                      disabled={!runner.running || sendingChat || !chatNode}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          void handleSendChat();
+                        }
+                      }}
+                    />
+                    <Button
+                      kind="primary"
+                      size="sm"
+                      renderIcon={Play}
+                      disabled={!runner.running || sendingChat || !chatInput.trim() || !chatNode}
+                      onClick={() => void handleSendChat()}
+                    >
+                      Enviar
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </>
+        </main>
+      </div>
+  );
+
+  const logsPanel = (
+      <LogsPanel
+        forceView={popout === 'terminal' ? 'terminal' : popout === 'logs' ? 'logs' : undefined}
+        onPopout={popout ? undefined : openPanelPopout}
+        flowNodes={flow.nodes}
+        onServiceStatus={onServiceStatus}
+        turnStatus={turnStatus}
+        approvalLevel={flow.approvalLevel}
+        onSetApprovalLevel={onSetApprovalLevel}
+        resetSignal={resetSignal}
+        thoughtsOn={showThoughts}
+        thoughts={runner.thoughts}
+        onToggleThoughts={(next) => {
+          setShowThoughts(next);
+          try { localStorage.setItem(THOUGHTS_STORAGE_KEY, String(next)); } catch { /* ignore */ }
+        }}
+        hasAgent={hasAgent}
+        onOpenConsole={openConsole}
+        audit={runner.audit}
+        auditFocus={auditFocus}
+        executions={runner.executions}
+        gates={runner.gates}
+        onApproveGate={(g, text) => {
+          void gateAction(g.nodeId, text);
+        }}
+        onRejectGate={(g, reason) => {
+          void gateAction(g.nodeId, null, reason);
+        }}
+      />
+  );
+
+  if (popout) {
+    return (
+      <div className={`live2 live2--popout live2--popout-${popout}`}>
+        {popout === 'chat' ? liveBody : logsPanel}
+      </div>
+    );
+  }
+
   return (
       <div className="live2">
         {runner.testMode && (
@@ -1583,102 +1754,7 @@ export function LiveView({
         </section>
       )}
 
-      <div className="live2-body">
-        <main className="live2-main">
-          <>
-              <div className="live-chat">
-                {(gate || runner.running) && (
-                  <p className="live-chat-empty" style={{ marginTop: '-0.25rem' }}>{turnStatus.hint}</p>
-                )}
-                {latestPlan && (
-                  <div className="live-plan-panel">
-                    <ContainedList
-                      size="sm"
-                      kind="on-page"
-                      label={`Plano de execução (${latestPlan.filter((p) => p.status === 'verified').length}/${latestPlan.length} verificados)`}
-                    >
-                      {latestPlan.map((p) => (
-                        <ContainedListItem
-                          key={p.id}
-                          action={
-                            <IconIndicator
-                              kind={p.status === 'verified' ? 'succeeded' : p.status === 'failed' ? 'failed' : 'in-progress'}
-                              label={p.status === 'verified' ? 'verificado' : p.status === 'failed' ? 'falhou' : 'pendente'}
-                              size={16}
-                            />
-                          }
-                        >
-                          <span className="live-plan-item">
-                            <strong>{p.description}</strong>
-                            <span className="live-plan-verify">
-                              {p.verification}{p.evidence ? ` · evidência: ${p.evidence}` : ''}
-                            </span>
-                          </span>
-                        </ContainedListItem>
-                      ))}
-                    </ContainedList>
-                  </div>
-                )}
-                <div className="live-chat-log" ref={chatLogRef}>
-                  {conversation.length === 0 && !liveAgent && !gateCard && !errorCard && (
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.5rem' }}>
-                      <p className="live-chat-empty" style={{ margin: 0 }}>
-                        {runner.running ? 'Envie uma mensagem para conversar com o agente.' : 'Inicie a sessão para conversar com o agente.'}
-                      </p>
-                    </div>
-                  )}
-                  {conversation.map(renderConversationEntry)}
-                  {gateCard}
-                  {errorCard}
-                </div>
-                {runner.testMode && !runner.running && (
-                  <section className="live-test-checklist" aria-label="Resultado do teste">
-                    <strong>Resultado do teste</strong>
-                    <ul>
-                      {flow.nodes.map((n) => {
-                        const hadError = runner.events.some((e) => e.type === 'node_error' && e.nodeId === n.id);
-                        return (
-                          <li key={n.id}>
-                            {hadError ? '✗' : '✓'} {n.id} ({n.type})
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </section>
-                )}
-                {inputMode === 'chat' && (
-                  <div className="live-chat-input">
-                    <TextInput
-                      id="live-chat-input"
-                      labelText="Mensagem"
-                      hideLabel
-                      size="sm"
-                      placeholder={runner.running ? chatPlaceholder : 'Inicie a sessão para conversar...'}
-                      value={chatInput}
-                      disabled={!runner.running || sendingChat || !chatNode}
-                      onChange={(e) => setChatInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          void handleSendChat();
-                        }
-                      }}
-                    />
-                    <Button
-                      kind="primary"
-                      size="sm"
-                      renderIcon={Play}
-                      disabled={!runner.running || sendingChat || !chatInput.trim() || !chatNode}
-                      onClick={() => void handleSendChat()}
-                    >
-                      Enviar
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </>
-        </main>
-      </div>
+      {liveBody}
 
       <Modal
         open={docsOpen}
@@ -1755,32 +1831,7 @@ export function LiveView({
         </div>
       </Modal>
 
-      <LogsPanel
-        flowNodes={flow.nodes}
-        onServiceStatus={onServiceStatus}
-        turnStatus={turnStatus}
-        approvalLevel={flow.approvalLevel}
-        onSetApprovalLevel={onSetApprovalLevel}
-        resetSignal={resetSignal}
-        thoughtsOn={showThoughts}
-        thoughts={runner.thoughts}
-        onToggleThoughts={(next) => {
-          setShowThoughts(next);
-          try { localStorage.setItem(THOUGHTS_STORAGE_KEY, String(next)); } catch { /* ignore */ }
-        }}
-        hasAgent={hasAgent}
-        onOpenConsole={openConsole}
-        audit={runner.audit}
-        auditFocus={auditFocus}
-        executions={runner.executions}
-        gates={runner.gates}
-        onApproveGate={(g, text) => {
-          void gateAction(g.nodeId, text);
-        }}
-        onRejectGate={(g, reason) => {
-          void gateAction(g.nodeId, null, reason);
-        }}
-      />
+      {logsPanel}
 
       <Modal
         open={exportOpen}

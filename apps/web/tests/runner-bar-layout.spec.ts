@@ -8,7 +8,7 @@ test.use({ viewport: { width: 1920, height: 1000 } });
 for (const flow of ['especialista-ti', 'entrevista']) {
   test(`runner bar 1 linha + menu fora da faixa (${flow})`, async ({ page }) => {
     await page.goto('/');
-    await page.getByRole('combobox', { name: 'Workflow' }).click();
+    await page.getByRole('combobox', { name: 'Workflow', exact: true }).click();
     await page.getByRole('option', { name: flow }).click();
     await page.getByRole('button', { name: 'Runner' }).click();
 

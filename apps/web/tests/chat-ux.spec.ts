@@ -64,18 +64,19 @@ test('gate_active é publicado no BroadcastChannel inclusive quando o gate é li
 test('prompts de operação preenchem o input e somem quando há mensagens', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('falador.inputMode', 'chat'));
   await page.reload();
-  await page.getByRole('button', { name: 'Runner' }).click();
-
+  // App abre no Runner; prompts aparecem quando não está rodando
   const prompts = [
     'O que está rodando agora?',
     'Mostre o último erro do run',
     'Resuma a auditoria desta sessão',
   ];
+  // Aguarda a área de chat estar visível (inputMode=chat => chat input visível)
+  await page.locator('#live-chat-input').waitFor({ state: 'visible' });
   for (const p of prompts) await expect(page.getByRole('button', { name: p })).toBeVisible();
   await page.getByRole('button', { name: prompts[0] }).click();
   await expect(page.locator('#live-chat-input')).toHaveValue(prompts[0]);
 
-  await startRun(page, [{ type: 'run_started' }, { type: 'chat_sent', nodeId: 'input', text: 'olá' }]);
+  await startRun(page, [{ type: 'run_started' }, { type: 'chat_sent', nodeId: 'entrada', text: 'olá' }]);
   await expect(page.locator('.live-chat-entry--user')).toContainText('olá');
   for (const p of prompts) await expect(page.getByRole('button', { name: p })).toHaveCount(0);
 });

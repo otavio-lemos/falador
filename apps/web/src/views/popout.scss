@@ -1,0 +1,14 @@
+// Estilos exclusivos das janelas pop-out (o painel em si usa o CSS da página central).
+@use '@carbon/react/scss/spacing' as *;
+
+.popout-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  padding: $spacing-06;
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 0.875rem;
+  color: var(--cds-text-secondary, #c6c6c6);
+  background: var(--cds-background, #161616);
+}

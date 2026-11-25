@@ -3,12 +3,13 @@
 // e retângulos coloridos identificando visualmente quais componentes do workflow escrevem em cada log.
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { Button, Dropdown, MultiSelect, Tab, TabList, TabPanel, TabPanels, Tabs, Tag } from '@carbon/react';
-import { ChevronDown, ChevronUp, Close, TrashCan } from '@carbon/icons-react';
+import { ChevronDown, ChevronUp, Close, Launch, TrashCan } from '@carbon/icons-react';
 import type { AuditEvent, Thought, Execution, Gate } from '../useRunner';
 import { clearLogs, fetchLogs, fetchServiceStatus, type ServiceStatusMap } from '../api';
 import { accentOf, serviceOfNode, shortNodeName } from '../data';
 import { AuditPanel } from '../components/AuditPanel';
 import { TerminalPanel } from './TerminalPanel';
+import type { PopoutPanel } from '../popout';
 
 interface ServiceColorTag {
   color: string;
@@ -111,6 +112,10 @@ interface LogsPanelProps {
   /** Nível de aprovação global (A/B/C) exibido na barra, antes de Pensamentos. */
   approvalLevel?: string;
   onSetApprovalLevel?: (level: string) => void;
+  /** Aba inicial no modo pop-out (janela própria). */
+  forceView?: 'logs' | 'audit' | 'terminal';
+  /** Abre o painel atual em janela própria (botão ↗). Ausente = sem botão. */
+  onPopout?: (panel: PopoutPanel) => void;
 }
 
 // Níveis de aprovação A/B/C (mesmo rótulo do fluxo).
@@ -138,6 +143,8 @@ export function LogsPanel({
   turnStatus,
   approvalLevel,
   onSetApprovalLevel,
+  forceView,
+  onPopout,
 }: LogsPanelProps) {
   const logsRefs = useRef<Record<string, HTMLPreElement | null>>({});
   const clearEpochRef = useRef(0);
@@ -147,6 +154,7 @@ export function LogsPanel({
   const [serviceStatus, setServiceStatus] = useState<ServiceStatusMap | null>(null);
   // Alterna Logs (0) ⇄ Auditoria (1) ⇄ Terminal (2) no MESMO painel embutido.
   const [view, setView] = useState<0 | 1 | 2>(() => {
+    if (forceView) return forceView === 'terminal' ? 2 : forceView === 'audit' ? 1 : 0;
     try {
       const saved = localStorage.getItem(LOG_VIEW_KEY);
       if (saved === 'terminal') return 2;
@@ -164,7 +172,8 @@ export function LogsPanel({
       setLogsHeight((h) => (h < 320 ? 320 : h));
     }
     try {
-      localStorage.setItem(LOG_VIEW_KEY, next === 2 ? 'terminal' : next === 1 ? 'audit' : 'logs');
+      // No pop-out a aba é fixa por painel: não sobrescreve a preferência da página central.
+      if (!forceView) localStorage.setItem(LOG_VIEW_KEY, next === 2 ? 'terminal' : next === 1 ? 'audit' : 'logs');
     } catch { /* ignore */ }
   };
 
@@ -529,6 +538,17 @@ export function LogsPanel({
               </div>
             )}
           </div>
+        )}
+        {onPopout && (
+          <Button
+            kind="ghost"
+            size="sm"
+            hasIconOnly
+            renderIcon={Launch}
+            iconDescription="Abrir em janela"
+            tooltipPosition="top"
+            onClick={() => onPopout(view === 2 ? 'terminal' : 'logs')}
+          />
         )}
         <Button
           kind="ghost"

@@ -5,7 +5,7 @@ import { test, expect } from '@playwright/test';
 // número — o validateFlow do motor exige typeof number e rejeita "3".
 test('stage dropdown sends numeric params as numbers to /api/run', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('combobox', { name: 'Workflow' }).click();
+  await page.getByRole('combobox', { name: 'Workflow', exact: true }).click();
   await page.getByRole('option', { name: 'especialista-ti' }).click();
   await page.getByRole('button', { name: 'Runner' }).click();
 
@@ -39,7 +39,7 @@ test('stage dropdown sends numeric params as numbers to /api/run', async ({ page
 
 test('exec stage "Exec ativo" grava dryRun boolean (não string "ativo")', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('combobox', { name: 'Workflow' }).click();
+  await page.getByRole('combobox', { name: 'Workflow', exact: true }).click();
   await page.getByRole('option', { name: 'especialista-ti' }).click();
   await page.getByRole('button', { name: 'Runner' }).click();
 

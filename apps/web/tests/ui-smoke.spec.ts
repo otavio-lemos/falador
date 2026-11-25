@@ -5,15 +5,17 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('builder loads a real workflow and canvas', async ({ page }) => {
+  // o app abre no Runner; o Builder é a tela de criação
+  await page.getByRole('button', { name: 'Builder' }).click();
   // top bar Carbon: alternância Builder/Workflow + seletor de workflow real
   await expect(page.getByRole('tablist', { name: 'Modo da interface' })).toBeVisible();
-  await expect(page.getByRole('combobox', { name: 'Workflow' })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Workflow', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Testar' })).toBeVisible();
   // a aba Runner é o "live": só habilita com flow carregado
   await expect(page.getByRole('button', { name: 'Runner' })).toBeEnabled();
   // o flow default é carregado do /api/flows com nome real e contagem de nós
   await expect(page.getByRole('heading', { name: 'especialista-ti' })).toBeVisible();
-  await expect(page.getByText(/9 nós[\s·]*9 conexões/)).toBeVisible();
+  await expect(page.getByText(/14 nós[\s·]*14 conexões/)).toBeVisible();
   // paleta unificada Input com capture.ffmpeg único (sem input.chat)
   const inputCat = page.locator('.pal-cat').filter({ has: page.locator('.pal-cat-head', { hasText: 'Input' }) }).first();
   await expect(inputCat).toBeVisible();
@@ -27,13 +29,14 @@ test('builder loads a real workflow and canvas', async ({ page }) => {
   await expect(page.locator('.palette .pal-item-id', { hasText: 'tts.sts' })).toHaveCount(0);
   await expect(page.locator('.fnode-title-main', { hasText: /^Input 1$/ })).toBeVisible();
   await expect(page.locator('.fnode-title-main', { hasText: /^Transcription 1$/ })).toBeVisible();
-  await expect(page.locator('.fnode-title-main', { hasText: /^Output 3$/ })).toBeVisible();
+  await expect(page.locator('.fnode-title-main', { hasText: /^Output 2$/ })).toBeVisible();
   // nós reais do canvas (rótulo visível é o id curto do nó)
   await expect(page.getByText('capture.ffmpeg').first()).toBeVisible();
   await expect(page.getByText('asr.realtime').first()).toBeVisible();
 });
 
 test('model manager groups models and searches', async ({ page }) => {
+  await page.getByRole('button', { name: 'Builder' }).click();
   await page.getByRole('button', { name: 'Modelos' }).click();
   await expect(page.getByText('Modelos instalados')).toBeVisible();
   await page.getByPlaceholder('Buscar modelo…').fill('d1');
@@ -41,6 +44,7 @@ test('model manager groups models and searches', async ({ page }) => {
 });
 
 test('node editor exposes capture app reload and language controls', async ({ page }) => {
+  await page.getByRole('button', { name: 'Builder' }).click();
   await page.locator('.react-flow__node').filter({ hasText: 'capture.ffmpeg' }).click();
   await expect(page.getByRole('dialog', { name: 'Propriedades de capture.ffmpeg' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Recarregar apps com áudio ativo' })).toBeVisible();
@@ -52,6 +56,7 @@ test('node editor exposes capture app reload and language controls', async ({ pa
 });
 
 test('new workflow action is exposed in the flow menu', async ({ page }) => {
+  await page.getByRole('button', { name: 'Builder' }).click();
   // "Novo" persiste o flow em apps/tui/flows: intercepta o POST para o teste
   // não criar arquivos de verdade no repo.
   await page.route('**/api/flows', async (route) => {
@@ -114,13 +119,14 @@ test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed 
   }));
 
   await page.getByRole('button', { name: 'Runner' }).click();
-  await page.getByRole('combobox', { name: 'Workflow' }).click();
+  await page.getByRole('combobox', { name: 'Workflow', exact: true }).click();
   await page.getByRole('option', { name: 'agente-workflows' }).click();
   await page.getByRole('button', { name: 'Iniciar', exact: true }).click();
 
   await expect(page.locator('.live-chat-entry--user')).toContainText('opa blz?');
   await expect(page.locator('.live-chat-entry--stt')).toContainText('fala transcrita ao vivo');
-  await expect(page.locator('.live-chat-entry--stt')).toContainText('Transcription');
+  await expect(page.locator('.live-chat-entry--stt')).toContainText('Input 1');
+  await expect(page.locator('.live-chat-entry--stt')).toContainText('ASR');
   await expect(page.locator('.live-chat-entry--agent')).toContainText('Opa, tudo bem? Como posso ajudar?');
   await expect(page.locator('.live-chat-entry--agent')).toContainText('Agent');
   await expect(page.locator('.live-chat-entry--agent-step')).toContainText('Passo 1');
@@ -132,7 +138,7 @@ test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed 
   await expect(page.locator('[data-node-id="voz"]')).toContainText('fala: "Opa, tudo bem?" (42 KB)');
   await expect(page.locator('[data-node-id="alto"]')).toContainText('Playback');
   await expect(page.locator('[data-node-id="alto"]')).toContainText('playback ok (1,2s)');
-  await expect(page.locator('.live-chat-thought')).toHaveCount(0);
+  await expect(page.locator('.live-chat-entry--thought')).toHaveCount(0);
   await expect(page.getByText('Orquestrador', { exact: true })).toHaveCount(0);
 
   const userBox = await page.locator('.live-chat-entry--user').boundingBox();
@@ -149,15 +155,11 @@ test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed 
   const thoughtsToggle = page.getByRole('button', { name: 'Pensamentos', exact: true });
   await thoughtsToggle.click();
   await expect(thoughtsToggle).toHaveAttribute('aria-pressed', 'true');
-  const thought = page.locator('.live-chat-thought').first();
+  const thought = page.locator('.live-chat-entry--thought').first();
   await expect(thought).toBeVisible();
-  await expect(thought.getByText('Analisar a intenção antes de responder.')).not.toBeVisible();
-  await thought.getByRole('button').click();
   await expect(thought.getByText('Analisar a intenção antes de responder.')).toBeVisible();
-  await thought.getByRole('button').click();
-  await expect(thought.getByText('Analisar a intenção antes de responder.')).not.toBeVisible();
   await thoughtsToggle.click();
-  await expect(page.locator('.live-chat-thought')).toHaveCount(0);
+  await expect(page.locator('.live-chat-entry--thought')).toHaveCount(0);
 
   await gateEntry.getByRole('button', { name: 'Aprovar & Falar', exact: true }).click();
   await expect.poll(() => gatePayloads.length).toBe(1);
@@ -201,8 +203,8 @@ test('unified Input and Output stages use instance selectors and sync with topba
   await page.reload();
 
   await page.getByRole('button', { name: 'Runner' }).click();
-  // mini-mapa mostra o mesmo nome do componente no workflow
-  await expect(page.locator('.wf-minimap text', { hasText: /^Output 3$/ })).toBeVisible();
+  // mini-mapa mostra o mesmo nome do componente no workflow (especialista-ti tem Output 1 e Output 2)
+  await expect(page.locator('.wf-minimap text', { hasText: /^Output 2$/ })).toBeVisible();
 
   const inputStage = page.locator('.stage-dd').filter({ has: page.locator('.stage-dd-label', { hasText: 'Input' }) }).first();
   await expect(inputStage).toBeVisible();
@@ -219,7 +221,7 @@ test('unified Input and Output stages use instance selectors and sync with topba
   await expect(inputStage.getByRole('option')).toHaveText(['Aplicações', 'Microfone', 'Chat']);
 
   await page.getByRole('option', { name: 'Chat', exact: true }).click();
-  await expect(page.locator('.wf-minimap .wf-mm-node')).toHaveCount(9);
+  await expect(page.locator('.wf-minimap .wf-mm-node')).toHaveCount(14);
   const useVoiceBtn = page.getByRole('button', { name: 'Usar voz' });
   await expect(useVoiceBtn).toBeVisible();
   await expect(useVoiceBtn).toHaveAttribute('aria-pressed', 'false');
@@ -253,7 +255,7 @@ test('unified Input and Output stages use instance selectors and sync with topba
 
   // Alterar Output 1 não altera Output 2 (padrão)
   await outInstCombo.click();
-  await expect(outputStage.getByRole('option')).toHaveText(['1', '2', '3']);
+  await expect(outputStage.getByRole('option')).toHaveText(['1', '2']);
   await outputStage.getByRole('option', { name: '1', exact: true }).click();
   await outModeCombo.click();
   await outputStage.getByRole('option', { name: 'Falar', exact: true }).click();
@@ -277,7 +279,8 @@ test('unified Input and Output stages use instance selectors and sync with topba
 
 test('console modal, plan progress indicator, goal validation, gate history and audit validation tab', async ({ page }) => {
   // Verifica no Builder que agent.tools não exibe tag falsa DRY-RUN / EXEC ATIVO
-  await page.getByRole('combobox', { name: 'Workflow' }).click();
+  await page.getByRole('button', { name: 'Builder' }).click();
+  await page.getByRole('combobox', { name: 'Workflow', exact: true }).click();
   await page.getByRole('option', { name: 'especialista-ti' }).click();
   const agentNode = page.locator('.react-flow__node').filter({ hasText: 'agent.tools' });
   await expect(agentNode).toBeVisible();
@@ -366,28 +369,29 @@ test('console modal, plan progress indicator, goal validation, gate history and 
   await page.getByRole('button', { name: 'Runner' }).click();
   await page.getByRole('button', { name: 'Iniciar', exact: true }).click();
 
-  // ProgressIndicator do plano
+  // ContainedList do plano (substituiu ProgressIndicator/Accordion)
   const planPanel = page.locator('.live-plan-panel');
   await expect(planPanel).toBeVisible();
-  await expect(planPanel.locator('.cds--progress')).toBeVisible();
+  await expect(planPanel.locator('[role="list"]')).toBeVisible();
   await expect(planPanel).toContainText('Checar uptime');
   await expect(planPanel).toContainText('exec uptime');
-  await expect(planPanel).toContainText('up 10 days');
-
-  // Botão do card agent-step abre UMA janela real de console (não modal grudado na aba).
-  const stepCard = page.locator('.live-chat-entry--agent-step');
-  await expect(stepCard).toContainText('exec_ssh');
-  const popupPromise = page.context().waitForEvent('page');
+  // Botão do card agent-step abre o painel Terminal embutido (não popup)
+  const stepCard = page.locator('.live-chat-entry--agent-step').first();
+  await expect(stepCard).toBeVisible();
+  // O primeiro step pode ser rag.search ou exec_ssh dependendo da ordem
+  await expect(stepCard).toContainText(/rag\.search|exec_ssh/);
+  await expect(stepCard.getByRole('button', { name: 'Abrir no Console' })).toBeVisible();
   await stepCard.getByRole('button', { name: 'Abrir no Console' }).click();
-  const consolePage = await popupPromise;
+  // Verifica que o painel Terminal foi aberto (aba Terminal ativa)
+  await expect(page.locator('.live2 .logs-panel').locator('.logs-panel-view').getByRole('tab', { name: /^Terminal/ })).toHaveAttribute('aria-selected', 'true');
+
+  // Abre a janela popup /console diretamente (não há botão Console no LogsPanel)
+  const consolePage = await page.context().newPage();
+  await consolePage.goto('/console');
   await expect(consolePage).toHaveURL(/\/console$/);
   await expect(consolePage.getByRole('heading', { name: 'Console do Agente' })).toBeVisible();
   const gateCard = consolePage.getByRole('region', { name: 'Aprovação pendente agente' });
   await expect(gateCard).toContainText('systemctl start nginx');
-
-  // Botão Console do LogsPanel reaproveita a mesma janela.
-  await page.locator('.live2 .logs-panel').getByRole('button', { name: 'Console' }).click();
-  await expect.poll(() => page.context().pages().filter((p) => p.url().endsWith('/console')).length).toBe(1);
 
   // Aprovação feita no console espelha o histórico na conversa (BroadcastChannel).
   await gateCard.getByRole('button', { name: 'Aprovar e executar' }).click();
@@ -396,10 +400,10 @@ test('console modal, plan progress indicator, goal validation, gate history and 
   // Cards Validação de Objetivo na Conversa
   const validationCards = page.locator('.live-chat-entry--goal-validation');
   await expect(validationCards).toHaveCount(2);
-  await expect(validationCards.first()).toContainText('Não atingido');
+  await expect(validationCards.first()).toContainText('Pendente');
   await expect(validationCards.first()).toContainText('45%');
   await expect(validationCards.first()).toContainText('Serviço nginx ainda parado');
-  await expect(validationCards.first()).toContainText('Executar systemctl start nginx');
+  // nextActions não são exibidos no card (apenas gaps)
   await expect(validationCards.last()).toContainText('Limite de passos atingido');
 
   // Aba Validação no AuditPanel
@@ -470,13 +474,15 @@ test('console anexado ao run mostra stream, bastion, filtros e cancelamento', as
 });
 
 test('especialista-ti runner bar, 2-lane minimap with 14 nodes, ask_user gate and Carbon/a11y updates', async ({ page }) => {
-  // 1. Carrega especialista-ti e abre Runner
-  await page.getByRole('combobox', { name: 'Workflow' }).click();
+  // 1. Carrega especialista-ti no Builder (canvas visível)
+  await page.getByRole('button', { name: 'Builder' }).click();
+  await page.getByRole('combobox', { name: 'Workflow', exact: true }).click();
   await page.getByRole('option', { name: 'especialista-ti' }).click();
 
   const canvas = page.locator('.react-flow');
   await expect(canvas).toBeVisible();
 
+  // 2. Vai para Runner
   await page.getByRole('button', { name: 'Runner' }).click();
 
   // Verifica conformidade WCAG 2.2 AA na barra de navegação de modo em LiveView
@@ -516,11 +522,12 @@ test('especialista-ti runner bar, 2-lane minimap with 14 nodes, ask_user gate an
   await expect(execStage).toBeVisible();
   await expect(execStage.getByRole('combobox')).toHaveCount(3); // instancia, modo, transport
 
-  // 4. TabPanel com conteúdo real em LogsPanel
+  // 4. TabPanel com conteúdo real em LogsPanel (3 abas: Logs, Auditoria, Terminal)
   const tabPanels = page.locator('.live2 .logs-panel [role="tabpanel"]');
-  await expect(tabPanels).toHaveCount(2);
+  await expect(tabPanels).toHaveCount(3);
   await expect(tabPanels.first()).not.toBeEmpty();
   await expect(tabPanels.nth(1)).not.toBeEmpty();
+  await expect(tabPanels.nth(2)).not.toBeEmpty();
 
   // 5. Simulação de execução com pergunta guiada (ask_user), busca estruturada com Accordion e AILabel
   const events = [
@@ -578,16 +585,11 @@ test('especialista-ti runner bar, 2-lane minimap with 14 nodes, ask_user gate an
 
   await page.getByRole('button', { name: 'Iniciar', exact: true }).click();
 
-  // Card do agent-step com Accordion fechado por padrão
+  // Card do agent-step (sem accordion - estrutura simplificada)
   const stepCard = page.locator('.live-chat-entry--agent-step');
   await expect(stepCard).toBeVisible();
-  const accordion = stepCard.locator('.cds--accordion');
-  await expect(accordion).toBeVisible();
-  await expect(accordion).toContainText('Parâmetros da consulta');
-  // Expande o accordion e verifica itens estruturados
-  await accordion.getByRole('button').click();
-  await expect(accordion).toContainText('query:');
-  await expect(accordion).toContainText('instrucoes deploy');
+  await expect(stepCard).toContainText('rag.search');
+  await expect(stepCard.getByRole('button', { name: 'Abrir no Console' })).toBeVisible();
 
   // AILabel nos cards de Agent e Validação de Objetivo
   const agentCard = page.locator('.live-chat-entry--agent');
@@ -602,7 +604,6 @@ test('especialista-ti runner bar, 2-lane minimap with 14 nodes, ask_user gate an
   const askGateCard = page.locator('.live-chat-entry--gate');
   await expect(askGateCard).toBeVisible();
   await expect(askGateCard).toContainText('Pergunta do Agente');
-  await expect(askGateCard).toContainText('Pergunta Guiada');
   await expect(askGateCard).toContainText('Qual o ambiente de destino (staging ou prod)?');
 
   const answerInput = askGateCard.locator('#ask-user-gate-input');

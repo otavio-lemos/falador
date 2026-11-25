@@ -12,7 +12,7 @@ test('Pensamentos abre dropdown com os pensamentos do agente', async ({ page }) 
   await page.route('**/api/run', (route) =>
     route.fulfill({ status: 200, contentType: 'text/event-stream', body }));
   await page.goto('/');
-  await page.getByRole('combobox', { name: 'Workflow' }).click();
+  await page.getByRole('combobox', { name: 'Workflow', exact: true }).click();
   await page.getByRole('option', { name: 'especialista-ti' }).click();
   await page.getByRole('button', { name: 'Runner' }).click();
   await page.getByRole('button', { name: 'Iniciar', exact: true }).click();

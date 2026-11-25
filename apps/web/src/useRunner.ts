@@ -1,6 +1,6 @@
 // Estado de execução compartilhado entre Builder (Testar Fluxo) e Live.
-import { useRef, useState } from 'react';
-import { openRun, stopRun, gateAction, sendChatInput, type Flow, type RunnerEvent, type RunSnapshot } from './api';
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { openRun, openEvents, stopRun, gateAction, sendChatInput, type Flow, type RunnerEvent, type RunSnapshot } from './api';
 
 export interface TraceMeta {
   turnId?: string;
@@ -161,6 +161,258 @@ function computeBreakdown(trace: TraceMeta): LatencyBreakdown {
   return out;
 }
 
+export interface RunnerHandlers {
+  setEvents: Dispatch<SetStateAction<RunnerEvent[]>>;
+  setLastRunError: Dispatch<SetStateAction<string | null>>;
+  applyMetrics: (raw: unknown) => void;
+  setCollectResults: Dispatch<SetStateAction<Record<string, unknown[]>>>;
+  setCaptions: Dispatch<SetStateAction<Caption[]>>;
+  setLatencyBreakdown: Dispatch<SetStateAction<LatencyBreakdown | null>>;
+  setLatency: Dispatch<SetStateAction<number | null>>;
+  setGates: Dispatch<SetStateAction<Gate[]>>;
+  setThoughts: Dispatch<SetStateAction<Thought[]>>;
+  setAgentSteps: Dispatch<SetStateAction<AgentStep[]>>;
+  setExecutions: Dispatch<SetStateAction<Execution[]>>;
+  setChatMessages: Dispatch<SetStateAction<{ nodeId: string; text: string; ts: number }[]>>;
+  setAudit: Dispatch<SetStateAction<AuditEvent[]>>;
+}
+
+// Reducer único de eventos do runner. Usado tanto pelo useRunner (dono do run)
+// quanto pelo useMirrorRunner (janelas pop-out anexadas por SSE) => estado idêntico.
+export function applyRunnerEvent(ev: RunnerEvent, h: RunnerHandlers): void {
+  h.setEvents((e) => [...e.slice(-400), { ...ev, _uiTs: Date.now() }]);
+  if (ev.type === 'flow_invalid') {
+    h.setLastRunError(String(ev.error ?? 'Workflow inválido'));
+  } else if (ev.type === 'runner_stderr' && typeof ev.line === 'string' && ev.line.trim()) {
+    h.setLastRunError((cur) => cur ?? String(ev.line).trim());
+  } else if (ev.type === 'metrics') {
+    h.applyMetrics(ev.snapshot);
+  } else if (ev.type === 'summary') {
+    const sum = ev.summary as { metrics?: unknown } | undefined;
+    h.applyMetrics(sum?.metrics ?? ev.metrics);
+    if (ev.results && typeof ev.results === 'object') {
+      h.setCollectResults(ev.results as Record<string, unknown[]>);
+    }
+  } else if (ev.type === 'caption') {
+    const trace = ev.trace && typeof ev.trace === 'object' ? (ev.trace as TraceMeta) : undefined;
+    h.setCaptions((c) => [
+      ...c.slice(-120),
+      { nodeId: String(ev.nodeId), text: String(ev.text ?? ''), final: !!ev.final, ts: Date.now(), ...(ev.kind === 'stt' ? { kind: 'stt' as const } : {}), ...(trace ? { trace } : {}) },
+    ]);
+    if (trace) {
+      const bd = computeBreakdown(trace);
+      if (Object.keys(bd).length > 0) {
+        h.setLatencyBreakdown(bd);
+        if (bd.totalMs != null) h.setLatency(bd.totalMs);
+        else if (bd.llmTtftMs != null) h.setLatency(bd.llmTtftMs);
+      }
+    }
+  } else if (ev.type === 'gate') {
+    const meta = ev.meta && typeof ev.meta === 'object' ? (ev.meta as GateMeta) : undefined;
+    h.setGates((g) => [
+      ...g.filter((x) => x.nodeId !== ev.nodeId),
+      { nodeId: String(ev.nodeId), text: String(ev.text ?? ''), ts: Date.now(), ...(meta ? { meta } : {}) },
+    ]);
+  } else if (ev.type === 'gate_cancelled') {
+    h.setGates((g) => g.filter((x) => x.nodeId !== ev.nodeId));
+  } else if (ev.type === 'thought') {
+    const nodeId = String(ev.nodeId ?? '');
+    const thoughtId = String(ev.thoughtId ?? nodeId);
+    const text = String(ev.text ?? '');
+    const final = !!ev.final;
+    if (!text) return;
+    h.setThoughts((t) => {
+      const idx = t.findIndex((x) => x.thoughtId === thoughtId);
+      if (idx >= 0) {
+        const next = [...t];
+        next[idx] = { ...next[idx], text, final };
+        return next;
+      }
+      return [...t.slice(-99), { nodeId, thoughtId, text, final, ts: Date.now() }];
+    });
+  } else if (ev.type === 'agent_step') {
+    const phaseRaw = String(ev.phase ?? 'calling');
+    const phase: AgentStep['phase'] =
+      phaseRaw === 'rejected' || phaseRaw === 'result' || phaseRaw === 'repeated'
+        ? phaseRaw
+        : 'calling';
+    h.setAgentSteps((s) => [
+      ...s.slice(-100),
+      {
+        nodeId: String(ev.nodeId ?? ''),
+        ts: Date.now(),
+        step: typeof ev.step === 'number' ? ev.step : 0,
+        phase,
+        tool: String(ev.tool ?? ''),
+        ...(ev.args && typeof ev.args === 'object' ? { args: ev.args as Record<string, unknown> } : {}),
+        ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : {}),
+        ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : {}),
+        ...(typeof ev.dryRun === 'boolean' ? { dryRun: ev.dryRun } : {}),
+      },
+    ]);
+    const isExecTool =
+      String(ev.tool ?? '').startsWith('exec_') ||
+      (typeof ev.transport === 'string' && String(ev.transport).startsWith('mcp'));
+    if (phase === 'result' && isExecTool) {
+      const cmd =
+        ev.args && typeof ev.args === 'object' && typeof (ev.args as Record<string, unknown>).command === 'string'
+          ? String((ev.args as Record<string, unknown>).command)
+          : '';
+      const stepExecId = `${String(ev.nodeId ?? '')}:${typeof ev.step === 'number' ? ev.step : 0}`;
+      const outStr = typeof ev.output === 'string' ? ev.output : '';
+      h.setExecutions((x) => {
+        const idx = x.findIndex((item) => item.id === stepExecId);
+        const nextItem: Execution = {
+          id: stepExecId,
+          ts: Date.now(),
+          nodeId: String(ev.nodeId ?? ''),
+          step: typeof ev.step === 'number' ? ev.step : 0,
+          tool: String(ev.tool ?? ''),
+          host: typeof ev.host === 'string' ? ev.host : 'local',
+          ...(typeof ev.bastion === 'string' && ev.bastion ? { bastion: ev.bastion } : {}),
+          transport: typeof ev.transport === 'string' ? ev.transport : 'local',
+          command: cmd,
+          output: outStr,
+          stdout: outStr,
+          stderr: '',
+          status: 'done',
+          exitCode: typeof ev.exitCode === 'number' ? ev.exitCode : null,
+          ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : {}),
+          ...(typeof ev.dryRun === 'boolean' ? { dryRun: ev.dryRun } : {}),
+          ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : {}),
+          ...(typeof ev.truncated === 'boolean' ? { truncated: ev.truncated } : {}),
+        };
+        if (idx >= 0) {
+          const copy = [...x];
+          copy[idx] = { ...copy[idx], ...nextItem };
+          return copy;
+        }
+        return [...x.slice(-99), nextItem];
+      });
+    }
+  } else if (ev.type === 'exec_start') {
+    const nodeId = String(ev.nodeId ?? '');
+    const ts = typeof ev.ts === 'number' ? ev.ts : Date.now();
+    const id = String(ev.id ?? `${nodeId}:exec:${ts}`);
+    const transport = typeof ev.transport === 'string' ? ev.transport : 'local';
+    const nextExec: Execution = {
+      id,
+      ts,
+      nodeId,
+      step: 0,
+      tool: transport === 'ssh' ? 'exec_ssh' : 'exec_local',
+      host: typeof ev.host === 'string' ? ev.host : 'local',
+      ...(typeof ev.bastion === 'string' && ev.bastion ? { bastion: ev.bastion } : {}),
+      transport,
+      command: String(ev.command ?? ''),
+      output: '',
+      stdout: '',
+      stderr: '',
+      chunks: [],
+      status: 'running',
+      exitCode: null,
+      dryRun: ev.dryRun === true,
+    };
+    h.setExecutions((x) => {
+      const idx = x.findIndex((item) => item.id === id);
+      if (idx >= 0) {
+        const copy = [...x];
+        copy[idx] = { ...copy[idx], ...nextExec };
+        return copy;
+      }
+      return [...x.slice(-99), nextExec];
+    });
+  } else if (ev.type === 'exec_chunk') {
+    const id = String(ev.id ?? '');
+    const stream: 'stdout' | 'stderr' = ev.stream === 'stderr' ? 'stderr' : 'stdout';
+    const text = typeof ev.text === 'string' ? ev.text : '';
+    const ts = typeof ev.ts === 'number' ? ev.ts : Date.now();
+    if (!id || !text) return;
+    h.setExecutions((x) => {
+      const idx = x.findIndex((item) => item.id === id);
+      if (idx < 0) return x;
+      const cur = x[idx];
+      const nextStdout = stream === 'stdout' ? `${cur.stdout}${text}` : cur.stdout;
+      const nextStderr = stream === 'stderr' ? `${cur.stderr}${text}` : cur.stderr;
+      const nextChunks = [...(cur.chunks ?? []), { stream, text, ts }];
+      const copy = [...x];
+      copy[idx] = {
+        ...cur,
+        stdout: nextStdout,
+        stderr: nextStderr,
+        output: `${cur.output}${text}`,
+        chunks: nextChunks,
+      };
+      return copy;
+    });
+  } else if (ev.type === 'exec_end') {
+    const id = String(ev.id ?? '');
+    if (!id) return;
+    h.setExecutions((x) => {
+      const idx = x.findIndex((item) => item.id === id);
+      if (idx < 0) return x;
+      const cur = x[idx];
+      const exitCode = typeof ev.exitCode === 'number' ? ev.exitCode : null;
+      const sshTransportError = cur.transport === 'ssh' && exitCode === 255;
+      const copy = [...x];
+      copy[idx] = {
+        ...cur,
+        status: 'done',
+        exitCode,
+        ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : {}),
+        ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : {}),
+        ...(typeof ev.truncated === 'boolean' ? { truncated: ev.truncated } : {}),
+        ...(sshTransportError ? { sshTransportError: true } : {}),
+      };
+      return copy;
+    });
+  } else if (ev.type === 'execution') {
+    const nodeId = String(ev.nodeId ?? '');
+    const ts = typeof ev.ts === 'number' ? ev.ts : Date.now();
+    const outStr = typeof ev.output === 'string' ? ev.output : '';
+    h.setExecutions((x) => {
+      const id = String(ev.id ?? `${nodeId}:exec:${ts}:${x.length}`);
+      const idx = x.findIndex((item) => item.id === id);
+      const prev = idx >= 0 ? x[idx] : undefined;
+      const nextItem: Execution = {
+        id,
+        ts,
+        nodeId,
+        step: typeof ev.step === 'number' ? ev.step : (prev?.step ?? 0),
+        tool: String(ev.tool ?? prev?.tool ?? 'exec.command'),
+        host: typeof ev.host === 'string' ? ev.host : (prev?.host ?? 'local'),
+        ...(typeof ev.bastion === 'string' && ev.bastion ? { bastion: ev.bastion } : (prev?.bastion ? { bastion: prev.bastion } : {})),
+        transport: typeof ev.transport === 'string' ? ev.transport : (prev?.transport ?? 'local'),
+        command: String(ev.command ?? prev?.command ?? ''),
+        output: outStr || prev?.output || '',
+        stdout: prev?.stdout || outStr,
+        stderr: prev?.stderr || '',
+        ...(prev?.chunks ? { chunks: prev.chunks } : {}),
+        status: 'done',
+        exitCode: typeof ev.exitCode === 'number' ? ev.exitCode : (prev?.exitCode ?? null),
+        ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : (prev?.durationMs !== undefined ? { durationMs: prev.durationMs } : {})),
+        ...(typeof ev.dryRun === 'boolean' ? { dryRun: ev.dryRun } : (prev?.dryRun !== undefined ? { dryRun: prev.dryRun } : {})),
+        ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : (prev?.ok !== undefined ? { ok: prev.ok } : {})),
+        ...(typeof ev.truncated === 'boolean' ? { truncated: ev.truncated } : (prev?.truncated !== undefined ? { truncated: prev.truncated } : {})),
+        ...(ev.sshTransportError === true || prev?.sshTransportError ? { sshTransportError: true } : {}),
+      };
+      if (idx >= 0) {
+        const copy = [...x];
+        copy[idx] = nextItem;
+        return copy;
+      }
+      return [...x.slice(-99), nextItem];
+    });
+  } else if (ev.type === 'chat_sent') {
+    h.setChatMessages((m) => [
+      ...m.slice(-100),
+      { nodeId: String(ev.nodeId ?? ''), text: String(ev.text ?? ''), ts: Date.now() },
+    ]);
+  } else if (ev.type === 'audit') {
+    h.setAudit((a) => [...a.slice(-999), ev as unknown as AuditEvent]);
+  }
+}
+
 export function useRunner() {
   const [running, setRunning] = useState(false);
   const [testMode, setTestMode] = useState(false);
@@ -217,6 +469,12 @@ export function useRunner() {
     setAudit([]);
   };
 
+  const handlers: RunnerHandlers = {
+    setEvents, setLastRunError, applyMetrics, setCollectResults, setCaptions,
+    setLatencyBreakdown, setLatency, setGates, setThoughts, setAgentSteps,
+    setExecutions, setChatMessages, setAudit,
+  };
+
   const start = (flow: Flow, flowName?: string, testMode?: boolean) => {
     // Run único no host: serializa stopRun() + guarda de geração antes de abrir outro,
     // evitando 409 e impedindo que um stop atrasado mate o run recém-aberto.
@@ -237,237 +495,8 @@ export function useRunner() {
         flow,
         (ev) => {
           if (genRef.current !== myGen) return;
-          setEvents((e) => [...e.slice(-400), { ...ev, _uiTs: Date.now() }]);
-          if (ev.type === 'flow_invalid') {
-            setLastRunError(String(ev.error ?? 'Workflow inválido'));
-          } else if (ev.type === 'runner_stderr' && typeof ev.line === 'string' && ev.line.trim()) {
-            setLastRunError((cur) => cur ?? String(ev.line).trim());
-          } else if (ev.type === 'metrics') {
-            applyMetrics(ev.snapshot);
-          } else if (ev.type === 'summary') {
-            const sum = ev.summary as { metrics?: unknown } | undefined;
-            applyMetrics(sum?.metrics ?? ev.metrics);
-            if (ev.results && typeof ev.results === 'object') {
-              setCollectResults(ev.results as Record<string, unknown[]>);
-            }
-          } else if (ev.type === 'caption') {
-            const trace = ev.trace && typeof ev.trace === 'object' ? (ev.trace as TraceMeta) : undefined;
-            setCaptions((c) => [
-              ...c.slice(-120),
-              { nodeId: String(ev.nodeId), text: String(ev.text ?? ''), final: !!ev.final, ts: Date.now(), ...(ev.kind === 'stt' ? { kind: 'stt' as const } : {}), ...(trace ? { trace } : {}) },
-            ]);
-            if (trace) {
-              const bd = computeBreakdown(trace);
-              if (Object.keys(bd).length > 0) {
-                setLatencyBreakdown(bd);
-                if (bd.totalMs != null) setLatency(bd.totalMs);
-                else if (bd.llmTtftMs != null) setLatency(bd.llmTtftMs);
-              }
-            }
-          } else if (ev.type === 'gate') {
-            const meta = ev.meta && typeof ev.meta === 'object' ? (ev.meta as GateMeta) : undefined;
-            setGates((g) => [
-              ...g.filter((x) => x.nodeId !== ev.nodeId),
-              { nodeId: String(ev.nodeId), text: String(ev.text ?? ''), ts: Date.now(), ...(meta ? { meta } : {}) },
-            ]);
-          } else if (ev.type === 'gate_cancelled') {
-            setGates((g) => g.filter((x) => x.nodeId !== ev.nodeId));
-          } else if (ev.type === 'thought') {
-            const nodeId = String(ev.nodeId ?? '');
-            const thoughtId = String(ev.thoughtId ?? nodeId);
-            const text = String(ev.text ?? '');
-            const final = !!ev.final;
-            if (!text) return;
-            setThoughts((t) => {
-              const idx = t.findIndex((x) => x.thoughtId === thoughtId);
-              if (idx >= 0) {
-                const next = [...t];
-                next[idx] = { ...next[idx], text, final };
-                return next;
-              }
-              return [...t.slice(-99), { nodeId, thoughtId, text, final, ts: Date.now() }];
-            });
-          } else if (ev.type === 'agent_step') {
-            const phaseRaw = String(ev.phase ?? 'calling');
-            const phase: AgentStep['phase'] =
-              phaseRaw === 'rejected' || phaseRaw === 'result' || phaseRaw === 'repeated'
-                ? phaseRaw
-                : 'calling';
-            setAgentSteps((s) => [
-              ...s.slice(-100),
-              {
-                nodeId: String(ev.nodeId ?? ''),
-                ts: Date.now(),
-                step: typeof ev.step === 'number' ? ev.step : 0,
-                phase,
-                tool: String(ev.tool ?? ''),
-                ...(ev.args && typeof ev.args === 'object' ? { args: ev.args as Record<string, unknown> } : {}),
-                ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : {}),
-                ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : {}),
-                ...(typeof ev.dryRun === 'boolean' ? { dryRun: ev.dryRun } : {}),
-              },
-            ]);
-            const isExecTool =
-              String(ev.tool ?? '').startsWith('exec_') ||
-              (typeof ev.transport === 'string' && String(ev.transport).startsWith('mcp'));
-            if (phase === 'result' && isExecTool) {
-              const cmd =
-                ev.args && typeof ev.args === 'object' && typeof (ev.args as Record<string, unknown>).command === 'string'
-                  ? String((ev.args as Record<string, unknown>).command)
-                  : '';
-              const stepExecId = `${String(ev.nodeId ?? '')}:${typeof ev.step === 'number' ? ev.step : 0}`;
-              const outStr = typeof ev.output === 'string' ? ev.output : '';
-              setExecutions((x) => {
-                const idx = x.findIndex((item) => item.id === stepExecId);
-                const nextItem: Execution = {
-                  id: stepExecId,
-                  ts: Date.now(),
-                  nodeId: String(ev.nodeId ?? ''),
-                  step: typeof ev.step === 'number' ? ev.step : 0,
-                  tool: String(ev.tool ?? ''),
-                  host: typeof ev.host === 'string' ? ev.host : 'local',
-                  ...(typeof ev.bastion === 'string' && ev.bastion ? { bastion: ev.bastion } : {}),
-                  transport: typeof ev.transport === 'string' ? ev.transport : 'local',
-                  command: cmd,
-                  output: outStr,
-                  stdout: outStr,
-                  stderr: '',
-                  status: 'done',
-                  exitCode: typeof ev.exitCode === 'number' ? ev.exitCode : null,
-                  ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : {}),
-                  ...(typeof ev.dryRun === 'boolean' ? { dryRun: ev.dryRun } : {}),
-                  ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : {}),
-                  ...(typeof ev.truncated === 'boolean' ? { truncated: ev.truncated } : {}),
-                };
-                if (idx >= 0) {
-                  const copy = [...x];
-                  copy[idx] = { ...copy[idx], ...nextItem };
-                  return copy;
-                }
-                return [...x.slice(-99), nextItem];
-              });
-            }
-          } else if (ev.type === 'exec_start') {
-            const nodeId = String(ev.nodeId ?? '');
-            const ts = typeof ev.ts === 'number' ? ev.ts : Date.now();
-            const id = String(ev.id ?? `${nodeId}:exec:${ts}`);
-            const transport = typeof ev.transport === 'string' ? ev.transport : 'local';
-            const nextExec: Execution = {
-              id,
-              ts,
-              nodeId,
-              step: 0,
-              tool: transport === 'ssh' ? 'exec_ssh' : 'exec_local',
-              host: typeof ev.host === 'string' ? ev.host : 'local',
-              ...(typeof ev.bastion === 'string' && ev.bastion ? { bastion: ev.bastion } : {}),
-              transport,
-              command: String(ev.command ?? ''),
-              output: '',
-              stdout: '',
-              stderr: '',
-              chunks: [],
-              status: 'running',
-              exitCode: null,
-              dryRun: ev.dryRun === true,
-            };
-            setExecutions((x) => {
-              const idx = x.findIndex((item) => item.id === id);
-              if (idx >= 0) {
-                const copy = [...x];
-                copy[idx] = { ...copy[idx], ...nextExec };
-                return copy;
-              }
-              return [...x.slice(-99), nextExec];
-            });
-          } else if (ev.type === 'exec_chunk') {
-            const id = String(ev.id ?? '');
-            const stream: 'stdout' | 'stderr' = ev.stream === 'stderr' ? 'stderr' : 'stdout';
-            const text = typeof ev.text === 'string' ? ev.text : '';
-            const ts = typeof ev.ts === 'number' ? ev.ts : Date.now();
-            if (!id || !text) return;
-            setExecutions((x) => {
-              const idx = x.findIndex((item) => item.id === id);
-              if (idx < 0) return x;
-              const cur = x[idx];
-              const nextStdout = stream === 'stdout' ? `${cur.stdout}${text}` : cur.stdout;
-              const nextStderr = stream === 'stderr' ? `${cur.stderr}${text}` : cur.stderr;
-              const nextChunks = [...(cur.chunks ?? []), { stream, text, ts }];
-              const copy = [...x];
-              copy[idx] = {
-                ...cur,
-                stdout: nextStdout,
-                stderr: nextStderr,
-                output: `${cur.output}${text}`,
-                chunks: nextChunks,
-              };
-              return copy;
-            });
-          } else if (ev.type === 'exec_end') {
-            const id = String(ev.id ?? '');
-            if (!id) return;
-            setExecutions((x) => {
-              const idx = x.findIndex((item) => item.id === id);
-              if (idx < 0) return x;
-              const cur = x[idx];
-              const exitCode = typeof ev.exitCode === 'number' ? ev.exitCode : null;
-              const sshTransportError = cur.transport === 'ssh' && exitCode === 255;
-              const copy = [...x];
-              copy[idx] = {
-                ...cur,
-                status: 'done',
-                exitCode,
-                ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : {}),
-                ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : {}),
-                ...(typeof ev.truncated === 'boolean' ? { truncated: ev.truncated } : {}),
-                ...(sshTransportError ? { sshTransportError: true } : {}),
-              };
-              return copy;
-            });
-          } else if (ev.type === 'execution') {
-            const nodeId = String(ev.nodeId ?? '');
-            const ts = typeof ev.ts === 'number' ? ev.ts : Date.now();
-            const outStr = typeof ev.output === 'string' ? ev.output : '';
-            setExecutions((x) => {
-              const id = String(ev.id ?? `${nodeId}:exec:${ts}:${x.length}`);
-              const idx = x.findIndex((item) => item.id === id);
-              const prev = idx >= 0 ? x[idx] : undefined;
-              const nextItem: Execution = {
-                id,
-                ts,
-                nodeId,
-                step: typeof ev.step === 'number' ? ev.step : (prev?.step ?? 0),
-                tool: String(ev.tool ?? prev?.tool ?? 'exec.command'),
-                host: typeof ev.host === 'string' ? ev.host : (prev?.host ?? 'local'),
-                ...(typeof ev.bastion === 'string' && ev.bastion ? { bastion: ev.bastion } : (prev?.bastion ? { bastion: prev.bastion } : {})),
-                transport: typeof ev.transport === 'string' ? ev.transport : (prev?.transport ?? 'local'),
-                command: String(ev.command ?? prev?.command ?? ''),
-                output: outStr || prev?.output || '',
-                stdout: prev?.stdout || outStr,
-                stderr: prev?.stderr || '',
-                ...(prev?.chunks ? { chunks: prev.chunks } : {}),
-                status: 'done',
-                exitCode: typeof ev.exitCode === 'number' ? ev.exitCode : (prev?.exitCode ?? null),
-                ...(typeof ev.durationMs === 'number' ? { durationMs: ev.durationMs } : (prev?.durationMs !== undefined ? { durationMs: prev.durationMs } : {})),
-                ...(typeof ev.dryRun === 'boolean' ? { dryRun: ev.dryRun } : (prev?.dryRun !== undefined ? { dryRun: prev.dryRun } : {})),
-                ...(typeof ev.ok === 'boolean' ? { ok: ev.ok } : (prev?.ok !== undefined ? { ok: prev.ok } : {})),
-                ...(typeof ev.truncated === 'boolean' ? { truncated: ev.truncated } : (prev?.truncated !== undefined ? { truncated: prev.truncated } : {})),
-                ...(ev.sshTransportError === true || prev?.sshTransportError ? { sshTransportError: true } : {}),
-              };
-              if (idx >= 0) {
-                const copy = [...x];
-                copy[idx] = nextItem;
-                return copy;
-              }
-              return [...x.slice(-99), nextItem];
-            });
-          } else if (ev.type === 'chat_sent') {
-            setChatMessages((m) => [
-              ...m.slice(-100),
-              { nodeId: String(ev.nodeId ?? ''), text: String(ev.text ?? ''), ts: Date.now() },
-            ]);
-          } else if (ev.type === 'audit') {
-            setAudit((a) => [...a.slice(-999), ev as unknown as AuditEvent]);
-          }
+          applyRunnerEvent(ev, handlers);
+
         },
         () => {
           if (genRef.current === myGen && ctlRef.current === myCtl) {
@@ -507,3 +536,91 @@ export function useRunner() {
   return { running, testMode, metrics, events, captions, gates, agentSteps, executions, thoughts, chatMessages, collectResults, latency, latencyBreakdown, lastRunError, audit, start, stop, reset, gate, sendChat };
 }
 export type Runner = ReturnType<typeof useRunner>;
+
+
+/**
+ * Runner "espelho": anexa a um run JÁ em andamento via SSE (GET /api/events) e mantém o
+ * mesmo estado do useRunner — sem iniciar run, sem tocar no host. É o que faz as janelas
+ * pop-out (Conversa/Terminal/Logs) ficarem idênticas à página central e sobreviverem à
+ * troca de aba. Re-anexa sozinho quando o run começa (retry a cada 2 s, igual ao Console).
+ */
+export function useMirrorRunner(): Runner {
+  const [running, setRunning] = useState(false);
+  const [metrics, setMetrics] = useState<RunSnapshot>({});
+  const [events, setEvents] = useState<RunnerEvent[]>([]);
+  const [captions, setCaptions] = useState<Caption[]>([]);
+  const [gates, setGates] = useState<Gate[]>([]);
+  const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
+  const [executions, setExecutions] = useState<Execution[]>([]);
+  const [thoughts, setThoughts] = useState<Thought[]>([]);
+  const [chatMessages, setChatMessages] = useState<{ nodeId: string; text: string; ts: number }[]>([]);
+  const [latency, setLatency] = useState<number | null>(null);
+  const [latencyBreakdown, setLatencyBreakdown] = useState<LatencyBreakdown | null>(null);
+  const [lastRunError, setLastRunError] = useState<string | null>(null);
+  const [collectResults, setCollectResults] = useState<Record<string, unknown[]>>({});
+  const [audit, setAudit] = useState<AuditEvent[]>([]);
+  const [connected, setConnected] = useState(false);
+  const [retry, setRetry] = useState(0);
+  const ctlRef = useRef<AbortController | null>(null);
+
+  const extractNodesSnapshot = (raw: unknown): RunSnapshot => {
+    if (!raw || typeof raw !== 'object') return {};
+    const obj = raw as Record<string, unknown>;
+    if (obj.nodes && typeof obj.nodes === 'object') return obj.nodes as RunSnapshot;
+    return obj as RunSnapshot;
+  };
+
+  const applyMetrics = (raw: unknown) => {
+    const snap = extractNodesSnapshot(raw);
+    setMetrics(snap);
+    let ttft: number | null = null;
+    for (const m of Object.values(snap)) {
+      if (!m || typeof m !== 'object') continue;
+      for (const [k, t] of Object.entries(m.timers ?? {})) {
+        if (k.includes('ttft')) ttft = t.lastMs;
+      }
+    }
+    if (ttft != null) setLatency((cur) => cur ?? ttft);
+  };
+
+  const handlers: RunnerHandlers = {
+    setEvents, setLastRunError, applyMetrics, setCollectResults, setCaptions,
+    setLatencyBreakdown, setLatency, setGates, setThoughts, setAgentSteps,
+    setExecutions, setChatMessages, setAudit,
+  };
+
+  // Sem run: tenta reanexar a cada 2 s até conectar (mesmo comportamento do Console).
+  useEffect(() => {
+    if (connected) return;
+    const t = setInterval(() => setRetry((n) => n + 1), 2000);
+    return () => clearInterval(t);
+  }, [connected]);
+
+  useEffect(() => {
+    const onEvent = (ev: RunnerEvent) => {
+      setConnected(true);
+      setRunning(true);
+      applyRunnerEvent(ev, handlers);
+    };
+    const ctl = openEvents(onEvent, () => {
+      setConnected(false);
+      setRunning(false);
+      setExecutions((x) => x.map((item) => (item.status === 'running' ? { ...item, status: 'done' } : item)));
+    });
+    ctlRef.current = ctl;
+    return () => { ctl.abort(); if (ctlRef.current === ctl) ctlRef.current = null; };
+  }, [retry]);
+
+  return {
+    running, testMode: false, metrics, events, captions, gates, agentSteps, executions,
+    thoughts, chatMessages, collectResults, latency, latencyBreakdown, lastRunError, audit,
+    start: () => { /* janela espelho não inicia run */ },
+    stop: () => { void stopRun().catch(() => {}); },
+    reset: () => { /* no-op: a janela central é dona do reset */ },
+    gate: (nodeId: string, text: string | null) => {
+      void gateAction(nodeId, text);
+      setGates((g) => g.filter((x) => x.nodeId !== nodeId));
+    },
+    sendChat: async (text: string, nodeId?: string) => { await sendChatInput(text, nodeId); },
+  };
+}
