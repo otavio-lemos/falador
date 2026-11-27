@@ -30,7 +30,7 @@ const PTY_BRIDGE = join(ROOT, 'services/pty-bridge.py');
 const PTY_BUFFER_MAX_BYTES = 64 * 1024;
 const FLOWS_DIR = process.env.FALADOR_FLOWS_DIR || join(ROOT, 'apps/tui/flows');
 const DIST = join(ROOT, 'apps/web/dist');
-const LOG_FILES = { omlx: 'omlx.log', asr: 'asr.log', tts: 'tts.log', web: 'web.log' };
+const LOG_FILES = { omlx: 'omlx.log', asr: 'asr.log', tts: 'tts.log', omni: 'omni.log', web: 'web.log' };
 const PORT = Number(process.env.FALADOR_WEB_PORT ?? 8787);
 
 // Carrega chaves do `.env.falador` quando o host não está via faladorctl (que sourcing
@@ -83,6 +83,9 @@ function getAsrUrl() {
 }
 function getTtsUrl() {
   return process.env.FALADOR_TTS_URL || 'http://127.0.0.1:8091';
+}
+function getOmniUrl() {
+  return process.env.FALADOR_OMNI_URL || 'http://127.0.0.1:8092';
 }
 const TEXT_MODEL = 'LFM3-1.7B-MLX-4bit';
 
@@ -933,12 +936,13 @@ async function handleApi(req, res, pathname) {
     return json(res, 200, { flows }), true;
   }
   if (pathname === '/api/services/status' && req.method === 'GET') {
-    const [asr, omlx, tts] = await Promise.all([
+    const [asr, omlx, tts, omni] = await Promise.all([
       probeTcpOk(getAsrUrl()),
       probeHttpOk(`${getOmlxUrl()}/v1/models`),
       probeHttpOk(`${getTtsUrl()}/health`),
+      probeHttpOk(`${getOmniUrl()}/health`),
     ]);
-    return json(res, 200, { services: { web: true, asr, omlx, tts }, ts: Date.now() }, { 'Cache-Control': 'no-store' }), true;
+    return json(res, 200, { services: { web: true, asr, omlx, tts, omni }, ts: Date.now() }, { 'Cache-Control': 'no-store' }), true;
   }
   if (pathname === '/api/models' && req.method === 'GET') {
     // Fonte única: GET /v1/models do omlx (:8080) com model_type de cada modelo.

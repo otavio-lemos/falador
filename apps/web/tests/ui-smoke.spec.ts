@@ -608,11 +608,28 @@ test('especialista-ti runner bar, 2-lane minimap with 14 nodes, ask_user gate an
   await expect(valCard).toBeVisible();
   await expect(valCard.locator('.cds--ai-label')).toBeVisible();
 
-  // Card de Pergunta Guiada (ask_user)
+  // Card de Pergunta Guiada (ask_user) — cor igual à do componente (agente = #f97316)
   const askGateCard = page.locator('.live-chat-entry--gate');
   await expect(askGateCard).toBeVisible();
   await expect(askGateCard).toContainText('Pergunta do Agente');
   await expect(askGateCard).toContainText('Qual o ambiente de destino (staging ou prod)?');
+  await expect(askGateCard.locator('.live-chat-accent')).toHaveCSS('background-color', 'rgb(249, 115, 22)');
+  const turnStatusTag = page.getByTestId('turn-status');
+  await expect(turnStatusTag).toContainText('Aguardando resposta');
+  await expect(turnStatusTag).toHaveCSS('background-color', 'rgb(249, 115, 22)');
+
+  // Scroll manual para cima não deve ser forçado de volta ao fundo em re-renders
+  const chatLog = page.locator('.live-chat-log');
+  await chatLog.evaluate((el) => {
+    el.style.maxHeight = '140px';
+    el.scrollTop = 0;
+    el.dispatchEvent(new Event('scroll'));
+  });
+  await expect.poll(() => chatLog.evaluate((el) => el.scrollTop)).toBe(0);
+  await page.getByRole('button', { name: 'Pensamentos' }).click();
+  await expect.poll(() => chatLog.evaluate((el) => el.scrollTop)).toBe(0);
+  await page.getByRole('button', { name: 'Pensamentos' }).click();
+  await chatLog.evaluate((el) => { el.style.maxHeight = ''; });
 
   const answerInput = askGateCard.locator('#ask-user-gate-input');
   await expect(answerInput).toBeVisible();

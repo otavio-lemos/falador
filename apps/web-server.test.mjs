@@ -421,7 +421,7 @@ describe('apps/web-server.mjs — RAG genérico, reset-history e exportação p�
         body: JSON.stringify({}),
       });
       assert.equal(clearAll.status, 200);
-      assert.deepEqual(await clearAll.json(), { ok: true, cleared: ['omlx', 'asr', 'tts', 'web'] });
+      assert.deepEqual(await clearAll.json(), { ok: true, cleared: ['omlx', 'asr', 'tts', 'omni', 'web'] });
       assert.deepEqual((await (await fetch(`${baseUrl}/api/logs?name=asr`)).json()).lines, []);
       assert.deepEqual((await (await fetch(`${baseUrl}/api/logs?name=tts`)).json()).lines, []);
 
@@ -508,10 +508,11 @@ describe('apps/web-server.mjs — RAG genérico, reset-history e exportação p�
     }
   });
 
-  test('GET /api/services/status reporta exatamente o status vivo dos 4 serviços com no-store', async () => {
+  test('GET /api/services/status reporta exatamente o status vivo dos 5 serviços com no-store', async () => {
     const prevOmlx = process.env.FALADOR_OMLX_URL;
     const prevAsr = process.env.FALADOR_ASR_URL;
     const prevTts = process.env.FALADOR_TTS_URL;
+    const prevOmni = process.env.FALADOR_OMNI_URL;
 
     const mockOmlx = createServer((req, res) => {
       if (req.url === '/v1/models') {
@@ -537,6 +538,7 @@ describe('apps/web-server.mjs — RAG genérico, reset-history e exportação p�
     process.env.FALADOR_OMLX_URL = `http://127.0.0.1:${omlxAddr.port}`;
     process.env.FALADOR_ASR_URL = `http://127.0.0.1:${asrAddr.port}`;
     process.env.FALADOR_TTS_URL = 'http://127.0.0.1:1';
+    process.env.FALADOR_OMNI_URL = 'http://127.0.0.1:1';
 
     const { createWebServer } = await import('./web-server.mjs');
     const server = createWebServer();
@@ -548,7 +550,7 @@ describe('apps/web-server.mjs — RAG genérico, reset-history e exportação p�
       assert.equal(resp.status, 200);
       assert.equal(resp.headers.get('cache-control'), 'no-store');
       const body = await resp.json();
-      assert.deepEqual(body.services, { web: true, omlx: true, asr: true, tts: false });
+      assert.deepEqual(body.services, { web: true, omlx: true, asr: true, tts: false, omni: false });
       assert.equal(asrHttpHits, 0, 'ASR status check deve usar TCP sem requisição HTTP (zero spam no log)');
       assert.equal(typeof body.ts, 'number');
     } finally {
@@ -561,6 +563,8 @@ describe('apps/web-server.mjs — RAG genérico, reset-history e exportação p�
       else process.env.FALADOR_ASR_URL = prevAsr;
       if (prevTts === undefined) delete process.env.FALADOR_TTS_URL;
       else process.env.FALADOR_TTS_URL = prevTts;
+      if (prevOmni === undefined) delete process.env.FALADOR_OMNI_URL;
+      else process.env.FALADOR_OMNI_URL = prevOmni;
     }
   });
 

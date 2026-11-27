@@ -8,7 +8,10 @@ mkdir -p logs
 
 REPO_DIR="$(pwd)"
 SNAP_LFM3_AUDIO="$HOME/.cache/huggingface/hub/models--LiquidAI--LFM3-Audio-2B-MLX-8bit/snapshots/000ea4f93adbfdabd4b24295b5e838f6a1f0ffa8"
-SNAP_VOXTRAL="$HOME/.cache/huggingface/hub/models--mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit/snapshots/fdebf7b2af834a1db4b8a3c99ab7480b333adf9e"
+SNAP_NEMOTRON_ASR="$HOME/.lmstudio/models/mlx-community/nemotron-3.5-asr-streaming-0.6b"
+SNAP_LFM3_OMNI="$HOME/.lmstudio/models/LiquidAI/LFM3-Omni-2B-MLX-8bit"
+# Alternativa anterior (Voxtral-Mini-4B-Realtime-2602-4bit):
+# SNAP_VOXTRAL="$HOME/.cache/huggingface/hub/models--mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit/snapshots/fdebf7b2af834a1db4b8a3c99ab7480b333adf9e"
 VENV_DIR="$REPO_DIR/.venv"
 [ -x "$VENV_DIR/bin/python" ] || VENV_DIR="$HOME/ml/falador/.venv"
 VENV_PYTHON="$VENV_DIR/bin/python"
@@ -33,8 +36,9 @@ OMLX_KEY_ARG=""
 # persiste flags de CLI por cima do settings.json (apagando model_dirs como ~/.lmstudio/models).
 SERVICES=(
   "omlx|8080|/v1/models|omlx serve --host 127.0.0.1 --port 8080${OMLX_KEY_ARG}|30"
-  "asr|8090|/v1/models|\"$VENV_PYTHON\" \"$VENV_DIR/lib/python3.12/site-packages/mlx_audio/server.py\" --host 127.0.0.1 --port 8090 --realtime-model \"$SNAP_VOXTRAL\"|60"
+  "asr|8090|/v1/models|\"$VENV_PYTHON\" \"$VENV_DIR/lib/python3.12/site-packages/mlx_audio/server.py\" --host 127.0.0.1 --port 8090 --realtime-model \"$SNAP_NEMOTRON_ASR\"|60"
   "tts|8091|/health|\"$VENV_PYTHON\" services/sts-sidecar.py --model \"$SNAP_LFM3_AUDIO\" --port 8091|30"
+  "omni|8092|/health|\"$VENV_PYTHON\" services/omni-sidecar.py --model \"$SNAP_LFM3_OMNI\" --port 8092|45"
   "web|8787|/api/catalog|node apps/web-server.mjs|15"
 )
 

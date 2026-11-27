@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "stopWhenSourcesDone": false,
+  "description": "Tradução contínua em tempo real: captura por app (SCK) → ASR streaming Voxtral (:8090) → tradutor LLM (:8080) → Output (:8091 se voz).",
+  "nodes": [
+    {
+      "id": "capture1",
+      "type": "capture.ffmpeg",
+      "params": {
+        "backend": "sck",
+        "input": "Google Chrome",
+        "chunkMs": 80,
+        "isDefault": true,
+        "placeholder": "Digite sua mensagem ou comando (Enter para enviar)..."
+      }
+    },
+    {
+      "id": "asr2",
+      "type": "asr.realtime",
+      "params": {
+        "url": "ws://127.0.0.1:8090/v1/realtime",
+        "model": "/Users/otaviolemos/.lmstudio/models/mlx-community/nemotron-3.5-asr-streaming-0.6b",
+        "serverVad": true,
+        "inputRate": 16000
+      }
+    },
+    {
+      "id": "translate3",
+      "type": "translate.llm",
+      "params": {
+        "baseUrl": "http://127.0.0.1:8080",
+        "model": "LiquidAI--LFM3-1.7B-MLX-4bit",
+        "targetLanguage": "Portuguese",
+        "enableThinking": false,
+        "temperature": 0.1,
+        "maxTokens": 256
+      }
+    },
+    {
+      "id": "sink4",
+      "type": "sink.captions",
+      "params": {
+        "mode": "callback",
+        "showParcials": true,
+        "outputMode": "speak",
+        "language": "Portuguese",
+        "voice": "male",
+        "isDefault": true,
+        "ttsUrl": "http://127.0.0.1:8091"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "capture1.out",
+      "to": "asr2.in",
+      "capacity": 32,
+      "overflow": "drop_oldest",
+      "ttlMs": 1500
+    },
+    {
+      "from": "asr2.out",
+      "to": "translate3.parcs",
+      "capacity": 16,
+      "overflow": "drop_oldest"
+    },
+    {
+      "from": "translate3.out",
+      "to": "sink4.in",
+      "capacity": 16,
+      "overflow": "drop_oldest"
+    }
+  ]
+}

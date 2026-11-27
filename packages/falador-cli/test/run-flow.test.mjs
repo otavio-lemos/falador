@@ -383,10 +383,10 @@ test('gate_action com rejectionText registra a mensagem recusada no stream', asy
   assert.ok(!events.some((e) => e.type === 'execution'), 'recusa não executa comando');
 });
 
-test('apps/tui/flows contém apenas os 3 workflows canônicos e todos passam em validateFlow sem modo legado', () => {
+test('apps/tui/flows contém os workflows canônicos e todos passam em validateFlow sem modo legado', () => {
   const flowsDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'apps', 'tui', 'flows');
   const jsonFiles = readdirSync(flowsDir).filter((f) => !f.startsWith('.') && f.endsWith('.json')).sort();
-  assert.deepEqual(jsonFiles, ['agente-workflows.json', 'entrevista.json', 'especialista-ti.json']);
+  assert.deepEqual(jsonFiles, ['agente-workflows.json', 'entrevista.json', 'especialista-ti.json', 'tradutor-omni.json', 'tradutor.json']);
   const reg = registerFaladorNodes(createRegistry())
     .register(sourceTone)
     .register(pipeDelay)

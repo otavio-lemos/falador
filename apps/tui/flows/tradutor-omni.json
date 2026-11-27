@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "stopWhenSourcesDone": false,
+  "description": "Tradução somente com LFM3-Omni-2B-MLX-8bit (:8092) para comparação lado a lado com o pipeline Nemotron + LFM3-1.7B + LFM3-Audio.",
+  "nodes": [
+    {
+      "id": "capture1",
+      "type": "capture.ffmpeg",
+      "params": {
+        "backend": "sck",
+        "input": "Google Chrome",
+        "chunkMs": 80,
+        "isDefault": true,
+        "placeholder": "Digite sua mensagem ou comando (Enter para enviar)..."
+      }
+    },
+    {
+      "id": "asr2",
+      "type": "asr.lfm3",
+      "params": {
+        "url": "http://127.0.0.1:8092",
+        "model": "LiquidAI/LFM3-Omni-2B-MLX-8bit",
+        "targetLanguage": "Portuguese",
+        "sampleRateHz": 16000,
+        "flushSec": 6
+      }
+    },
+    {
+      "id": "sink4",
+      "type": "sink.captions",
+      "params": {
+        "mode": "callback",
+        "showParcials": true,
+        "outputMode": "speak",
+        "language": "Portuguese",
+        "voice": "male",
+        "isDefault": true,
+        "ttsUrl": "http://127.0.0.1:8092"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "capture1.out",
+      "to": "asr2.in",
+      "capacity": 32,
+      "overflow": "drop_oldest",
+      "ttlMs": 1500
+    },
+    {
+      "from": "asr2.out",
+      "to": "sink4.in",
+      "capacity": 16,
+      "overflow": "drop_oldest"
+    }
+  ]
+}

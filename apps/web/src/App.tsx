@@ -161,13 +161,20 @@ export function App() {
       const shortVal = val.split('/').pop()?.replace(/^models--/, '').replace(/--/g, '/') ?? val;
       const match = allowed.find((m) => {
         const shortM = m.split('/').pop()?.replace(/^models--/, '').replace(/--/g, '/') ?? m;
-        return m === val || shortM === shortVal || m.endsWith(`--${val}`) || m.endsWith(`/${val}`);
+        return (
+          m === val ||
+          shortM === shortVal ||
+          m.endsWith(`--${val}`) ||
+          m.endsWith(`/${val}`) ||
+          val.endsWith(`--${m}`) ||
+          val.endsWith(`/${m}`)
+        );
       });
       return match ?? fallback;
     };
     let changed = false;
     const nextNodes = liveFlow.nodes.map((n) => {
-      if (n.type === 'llm.omlx' || n.type === 'agent.tools' || n.type === 'goal.validator') {
+      if (n.type === 'llm.omlx' || n.type === 'translate.llm' || n.type === 'agent.tools' || n.type === 'goal.validator') {
         const nextParams = { ...n.params };
         let nodeChanged = false;
         const resolvedModel = resolveOmlxId(n.params.model, chatModels, chatModels[0]);
@@ -454,10 +461,26 @@ export function App() {
       if (runner.running) startWithContext(next);
       return;
     }
+    const sourceNode = liveFlow.nodes.find((n) => n.id === nodeId);
+    const syncSinkLang =
+      sourceNode &&
+      (sourceNode.type === 'asr.lfm3' || sourceNode.type === 'translate.llm' || sourceNode.type === 'llm.omlx') &&
+      param === 'targetLanguage' &&
+      typeof value === 'string' &&
+      value.trim() !== '' &&
+      value.trim() !== '-' &&
+      value.trim() !== '—'
+        ? value.trim()
+        : null;
     const next: Flow = {
       ...liveFlow,
       nodes: liveFlow.nodes.map((n) => {
-        if (n.id !== nodeId) return n;
+        if (n.id !== nodeId) {
+          if (syncSinkLang && n.type === 'sink.captions') {
+            return { ...n, params: { ...n.params, language: syncSinkLang } };
+          }
+          return n;
+        }
         // Dropdown do Carbon devolve id string; params numéricos (maxResults/topK/maxPages)
         // precisam virar number senão o validateFlow do motor rejeita o run.
         const prev = n.params[param];

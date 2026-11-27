@@ -23,6 +23,7 @@ import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import threading
+import time
 
 import numpy as np
 
@@ -32,8 +33,10 @@ LOCK = threading.Lock()  # MLX não é thread-safe entre generates
 
 
 class Handler(BaseHTTPRequestHandler):
-    def log_message(self, fmt, *args):  # silencia o ruído padrão do servidor
-        pass
+    def log_message(self, fmt, *args):  # evita ruído do GET /health; erros inesperados ainda são logados
+        if self.path == "/health":
+            return
+        print(f"[sts-sidecar] {self.command} {self.path} - {fmt % args}", flush=True)
 
     def do_GET(self):
         if self.path == "/health":
@@ -65,6 +68,7 @@ class Handler(BaseHTTPRequestHandler):
         Resposta: {"text": "..."}
         """
         import base64
+        t0 = time.monotonic()
         try:
             n = int(self.headers.get("Content-Length", 0))
             req = json.loads(self.rfile.read(n) or b"{}")
@@ -98,8 +102,14 @@ class Handler(BaseHTTPRequestHandler):
                     temperature=0.0,
                     top_k=1,
                 )
-            self._send_json(200, {"text": (result.text or "").strip()})
+            text_out = (result.text or "").strip()
+            ms = int((time.monotonic() - t0) * 1000)
+            dur_s = len(pcm) / max(1, sample_rate)
+            print(f"[sts-sidecar] POST /asr-translate 200 ({ms}ms) audio={dur_s:.1f}s chars={len(text_out)}", flush=True)
+            self._send_json(200, {"text": text_out})
         except Exception as e:
+            ms = int((time.monotonic() - t0) * 1000)
+            print(f"[sts-sidecar] POST /asr-translate 500 ({ms}ms) error={e}", flush=True)
             self._send_json(500, {"error": str(e)})
 
     def do_POST(self):
@@ -110,6 +120,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             return
+        t0 = time.monotonic()
         try:
             n = int(self.headers.get("Content-Length", 0))
             req = json.loads(self.rfile.read(n) or b"{}")
@@ -149,12 +160,16 @@ class Handler(BaseHTTPRequestHandler):
                 w.setframerate(sr)
                 w.writeframes(pcm16.tobytes())
             data = buf.getvalue()
+            ms = int((time.monotonic() - t0) * 1000)
+            print(f"[sts-sidecar] POST /tts 200 ({ms}ms) lang={language} voice={voice} bytes={len(data)}", flush=True)
             self.send_response(200)
             self.send_header("Content-Type", "audio/wav")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
         except Exception as e:  # delivery-friendly: erro em json
+            ms = int((time.monotonic() - t0) * 1000)
+            print(f"[sts-sidecar] POST /tts 500 ({ms}ms) error={e}", flush=True)
             body = json.dumps({"error": str(e)}).encode()
             self.send_response(500)
             self.send_header("Content-Type", "application/json")

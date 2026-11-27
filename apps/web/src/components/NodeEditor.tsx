@@ -29,7 +29,8 @@ function modelsForNode(nodeType: string, models: { omlx: string[]; cache: string
   const typeById = new Map<string, string>((models.details ?? []).map((d) => [d.id, d.model_type]));
   const mType = (id: string) => typeById.get(id);
   const all = [...models.omlx, ...models.cache.filter((m) => !models.omlx.includes(m))];
-  if (nodeType === 'asr.realtime' || nodeType === 'asr.lfm3') return all.filter((m) => isAsrModel(m, mType(m)));
+  if (nodeType === 'asr.realtime') return all.filter((m) => isAsrModel(m, mType(m)) && !/lfm.*audio/i.test(m));
+  if (nodeType === 'asr.lfm3') return all.filter((m) => /lfm.*audio/i.test(m));
   if (nodeType === 'tts.sts') return all.filter((m) => isTtsModel(m, mType(m)) || isStsModel(m, mType(m)));
   if (nodeType === 'decision.llm') return [...models.omlx.filter((m) => isDecisionModel(m, mType(m))), ...models.omlx.filter((m) => isTextModel(m, mType(m)))];
   if (nodeType === 'turn.detector') return models.omlx.filter((m) => isDecisionModel(m, mType(m)));

@@ -33,7 +33,8 @@ export const asrLfm3: NodeTypeDef = {
     return errs;
   },
   create: (ctx: NodeCtx): NodeRuntime => {
-    const url = (ctx.params.url as string | undefined) ?? DEFAULT_URL;
+    const rawUrl = (ctx.params.url as string | undefined) ?? DEFAULT_URL;
+    const url = rawUrl.replace(/\/+$/, '').replace(/\/asr-translate$/, '');
     const explicitInstruction = typeof ctx.params.instruction === 'string' ? ctx.params.instruction.trim() : '';
     let instruction = DEFAULT_INSTRUCTION;
     if (explicitInstruction) {

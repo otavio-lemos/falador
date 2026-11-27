@@ -88,6 +88,7 @@ export interface ServiceStatusMap {
   asr: boolean;
   omlx: boolean;
   tts: boolean;
+  omni: boolean;
 }
 export interface ServiceStatusResult {
   services: ServiceStatusMap;

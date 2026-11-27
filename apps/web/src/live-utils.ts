@@ -655,13 +655,21 @@ export function sanitizeFlow(
     if (allowed.length === 0) return isTextModel(val) ? val : fallback;
     if (allowed.includes(val)) return val;
     const shortVal = shortModel(val);
-    const match = allowed.find((m) => shortModel(m) === shortVal || m.endsWith(`--${val}`) || m.endsWith(`/${val}`));
+    const match = allowed.find((m) => {
+      return (
+        shortModel(m) === shortVal ||
+        m.endsWith(`--${val}`) ||
+        m.endsWith(`/${val}`) ||
+        val.endsWith(`--${m}`) ||
+        val.endsWith(`/${m}`)
+      );
+    });
     return match ?? fallback;
   };
   return {
     ...flow,
     nodes: flow.nodes.map((n) => {
-      if (n.type === 'llm.omlx' || n.type === 'agent.tools' || n.type === 'goal.validator') {
+      if (n.type === 'llm.omlx' || n.type === 'translate.llm' || n.type === 'agent.tools' || n.type === 'goal.validator') {
         const cur = typeof n.params.model === 'string' ? n.params.model : undefined;
         if (chatModels.length > 0) {
           const resolved = resolveId(cur, chatModels, chatModels[0]);

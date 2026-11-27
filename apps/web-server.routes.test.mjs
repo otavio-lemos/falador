@@ -21,6 +21,7 @@ process.env.FALADOR_SESSIONS_DIR = join(tmpRoot, 'sessions');
 process.env.FALADOR_OMLX_URL = 'http://127.0.0.1:1'; // porta fechada: /api/models rápido e vazio
 process.env.FALADOR_ASR_URL = 'http://127.0.0.1:1';
 process.env.FALADOR_TTS_URL = 'http://127.0.0.1:1';
+process.env.FALADOR_OMNI_URL = 'http://127.0.0.1:1';
 
 const { createWebServer } = await import('./web-server.mjs');
 const server = createWebServer();
@@ -211,6 +212,17 @@ test('logs: allowlist de nomes, no-store e limpeza explícita', async () => {
   assert.equal(cleared.status, 200);
   assert.deepEqual(await cleared.json(), { ok: true, cleared: ['web'] });
   assert.equal(readFileSync(join(logsDir, 'web.log'), 'utf-8'), '');
+
+  // omni (:8092) — allowlist em /api/logs e presença em /api/services/status
+  writeFileSync(join(logsDir, 'omni.log'), '[omni-sidecar] PRONTO\n', 'utf-8');
+  const omniLog = await api('/api/logs?name=omni&lines=5');
+  assert.equal(omniLog.status, 200);
+  assert.deepEqual((await omniLog.json()).lines, ['[omni-sidecar] PRONTO']);
+  const svcRes = await api('/api/services/status');
+  assert.equal(svcRes.status, 200);
+  const svcBody = await svcRes.json();
+  assert.equal(typeof svcBody.services.omni, 'boolean');
+  assert.equal(svcBody.services.omni, false);
 });
 
 test('rotas de run/gate/chat: erros corretos SEM run em andamento', async () => {

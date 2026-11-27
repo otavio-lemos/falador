@@ -154,8 +154,11 @@ export function BuilderView({
   const errMsg = errEv
     ? `${errEv.nodeId ? `[${errEv.nodeId}] ` : ''}${errEv.message ?? errEv.error ?? 'Erro no teste'}`
     : (runner.lastRunError ?? '');
-  const finalCaptions = runner.captions.filter((c) => c.final);
-  const lastCaption = runner.captions.at(-1);
+  // O runner é compartilhado com o Runner; só o teste iniciado AQUI (testMode) deve
+  // mostrar legendas neste canvas. Sem isso, legendas de um run anterior do Runner
+  // ficam coladas na barra inferior ao voltar para o Builder.
+  const finalCaptions = runner.testMode ? runner.captions.filter((c) => c.final) : [];
+  const lastCaption = runner.testMode ? runner.captions.at(-1) : undefined;
   const collectEntries = Object.entries(runner.collectResults ?? {});
   const displayDesc = description || meta.description;
   const chatNode = nodes.find((n) => n.data.type === 'input.chat' || n.data.type === 'capture.ffmpeg');

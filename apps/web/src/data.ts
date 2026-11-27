@@ -95,7 +95,7 @@ export function shortNodeName(type: string, id: string, params?: Record<string, 
   return SHORT_NAMES[type] ?? NODE_META[type]?.title?.split(' ')[0] ?? id;
 }
 
-export function serviceOfNode(type: string): 'web' | 'asr' | 'omlx' | 'tts' {
+export function serviceOfNode(type: string, params?: Record<string, unknown>): 'web' | 'asr' | 'omlx' | 'tts' | 'omni' {
   if (type === 'asr.realtime') return 'asr';
   if (
     type === 'llm.omlx' ||
@@ -107,7 +107,9 @@ export function serviceOfNode(type: string): 'web' | 'asr' | 'omlx' | 'tts' {
   ) {
     return 'omlx';
   }
-  if (type === 'tts.sts' || type === 'asr.lfm3') return 'tts';
+  if (type === 'tts.sts' || type === 'asr.lfm3') {
+    return String(params?.url ?? '').includes(':8092') ? 'omni' : 'tts';
+  }
   return 'web';
 }
 

@@ -47,7 +47,7 @@ const BASE_SERVICES: BaseServiceConfig[] = [
   {
     id: 'asr',
     port: 8090,
-    displayName: 'mlx-audio',
+    displayName: 'ASR Streaming (mlx-audio)',
     fallbackLabel: 'Transcription',
     fallbackColors: [
       { color: '#14b8a6', label: 'Transcription' },
@@ -66,11 +66,21 @@ const BASE_SERVICES: BaseServiceConfig[] = [
   {
     id: 'tts',
     port: 8091,
-    displayName: 'mlx-audio',
+    displayName: 'TTS / STS (LFM3-Audio)',
     fallbackLabel: 'TTS · Speech Translation',
     fallbackColors: [
       { color: '#d946ef', label: 'TTS' },
       { color: '#14b8a6', label: 'Speech Translation' },
+    ],
+  },
+  {
+    id: 'omni',
+    port: 8092,
+    displayName: 'Omni · mlx-vlm (LFM3-Omni)',
+    fallbackLabel: 'Speech Translation · TTS',
+    fallbackColors: [
+      { color: '#14b8a6', label: 'Speech Translation' },
+      { color: '#d946ef', label: 'TTS' },
     ],
   },
 ];
@@ -108,7 +118,7 @@ interface LogsPanelProps {
   onApproveGate?: (gate: Gate, text: string) => Promise<void> | void;
   onRejectGate?: (gate: Gate, reason?: string) => Promise<void> | void;
   /** Pill de status do turno (Parado/Pensando/.../Aguardando aprovação) — fica no centro da barra. */
-  turnStatus?: { label: string; type: 'gray' | 'cyan' | 'green' | 'blue' | 'purple' | 'teal' | 'red' | 'magenta' | 'warm-gray' };
+  turnStatus?: { label: string; type: 'gray' | 'cyan' | 'green' | 'blue' | 'purple' | 'teal' | 'red' | 'magenta' | 'warm-gray'; accent?: string };
   /** Aba inicial no modo pop-out (janela própria). */
   forceView?: 'logs' | 'audit' | 'terminal';
   /** Filtra para mostrar apenas um serviço de log específico (para popout individual). */
@@ -197,7 +207,7 @@ export function LogsPanel({
   const servicesMeta = useMemo<LogServiceMeta[]>(() => {
     const activeNodes = (flowNodes ?? []).filter((n) => n.enabled !== false);
     const base: LogServiceMeta[] = BASE_SERVICES.map((base) => {
-      const matched = activeNodes.filter((n) => serviceOfNode(n.type) === base.id);
+      const matched = activeNodes.filter((n) => serviceOfNode(n.type, n.params) === base.id);
       const colors: ServiceColorTag[] = (() => {
         if (matched.length === 0) return base.fallbackColors;
         const byColor = new Map<string, string[]>();
@@ -345,16 +355,17 @@ export function LogsPanel({
           prev.web === res.services.web &&
           prev.asr === res.services.asr &&
           prev.omlx === res.services.omlx &&
-          prev.tts === res.services.tts
+          prev.tts === res.services.tts &&
+          prev.omni === res.services.omni
             ? prev
             : res.services,
         );
         onServiceStatusRef.current?.(res.services);
       } catch {
         if (alive) {
-          const down: ServiceStatusMap = { web: false, asr: false, omlx: false, tts: false };
+          const down: ServiceStatusMap = { web: false, asr: false, omlx: false, tts: false, omni: false };
           setServiceStatus((prev) =>
-            prev && !prev.web && !prev.asr && !prev.omlx && !prev.tts ? prev : down,
+            prev && !prev.web && !prev.asr && !prev.omlx && !prev.tts && !prev.omni ? prev : down,
           );
           onServiceStatusRef.current?.(down);
         }
@@ -504,7 +515,14 @@ export function LogsPanel({
         )}
         {turnStatus && (
           <div className="logs-panel-status">
-            <Tag type={turnStatus.type} size="sm" data-testid="turn-status">{turnStatus.label}</Tag>
+            <Tag
+              type={turnStatus.type}
+              size="sm"
+              data-testid="turn-status"
+              style={turnStatus.accent ? { backgroundColor: turnStatus.accent, color: '#161616' } : undefined}
+            >
+              {turnStatus.label}
+            </Tag>
           </div>
         )}
         {!forceService && onToggleThoughts && (

@@ -51,6 +51,7 @@ import {
 } from '@carbon/icons-react';
 import type { Runner, Gate, AgentStep, Caption, AuditEvent } from '../useRunner';
 import { exportSession, gateAction, type Flow, type ContextDoc, type ServiceStatusMap } from '../api';
+import { CATEGORIES } from '../data';
 import { openPopout, type PopoutPanel } from '../popout';
 import {
   deriveStages,
@@ -503,6 +504,7 @@ export function LiveView({
   const wasRunningRef = useRef(runner.running);
   useEffect(() => {
     if (!wasRunningRef.current && runner.running) {
+      stickToBottomRef.current = true;
       setGateHistory([]);
     }
     if (wasRunningRef.current && !runner.running) {
@@ -915,14 +917,21 @@ export function LiveView({
     };
   }, [latestPlan]);
   const chatLogRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
+  const handleChatScroll = () => {
+    const el = chatLogRef.current;
+    if (!el) return;
+    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
+  };
   useEffect(() => {
     const el = chatLogRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && stickToBottomRef.current) el.scrollTop = el.scrollHeight;
   }, [conversation, gate, lastError, runner.lastRunError]);
 
   const handleSendChat = async () => {
     const text = chatInput.trim();
     if (!text || !runner.running || sendingChat || !chatNode) return;
+    stickToBottomRef.current = true;
     setSendingChat(true);
     try {
       await runner.sendChat(text, chatNode?.id);
@@ -964,12 +973,28 @@ export function LiveView({
   const bd = runner.latencyBreakdown;
 
   const lastCaption = runner.captions[runner.captions.length - 1];
-  const agentBusy = runner.agentSteps.some((s) => s.phase === 'calling') || Boolean(lastCaption && !lastCaption.final);
+  const lastChatTs = runner.chatMessages.length > 0 ? runner.chatMessages[runner.chatMessages.length - 1].ts : 0;
+  const lastGateItem = gateHistory.length > 0 ? gateHistory[gateHistory.length - 1] : null;
+  const lastGateResumeTs = lastGateItem && lastGateItem.status !== 'Rejeitado'
+    ? lastGateItem.ts
+    : 0;
+  const lastPendingInputTs = Math.max(lastChatTs, lastGateResumeTs);
+  const lastResponseTs = Math.max(
+    ...runner.captions.filter((c) => c.final && c.kind !== 'stt' && !sinks.transcription.has(c.nodeId)).map((c) => c.ts),
+    ...runner.audit.filter((a) => a.op === 'agent_final').map((a) => a.ts),
+    0,
+  );
+  const awaitingAgentTurn = lastPendingInputTs > 0 && lastPendingInputTs > lastResponseTs && !runner.lastRunError;
+  const agentBusy = sendingChat || awaitingAgentTurn || runner.agentSteps.some((s) => s.phase === 'calling') || Boolean(lastCaption && !lastCaption.final);
+  const gateNode = gate ? flow.nodes.find((n) => n.id === gate.nodeId) : undefined;
+  const gateComponentAccent = gateNode
+    ? CATEGORIES.find((c) => c.nodes.includes(gateNode.type))?.accent
+    : undefined;
   const turnStatus = gate
     ? gateInfo.isGoalConfirm
       ? { label: 'Aguardando confirmação', type: 'green' as const, hint: 'Leia o relatório abaixo e diga se é suficiente.' }
       : gateInfo.isAskUser
-      ? { label: 'Aguardando resposta', type: 'cyan' as const, hint: 'Responda à pergunta do agente abaixo para continuar.' }
+      ? { label: 'Aguardando resposta', type: 'warm-gray' as const, accent: gateComponentAccent, hint: 'Responda à pergunta do agente abaixo para continuar.' }
       : { label: 'Aguardando aprovação', type: 'teal' as const, hint: 'Revise e aprove ou rejeite a ação abaixo.' }
     : !runner.running
       ? { label: 'Parado', type: 'gray' as const, hint: 'Inicie a sessão para conversar com o agente.' }
@@ -991,7 +1016,7 @@ export function LiveView({
           role={gateInfo.isGoalConfirm ? 'Relatório do Agente' : gateInfo.isAskUser ? 'Pergunta do Agente' : 'Aprovação'}
           tag={gateInfo.isGoalConfirm ? 'Suficiente?' : gateInfo.isAskUser ? '' : (gateInfo.isCommand ? 'Comando' : 'Revisão')}
           tagType={gateInfo.isGoalConfirm ? 'green' : gateInfo.isAskUser ? 'cyan' : gateInfo.isCommand ? 'teal' : 'purple'}
-          accent={gateInfo.isGoalConfirm ? 'var(--cds-support-success)' : gateInfo.isAskUser ? 'var(--cds-support-info)' : 'var(--cds-support-warning, #f1c21b)'}
+          accent={gateInfo.isGoalConfirm ? 'var(--cds-support-success)' : gateInfo.isAskUser ? (gateComponentAccent ?? 'var(--cds-support-warning, #f1c21b)') : 'var(--cds-support-warning, #f1c21b)'}
           icon={gateInfo.isGoalConfirm ? <Bot size={18} /> : gateInfo.isAskUser ? <Chat size={18} /> : <Checkmark size={18} />}
           ts={gate.ts}
           ariaLabel={gateInfo.isGoalConfirm ? 'Confirmação de conclusão pendente' : gateInfo.isAskUser ? 'Pergunta guiada pendente' : gateInfo.isCommand ? 'Aprovação de comando pendente' : 'Aprovação de resposta pendente'}
@@ -1560,7 +1585,7 @@ export function LiveView({
                     )}
                   </div>
                 )}
-                <div className="live-chat-log" ref={chatLogRef}>
+                <div className="live-chat-log" ref={chatLogRef} onScroll={handleChatScroll}>
                   {conversation.length === 0 && !liveAgent && !gateCard && !errorCard && (
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.5rem' }}>
                       <p className="live-chat-empty" style={{ margin: 0 }}>
