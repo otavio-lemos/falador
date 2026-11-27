@@ -46,6 +46,8 @@ import {
   ErrorFilled,
   Send,
   Launch,
+  ChevronDown,
+  ChevronUp,
 } from '@carbon/icons-react';
 import type { Runner, Gate, AgentStep, Caption, AuditEvent } from '../useRunner';
 import { exportSession, gateAction, type Flow, type ContextDoc, type ServiceStatusMap } from '../api';
@@ -468,6 +470,7 @@ export function LiveView({
   const [exportOpen, setExportOpen] = useState(false);
   const [gateHistory, setGateHistory] = useState<GateHistoryItem[]>([]);
   const [auditFocus, setAuditFocus] = useState<AuditFocus | null>(null);
+  const [planExpanded, setPlanExpanded] = useState(true);
   // Uma janela de browser real, reaproveitada. Nunca about:blank, nunca innerHTML.
   const consoleWinRef = useRef<Window | null>(null);
   const consoleBcRef = useRef<BroadcastChannel | null>(null);
@@ -884,6 +887,33 @@ export function LiveView({
     }
     return null;
   }, [runner.audit]);
+
+  const planSummary = useMemo(() => {
+    if (!latestPlan || latestPlan.length === 0) return null;
+    const verified = latestPlan.filter((p) => p.status === 'verified').length;
+    const total = latestPlan.length;
+    const pending = latestPlan.find((p) => p.status === 'pending');
+    const failed = latestPlan.find((p) => p.status === 'failed');
+    if (verified === total) {
+      return {
+        verified,
+        total,
+        kind: 'succeeded' as const,
+        statusLabel: 'concluído',
+        currentText: 'Todos os passos verificados',
+      };
+    }
+    const current = pending ?? failed ?? latestPlan[total - 1];
+    const kind = current.status === 'failed' ? ('failed' as const) : ('in-progress' as const);
+    const statusLabel = current.status === 'failed' ? 'falhou' : 'em andamento';
+    return {
+      verified,
+      total,
+      kind,
+      statusLabel,
+      currentText: current.description,
+    };
+  }, [latestPlan]);
   const chatLogRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = chatLogRef.current;
@@ -1478,33 +1508,56 @@ export function LiveView({
                 {(gate || runner.running) && (
                   <p className="live-chat-empty" style={{ marginTop: '-0.25rem' }}>{turnStatus.hint}</p>
                 )}
-                {latestPlan && (
+                {latestPlan && planSummary && (
                   <div className="live-plan-panel">
-                    <ContainedList
-                      size="sm"
-                      kind="on-page"
-                      label={`Plano de execução (${latestPlan.filter((p) => p.status === 'verified').length}/${latestPlan.length} verificados)`}
+                    <button
+                      type="button"
+                      className="live-plan-header"
+                      aria-expanded={planExpanded}
+                      onClick={() => setPlanExpanded((v) => !v)}
                     >
-                      {latestPlan.map((p) => (
-                        <ContainedListItem
-                          key={p.id}
-                          action={
+                      <span className="live-plan-header-main">
+                        <span className="live-plan-title">
+                          {`Plano de execução (${planSummary.verified}/${planSummary.total} verificados)`}
+                        </span>
+                        {!planExpanded && (
+                          <span className="live-plan-current" title={planSummary.currentText}>
                             <IconIndicator
-                              kind={p.status === 'verified' ? 'succeeded' : p.status === 'failed' ? 'failed' : 'in-progress'}
-                              label={p.status === 'verified' ? 'verificado' : p.status === 'failed' ? 'falhou' : 'pendente'}
+                              kind={planSummary.kind}
+                              label={planSummary.statusLabel}
                               size={16}
                             />
-                          }
-                        >
-                          <span className="live-plan-item">
-                            <strong>{p.description}</strong>
-                            <span className="live-plan-verify">
-                              {p.verification}{p.evidence ? ` · evidência: ${p.evidence}` : ''}
-                            </span>
+                            <span className="live-plan-current-text">{planSummary.currentText}</span>
                           </span>
-                        </ContainedListItem>
-                      ))}
-                    </ContainedList>
+                        )}
+                      </span>
+                      {planExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                    </button>
+                    {planExpanded && (
+                      <div className="live-plan-body">
+                        <ContainedList size="sm" kind="on-page" label="">
+                          {latestPlan.map((p) => (
+                            <ContainedListItem
+                              key={p.id}
+                              action={
+                                <IconIndicator
+                                  kind={p.status === 'verified' ? 'succeeded' : p.status === 'failed' ? 'failed' : 'in-progress'}
+                                  label={p.status === 'verified' ? 'verificado' : p.status === 'failed' ? 'falhou' : 'pendente'}
+                                  size={16}
+                                />
+                              }
+                            >
+                              <span className="live-plan-item">
+                                <strong>{p.description}</strong>
+                                <span className="live-plan-verify">
+                                  {p.verification}{p.evidence ? ` · evidência: ${p.evidence}` : ''}
+                                </span>
+                              </span>
+                            </ContainedListItem>
+                          ))}
+                        </ContainedList>
+                      </div>
+                    )}
                   </div>
                 )}
                 <div className="live-chat-log" ref={chatLogRef}>

@@ -1591,6 +1591,62 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   background: $bg-panel;
   border: 1px solid $border-1;
 }
+.live-plan-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-03;
+  width: 100%;
+  min-height: 36px;
+  padding: $spacing-02 $spacing-04;
+  background: transparent;
+  border: 0;
+  color: $txt-1;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  &:hover {
+    background: var(--cds-layer-hover-01, rgba(255, 255, 255, 0.06));
+  }
+  &:focus-visible {
+    outline: 2px solid var(--cds-focus, #0f62fe);
+    outline-offset: -2px;
+  }
+}
+.live-plan-header-main {
+  display: flex;
+  align-items: center;
+  gap: $spacing-03;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.live-plan-title {
+  @include type-style('heading-compact-01');
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.live-plan-current {
+  display: inline-flex;
+  align-items: center;
+  gap: $spacing-02;
+  min-width: 0;
+  flex: 1 1 auto;
+  color: $txt-2;
+  @include type-style('body-compact-01');
+}
+.live-plan-current-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.live-plan-body {
+  max-height: 220px;
+  overflow-y: auto;
+  border-top: 1px solid $border-1;
+  .cds--contained-list__header {
+    display: none;
+  }
+}
 .live-plan-item {
   display: inline-flex;
   align-items: baseline;

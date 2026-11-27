@@ -369,12 +369,20 @@ test('console modal, plan progress indicator, goal validation, gate history and 
   await page.getByRole('button', { name: 'Runner' }).click();
   await page.getByRole('button', { name: 'Iniciar', exact: true }).click();
 
-  // ContainedList do plano (substituiu ProgressIndicator/Accordion)
+  // ContainedList do plano com dropdown recolhível e resumo em linha única
   const planPanel = page.locator('.live-plan-panel');
   await expect(planPanel).toBeVisible();
   await expect(planPanel.locator('[role="list"]')).toBeVisible();
   await expect(planPanel).toContainText('Checar uptime');
   await expect(planPanel).toContainText('exec uptime');
+  const planToggle = planPanel.locator('.live-plan-header');
+  await planToggle.click();
+  await expect(planToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(planPanel.locator('[role="list"]')).toHaveCount(0);
+  await expect(planPanel.locator('.live-plan-current-text')).toBeVisible();
+  await planToggle.click();
+  await expect(planToggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(planPanel.locator('[role="list"]')).toBeVisible();
   // Botão do card agent-step abre o painel Terminal embutido (não popup)
   const stepCard = page.locator('.live-chat-entry--agent-step').first();
   await expect(stepCard).toBeVisible();
