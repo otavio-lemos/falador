@@ -35,7 +35,7 @@ const BASE_SERVICES: BaseServiceConfig[] = [
   {
     id: 'web',
     port: 8787,
-    displayName: 'falador host',
+    displayName: 'NODE.JS',
     fallbackLabel: 'Input · Approval · Output',
     fallbackColors: [
       { color: '#22d3ee', label: 'Input' },
@@ -47,7 +47,7 @@ const BASE_SERVICES: BaseServiceConfig[] = [
   {
     id: 'asr',
     port: 8090,
-    displayName: 'ASR Streaming (mlx-audio)',
+    displayName: 'MLX-AUDIO',
     fallbackLabel: 'Transcription',
     fallbackColors: [
       { color: '#14b8a6', label: 'Transcription' },
@@ -56,7 +56,7 @@ const BASE_SERVICES: BaseServiceConfig[] = [
   {
     id: 'omlx',
     port: 8080,
-    displayName: 'omlx',
+    displayName: 'OMLX',
     fallbackLabel: 'LLM · Translate · Agent · Decision',
     fallbackColors: [
       { color: '#8b5cf6', label: 'LLM / Translate / Agent' },
@@ -66,20 +66,20 @@ const BASE_SERVICES: BaseServiceConfig[] = [
   {
     id: 'tts',
     port: 8091,
-    displayName: 'TTS / STS (LFM3-Audio)',
+    displayName: 'MLX-AUDIO',
     fallbackLabel: 'TTS · Speech Translation',
     fallbackColors: [
       { color: '#d946ef', label: 'TTS' },
-      { color: '#14b8a6', label: 'Speech Translation' },
+      { color: '#3b82f6', label: 'Speech Translation' },
     ],
   },
   {
     id: 'omni',
     port: 8092,
-    displayName: 'Omni · mlx-vlm (LFM3-Omni)',
+    displayName: 'MLX-VLM',
     fallbackLabel: 'Speech Translation · TTS',
     fallbackColors: [
-      { color: '#14b8a6', label: 'Speech Translation' },
+      { color: '#3b82f6', label: 'Speech Translation' },
       { color: '#d946ef', label: 'TTS' },
     ],
   },
@@ -225,7 +225,7 @@ export function LogsPanel({
       return {
         id: base.id,
         shortLabel,
-        label: `${shortLabel} (:${base.port})`,
+        label: `${shortLabel}:${base.port}`,
         colors,
       };
     });

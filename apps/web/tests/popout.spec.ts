@@ -204,7 +204,7 @@ test('janela /popout/log?service=omlx abre só o serviço omlx mesmo com localSt
   await expect(page.locator('.live2--popout-log')).toBeVisible();
   await expect(page.locator('.logs-panel-head').getByRole('tab', { name: /^Logs/ })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.logs-block')).toHaveCount(1);
-  await expect(page.locator('.logs-block-title')).toContainText('omlx (:8080)');
+  await expect(page.locator('.logs-block-title')).toContainText('OMLX:8080');
   await expect(page.locator('.logs-block-path')).toHaveText('logs/omlx.log');
   await expect(page.locator('.logs-block-head').getByRole('button', { name: 'Abrir omlx em janela' })).toHaveCount(0);
 });

@@ -13,7 +13,9 @@ export interface Category {
 
 export const CATEGORIES: Category[] = [
   { id: 'input', label: 'Input', emoji: '🎙️', accent: '#22d3ee', nodes: ['capture.ffmpeg'] },
-  { id: 'transcricao', label: 'Transcription', emoji: '💡', accent: '#14b8a6', nodes: ['asr.realtime', 'asr.lfm3'] },
+  { id: 'transcricao', label: 'Transcription', emoji: '💡', accent: '#14b8a6', nodes: ['asr.realtime'] },
+  // Omni/mlx-vlm tem executor e porta próprios (:8092) — cor distinta do mlx-audio (:8090/:8091).
+  { id: 'omni', label: 'Speech Translation', emoji: '🌐', accent: '#3b82f6', nodes: ['asr.lfm3'] },
   { id: 'pensar', label: 'Reasoning', emoji: '🧠', accent: '#8b5cf6', nodes: ['llm.omlx', 'translate.llm'] },
   { id: 'decidir', label: 'Routing', emoji: '🔀', accent: '#f59e0b', nodes: ['turn.detector', 'decision.llm', 'human.approve', 'goal.validator'] },
   { id: 'acoes', label: 'Actions / Connectors', emoji: '⚡', accent: '#f97316', nodes: ['exec.command', 'rag.search', 'tool.mcp', 'tool.workflow', 'tool.web_search', 'tool.crawler', 'agent.tools'] },
@@ -113,27 +115,17 @@ export function serviceOfNode(type: string, params?: Record<string, unknown>): '
   return 'web';
 }
 
-/** Nome da solução/executor para exibir junto ao stage no Runner bar.
- *  Retorna null para nós sem executor de serviço dedicado (Input, Output, Approval, etc.). */
-export function solutionOfNodeType(type: string): string | null {
-  if (
-    type === 'llm.omlx' ||
-    type === 'translate.llm' ||
-    type === 'agent.tools' ||
-    type === 'turn.detector' ||
-    type === 'decision.llm' ||
-    type === 'goal.validator'
-  ) return 'omlx';
-  if (type === 'asr.realtime' || type === 'asr.lfm3' || type === 'tts.sts') return 'mlx-audio';
-  if (type === 'exec.command') return 'host';
-  if (
-    type === 'rag.search' ||
-    type === 'tool.web_search' ||
-    type === 'tool.crawler' ||
-    type === 'tool.mcp' ||
-    type === 'tool.workflow'
-  ) return 'host';
-  return null;
+/** Runtime + porta REAL do serviço usado pelo nó, para exibir no Runner bar e nos logs.
+ *  `params` é necessário: asr.lfm3/tts.sts podem apontar para :8092 (mlx-vlm/Omni)
+ *  em vez de :8091 (mlx-audio) — sem isso o Omni aparecia como mlx-audio. */
+export function runtimePortOfNode(type: string, params?: Record<string, unknown>): string {
+  if (type === 'sink.captions' && params?.outputMode !== 'speak') return 'NODE.JS:8787';
+  const svc = serviceOfNode(type, params);
+  if (svc === 'omni') return 'MLX-VLM:8092';
+  if (svc === 'tts') return 'MLX-AUDIO:8091';
+  if (svc === 'asr') return 'MLX-AUDIO:8090';
+  if (svc === 'omlx') return 'OMLX:8080';
+  return 'NODE.JS:8787';
 }
 
 export interface ParamDoc {

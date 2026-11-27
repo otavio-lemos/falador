@@ -1,7 +1,7 @@
 // Deriva as ETAPAS do workflow (dropdowns por etapa da tela de execução) e
 // classifica os sinks de legenda em transcrição (alimentado pelo ASR) vs sugestão.
 import type { Flow, ContextDoc } from './api';
-import { accentOf, shortNodeName, solutionOfNodeType } from './data';
+import { accentOf, runtimePortOfNode, shortNodeName } from './data';
 
 export interface Stage {
   key: string;
@@ -509,7 +509,10 @@ export function deriveStageGroups(flow: Flow): StageGroup[] {
       key: `grp-${list[0].key}`,
       label,
       accent: list[0].accent,
-      solution: solutionOfNodeType(list[0].nodeType),
+      solution: runtimePortOfNode(
+        list[0].nodeType,
+        flow.nodes.find((n) => n.id === list[0].nodeId)?.params,
+      ),
       instances,
       defaultNodeId: def.nodeId,
     });

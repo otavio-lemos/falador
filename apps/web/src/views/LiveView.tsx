@@ -1894,7 +1894,11 @@ export function LiveView({
                   <span className="stage-dd-label">
                     {grp.label}
                     {grp.solution && (
-                      <span className="stage-dd-solution">{grp.solution}</span>
+                      <span className="stage-dd-solution">
+                        {s.kind === 'output-mode'
+                          ? (outputMode === 'speak' ? 'MLX-AUDIO:8091' : 'NODE.JS:8787')
+                          : grp.solution}
+                      </span>
                     )}
                   </span>
                   <div className={`stage-dd-ctrl ${isDual ? 'stage-dd-ctrl--triple' : 'stage-dd-ctrl--dual'}`}>
