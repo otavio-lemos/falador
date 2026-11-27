@@ -29,6 +29,7 @@ export const sinkCaptions: NodeTypeDef = {
     'timeoutMs',
     'maxTextChars',
     'player',
+    'playbackRate',
     'maxQueue',
   ],
   bindingNames: ['__onCaption'],
@@ -55,7 +56,7 @@ export const sinkCaptions: NodeTypeDef = {
         errs.push({ path: `params.${k}`, code: 'INVALID_PARAM', message: `${k} deve ser string` });
       }
     }
-    for (const k of ['sampleRateHz', 'timeoutMs', 'maxTextChars'] as const) {
+    for (const k of ['sampleRateHz', 'timeoutMs', 'maxTextChars', 'playbackRate'] as const) {
       if (p[k] !== undefined && (typeof p[k] !== 'number' || p[k] <= 0)) {
         errs.push({ path: `params.${k}`, code: 'INVALID_PARAM', message: `${k} deve ser número > 0` });
       }
@@ -77,6 +78,7 @@ export const sinkCaptions: NodeTypeDef = {
     const timeoutMs = (ctx.params.timeoutMs as number | undefined) ?? 60_000;
     const maxTextChars = (ctx.params.maxTextChars as number | undefined) ?? 1400;
     const player = (ctx.params.player as string | undefined) ?? '/usr/bin/afplay';
+    const playbackRate = (ctx.params.playbackRate as number | undefined) ?? 1.15;
     const maxQueue = (ctx.params.maxQueue as number | undefined) ?? 4;
     const cb = ctx.bindings.__onCaption as
       | ((c: { text: string; final: boolean; trace?: TraceMeta }) => void)
@@ -89,7 +91,6 @@ export const sinkCaptions: NodeTypeDef = {
     }
 
     let speakDir: string | null = null;
-    let chain: Promise<void> = Promise.resolve();
     let pending = 0;
     let dropped = 0;
     let fileNo = 0;
@@ -97,6 +98,9 @@ export const sinkCaptions: NodeTypeDef = {
     let generation = 0;
     let activeCtrl: AbortController | null = null;
     let activeChild: ChildProcess | null = null;
+    // Fila só de pendentes (o item em reprodução não entra aqui). Ao atrasar, derruba backlog antigo e mantém o mais recente.
+    const speakQueue: Array<{ text: string; gen: number }> = [];
+    let speakPump: Promise<void> = Promise.resolve();
 
     function write(text: string, final: boolean): void {
       if (!text) return;
@@ -163,7 +167,8 @@ export const sinkCaptions: NodeTypeDef = {
       const tPlay = Date.now();
       try {
         await new Promise<void>((resolve, reject) => {
-          const p = spawn(player, [file, '-q', '1']);
+          const args = playbackRate !== 1 ? ['-r', String(playbackRate), '-q', '1', file] : [file, '-q', '1'];
+          const p = spawn(player, args);
           activeChild = p;
           const onPlayAbort = () => {
             try { p.kill('SIGKILL'); } catch { /* ignore */ }
@@ -192,28 +197,43 @@ export const sinkCaptions: NodeTypeDef = {
       }
     }
 
+    function pumpSpeak(): void {
+      speakPump = speakPump.then(async () => {
+        while (!stopped) {
+          const next = speakQueue.shift();
+          if (!next) break;
+          try {
+            await synthesizeAndPlay(next.text, next.gen);
+          } catch (e: unknown) {
+            ctx.log('error', `output.playback: ${String(e)}`);
+          } finally {
+            pending = Math.max(0, pending - 1);
+          }
+        }
+      }).catch(() => { /* mantém cadeia viva */ });
+    }
+
     function enqueueSpeak(text: string): void {
       if (outputMode !== 'speak' || stopped || ctx.signal.aborted) return;
       const clean = text.replace(/\s+/g, ' ').trim();
       if (!clean) return;
-      pending += 1;
-      if (pending > maxQueue) {
+      // pending conta item em reprodução + pendentes na fila
+      while (pending >= maxQueue && speakQueue.length > 0) {
+        speakQueue.shift(); // descarta backlog antigo; mantém o mais recente
         pending -= 1;
         dropped += 1;
         ctx.metrics.counter('sink.captions.dropped', 1);
-        ctx.log('warn', `output: fila de fala cheia, ${dropped} descartada(s)`);
+      }
+      if (pending >= maxQueue) {
+        dropped += 1;
+        ctx.metrics.counter('sink.captions.dropped', 1);
+        ctx.log('warn', `output: fila de fala cheia, mantendo a mais recente (${dropped} descartada(s))`);
         return;
       }
-      const myGen = generation;
-      chain = chain
-        .then(() => synthesizeAndPlay(clean, myGen))
-        .then(() => {
-          pending -= 1;
-        })
-        .catch((e: unknown) => {
-          pending -= 1;
-          ctx.log('error', `output.playback: ${String(e)}`);
-        });
+      speakQueue.push({ text: clean, gen: generation });
+      pending += 1;
+      if (dropped > 0) ctx.log('warn', `output: backlog antigo descartado para manter ao vivo (${dropped} total)`);
+      pumpSpeak();
     }
 
     return {
@@ -243,8 +263,10 @@ export const sinkCaptions: NodeTypeDef = {
       },
       async stop() {
         stopped = true;
+        speakQueue.length = 0;
+        pending = 0;
         const dirToClean = speakDir;
-        await chain.catch(() => {}).then(() => {
+        await speakPump.catch(() => {}).then(() => {
           if (dirToClean) return rm(dirToClean, { recursive: true, force: true }).catch(() => {});
         });
         await new Promise<void>((res) => {
@@ -273,7 +295,7 @@ export const sinkCaptions: NodeTypeDef = {
 export const sinkPlayback: NodeTypeDef = {
   type: 'sink.playback',
   sink: true,
-  paramNames: ['player', 'tempDir', 'maxQueue', 'muted'],
+  paramNames: ['player', 'tempDir', 'maxQueue', 'playbackRate', 'muted'],
   inputs: [{ name: 'in', type: 'audio_chunk' }],
   outputs: [],
   validateParams: (p) => {
@@ -284,6 +306,9 @@ export const sinkPlayback: NodeTypeDef = {
     if (p.muted !== undefined && typeof p.muted !== 'boolean') {
       errs.push({ path: 'params.muted', code: 'INVALID_PARAM', message: 'muted deve ser boolean' });
     }
+    if (p.playbackRate !== undefined && (typeof p.playbackRate !== 'number' || p.playbackRate <= 0)) {
+      errs.push({ path: 'params.playbackRate', code: 'INVALID_PARAM', message: 'playbackRate deve ser número > 0' });
+    }
     if (p.maxQueue !== undefined && (typeof p.maxQueue !== 'number' || p.maxQueue < 1)) {
       errs.push({ path: 'params.maxQueue', code: 'INVALID_PARAM', message: 'maxQueue deve ser número >= 1' });
     }
@@ -291,16 +316,18 @@ export const sinkPlayback: NodeTypeDef = {
   },
   create: (ctx: NodeCtx): NodeRuntime => {
     const player = (ctx.params.player as string | undefined) ?? '/usr/bin/afplay';
+    const playbackRate = (ctx.params.playbackRate as number | undefined) ?? 1.15;
     const maxQueue = (ctx.params.maxQueue as number | undefined) ?? 4;
     const muted = ctx.params.muted === true;
     let dir: string | null = null;
-    let chain: Promise<void> = Promise.resolve();
     let pending = 0;
     let dropped = 0;
     let fileNo = 0;
     let stopped = false;
     let activeChild: ChildProcess | null = null;
     let generation = 0;
+    const queue: Array<{ payload: AudioChunkPayload; gen: number }> = [];
+    let pump: Promise<void> = Promise.resolve();
 
     async function play(payload: AudioChunkPayload, myGen: number): Promise<void> {
       if (stopped || ctx.signal.aborted || myGen !== generation) return;
@@ -319,7 +346,8 @@ export const sinkPlayback: NodeTypeDef = {
       }
       const t0 = Date.now();
       await new Promise<void>((resolve, reject) => {
-        const p = spawn(player, [file, '-q', '1']);
+        const args = playbackRate !== 1 ? ['-r', String(playbackRate), '-q', '1', file] : [file, '-q', '1'];
+        const p = spawn(player, args);
         activeChild = p;
         const onAbort = () => {
           try { p.kill('SIGKILL'); } catch { /* ignore */ }
@@ -346,6 +374,22 @@ export const sinkPlayback: NodeTypeDef = {
       await rm(file, { force: true }).catch(() => {});
     }
 
+    function pumpPlay(): void {
+      pump = pump.then(async () => {
+        while (!stopped) {
+          const next = queue.shift();
+          if (!next) break;
+          try {
+            await play(next.payload, next.gen);
+          } catch (e: unknown) {
+            ctx.log('error', `sink.playback: ${String(e)}`);
+          } finally {
+            pending = Math.max(0, pending - 1);
+          }
+        }
+      }).catch(() => {});
+    }
+
     return {
       async start() {},
       async onInput(_port, msg) {
@@ -355,31 +399,30 @@ export const sinkPlayback: NodeTypeDef = {
           ctx.log('warn', 'sink.playback: payload não é AudioChunkPayload — descartado');
           return;
         }
-        pending += 1;
-        if (pending > maxQueue) {
-          // deixa tocar o que está, derruba o excedente (latência > 3 falas empilhadas = inútil ao vivo)
+        while (pending >= maxQueue && queue.length > 0) {
+          queue.shift();
           pending -= 1;
           dropped += 1;
           ctx.metrics.counter('sink.playback.dropped', 1);
-          ctx.log('warn', `sink.playback: fila cheia, fala n.${fileNo + maxQueue} + ${dropped} descartadas`);
+        }
+        if (pending >= maxQueue) {
+          dropped += 1;
+          ctx.metrics.counter('sink.playback.dropped', 1);
+          ctx.log('warn', `sink.playback: fila cheia, mantendo a mais recente (${dropped} descartada(s))`);
           return;
         }
-        const myGen = generation;
-        chain = chain
-          .then(() => play(payload, myGen))
-          .then(() => {
-            pending -= 1;
-          })
-          .catch((e: unknown) => {
-            pending -= 1;
-            ctx.log('error', `sink.playback: ${String(e)}`);
-          });
+        queue.push({ payload, gen: generation });
+        pending += 1;
+        if (dropped > 0) ctx.log('warn', `sink.playback: backlog antigo descartado para manter ao vivo (${dropped} total)`);
+        pumpPlay();
       },
       async stop() {
         stopped = true;
+        queue.length = 0;
+        pending = 0;
         // espera a fala em curso terminar (não as demais) e limpa temp
         const dirToClean = dir;
-        await chain.catch(() => {}).then(() => {
+        await pump.catch(() => {}).then(() => {
           if (dirToClean) return rm(dirToClean, { recursive: true, force: true }).catch(() => {});
         });
       },

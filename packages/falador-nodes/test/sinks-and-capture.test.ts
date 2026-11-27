@@ -210,11 +210,13 @@ describe('sink.captions', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test('valida novos params de Output unificado (outputMode, isDefault, language, voice, maxQueue) e capture.ffmpeg isDefault', () => {
+  test('valida novos params de Output unificado (outputMode, isDefault, language, voice, maxQueue, playbackRate) e capture.ffmpeg isDefault', () => {
     assert.ok(sinkCaptions.validateParams!({ outputMode: 'invalid' }).some((e) => e.path === 'params.outputMode'));
     assert.ok(sinkCaptions.validateParams!({ isDefault: 'yes' }).some((e) => e.path === 'params.isDefault'));
     assert.ok(sinkCaptions.validateParams!({ language: 42 }).some((e) => e.path === 'params.language'));
     assert.ok(sinkCaptions.validateParams!({ maxQueue: 0 }).some((e) => e.path === 'params.maxQueue'));
+    assert.ok(sinkCaptions.validateParams!({ playbackRate: 0 }).some((e) => e.path === 'params.playbackRate'));
+    assert.ok(sinkCaptions.validateParams!({ playbackRate: -1 }).some((e) => e.path === 'params.playbackRate'));
     assert.equal(
       sinkCaptions.validateParams!({
         mode: 'callback',
@@ -223,6 +225,7 @@ describe('sink.captions', () => {
         language: 'Portuguese',
         voice: 'female',
         maxQueue: 4,
+        playbackRate: 1.15,
       }).length,
       0,
     );
@@ -339,7 +342,8 @@ describe('sink.playback', () => {
     assert.ok(sinkPlayback.validateParams!({ player: 1 }).some((e) => e.path === 'params.player'));
     assert.ok(sinkPlayback.validateParams!({ muted: 'x' }).some((e) => e.path === 'params.muted'));
     assert.ok(sinkPlayback.validateParams!({ maxQueue: 0 }).some((e) => e.path === 'params.maxQueue'));
-    assert.equal(sinkPlayback.validateParams!({ player: '/bin/true', maxQueue: 2, muted: false }).length, 0);
+    assert.ok(sinkPlayback.validateParams!({ playbackRate: 0 }).some((e) => e.path === 'params.playbackRate'));
+    assert.equal(sinkPlayback.validateParams!({ player: '/bin/true', maxQueue: 2, muted: false, playbackRate: 1.2 }).length, 0);
   });
 
   test('toca WAV com player fake, registra timer e limpa temp', async () => {
@@ -383,25 +387,40 @@ describe('sink.playback', () => {
     assert.equal(warns.length, 2);
   });
 
-  test('maxQueue descarta excedente e conta sink.playback.dropped', async () => {
+  test('maxQueue ao vivo: descarta backlog pendente antigo e mantém o mais recente', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'falador-play-'));
     const marker = join(dir, 'count');
-    // player lento para manter fila ocupada
-    const player = fakePlayerScript(`echo 1 >> "${marker}"; sleep 0.2; exit 0`);
-    const ctx = makeCtx({ player, maxQueue: 1 });
+    // player lento para manter fila ocupada; maxQueue=2 => 1 tocando + 1 pendente
+    const player = fakePlayerScript(`echo 1 >> "${marker}"; sleep 0.25; exit 0`);
+    const ctx = makeCtx({ player, maxQueue: 2 });
     const node = sinkPlayback.create(ctx) as NodeRuntime;
     await node.start();
-    // Primeiro entra (pending=1), segundo enquanto pending==maxQueue deve ser dropado
-    await node.onInput('in', { seq: 1, ts: 1, payload: wavPayload() } as any);
-    await node.onInput('in', { seq: 2, ts: 2, payload: wavPayload() } as any);
-    await node.onInput('in', { seq: 3, ts: 3, payload: wavPayload() } as any);
+    await node.onInput('in', { seq: 1, ts: 1, payload: wavPayload() } as any); // toca
+    await node.onInput('in', { seq: 2, ts: 2, payload: wavPayload() } as any); // pendente
+    await node.onInput('in', { seq: 3, ts: 3, payload: wavPayload() } as any); // derruba seq2, fica pendente
     await waitFor(() => (ctx._counters['sink.playback.dropped'] ?? 0) >= 1, 2000);
     await waitFor(() => existsSync(marker), 3000);
     await node.stop('done');
     assert.ok((ctx._counters['sink.playback.dropped'] ?? 0) >= 1);
-    assert.ok(ctx._logs.some((l) => l.level === 'warn' && l.msg.includes('fila cheia')));
+    assert.ok(ctx._logs.some((l) => l.level === 'warn' && (l.msg.includes('mais recente') || l.msg.includes('backlog antigo descartado'))));
     const lines = readFileSync(marker, 'utf-8').trim().split('\n').filter(Boolean).length;
-    assert.ok(lines >= 1 && lines <= 2, `esperava 1-2 reproduções, veio ${lines}`);
+    assert.ok(lines >= 1 && lines <= 2, `esperava 1-2 reproduções (atual+mais recente), veio ${lines}`);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('playbackRate é passado ao afplay', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'falador-play-rate-'));
+    const argsFile = join(dir, 'args.txt');
+    const player = fakePlayerScript(`echo "$@" > "${argsFile}"; exit 0`);
+    const ctx = makeCtx({ player, maxQueue: 4, playbackRate: 1.25 });
+    const node = sinkPlayback.create(ctx) as NodeRuntime;
+    await node.start();
+    await node.onInput('in', { seq: 1, ts: 1, payload: wavPayload() } as any);
+    await waitFor(() => existsSync(argsFile), 3000);
+    await node.stop('done');
+    const args = readFileSync(argsFile, 'utf-8');
+    assert.match(args, /-r 1\.25/);
+    assert.match(args, /-q 1/);
     rmSync(dir, { recursive: true, force: true });
   });
 
