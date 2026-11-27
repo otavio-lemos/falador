@@ -7,7 +7,7 @@ import {
   Tabs, TabList, Tab, TabPanels, TabPanel, IconButton, Button,
 } from '@carbon/react';
 import { Close, Renew } from '@carbon/icons-react';
-import { PARAM_HELP, type ParamDoc } from '../data';
+import { isAsrLfm3Model, PARAM_HELP, type ParamDoc } from '../data';
 import { isTextModel, isAsrModel, isTtsModel, isStsModel, isDecisionModel } from '../live-utils';
 import type { FaladorNodeData } from '../flow-utils';
 import type { NodeMetrics, RunnerEvent } from '../api';
@@ -30,7 +30,7 @@ function modelsForNode(nodeType: string, models: { omlx: string[]; cache: string
   const mType = (id: string) => typeById.get(id);
   const all = [...models.omlx, ...models.cache.filter((m) => !models.omlx.includes(m))];
   if (nodeType === 'asr.realtime') return all.filter((m) => isAsrModel(m, mType(m)) && !/lfm.*audio/i.test(m));
-  if (nodeType === 'asr.lfm3') return all.filter((m) => /lfm.*audio/i.test(m));
+  if (nodeType === 'asr.realtime.translate') return all.filter((m) => isAsrLfm3Model(m));
   if (nodeType === 'tts.sts') return all.filter((m) => isTtsModel(m, mType(m)) || isStsModel(m, mType(m)));
   if (nodeType === 'decision.llm') return [...models.omlx.filter((m) => isDecisionModel(m, mType(m))), ...models.omlx.filter((m) => isTextModel(m, mType(m)))];
   if (nodeType === 'turn.detector') return models.omlx.filter((m) => isDecisionModel(m, mType(m)));

@@ -15,7 +15,7 @@ export const CATEGORIES: Category[] = [
   { id: 'input', label: 'Input', emoji: '🎙️', accent: '#22d3ee', nodes: ['capture.ffmpeg'] },
   { id: 'transcricao', label: 'Transcription', emoji: '💡', accent: '#14b8a6', nodes: ['asr.realtime'] },
   // Omni/mlx-vlm tem executor e porta próprios (:8092) — cor distinta do mlx-audio (:8090/:8091).
-  { id: 'omni', label: 'Speech Translation', emoji: '🌐', accent: '#3b82f6', nodes: ['asr.lfm3'] },
+  { id: 'omni', label: 'Speech Translation', emoji: '🌐', accent: '#3b82f6', nodes: ['asr.realtime.translate'] },
   { id: 'pensar', label: 'Reasoning', emoji: '🧠', accent: '#8b5cf6', nodes: ['llm.omlx', 'translate.llm'] },
   { id: 'decidir', label: 'Routing', emoji: '🔀', accent: '#f59e0b', nodes: ['turn.detector', 'decision.llm', 'human.approve', 'goal.validator'] },
   { id: 'acoes', label: 'Actions / Connectors', emoji: '⚡', accent: '#f97316', nodes: ['exec.command', 'rag.search', 'tool.mcp', 'tool.workflow', 'tool.web_search', 'tool.crawler', 'agent.tools'] },
@@ -33,7 +33,7 @@ export const NODE_META: Record<string, NodeMeta> = {
   'capture.ffmpeg': { title: 'Input', subtitle: 'Aplicações · Microfone · Chat', desc: 'Única entrada: Aplicações, Microfone ou Chat' },
   'input.chat':    { title: 'Chat Input', subtitle: 'Entrada escrita interativa', desc: 'Campo de prompt para escrever e ligar em nós de texto' },
   'asr.realtime':  { title: 'Speech to Text (STT)', subtitle: 'Voxtral streaming', desc: 'Converte fala em texto enquanto o outro fala' },
-  'asr.lfm3':      { title: 'Speech Translation (S2ST)', subtitle: 'LFM3-Audio', desc: 'Ouve e já traduz sem etapa extra de texto' },
+  'asr.realtime.translate':      { title: 'Speech Translation (S2ST)', subtitle: 'LFM3-Audio', desc: 'Ouve e já traduz sem etapa extra de texto' },
   'llm.omlx':      { title: 'LLM', subtitle: 'Sugestão · Tradução · Resposta', desc: 'Recebe texto e gera resposta, tradução ou sugestão' },
   'translate.llm': { title: 'Translate', subtitle: 'Modelo + idioma (opcional)', desc: 'Traduz texto para o idioma escolhido; selecione — para desabilitar' },
   'agent.tools':   { title: 'Tool-calling Agent', subtitle: 'Loop multi-step · OpenAI tools', desc: 'Chama ferramentas conectadas em múltiplos passos até diagnosticar' },
@@ -69,7 +69,7 @@ export const SHORT_NAMES: Record<string, string> = {
   'capture.ffmpeg': 'Input',
   'input.chat': 'Chat',
   'asr.realtime': 'Transcription',
-  'asr.lfm3': 'Speech Translation',
+  'asr.realtime.translate': 'Speech Translation',
   'llm.omlx': 'LLM',
   'translate.llm': 'Translate',
   'agent.tools': 'Agent',
@@ -109,14 +109,22 @@ export function serviceOfNode(type: string, params?: Record<string, unknown>): '
   ) {
     return 'omlx';
   }
-  if (type === 'tts.sts' || type === 'asr.lfm3') {
+  if (type === 'tts.sts' || type === 'asr.realtime.translate') {
     return String(params?.url ?? '').includes(':8092') ? 'omni' : 'tts';
   }
   return 'web';
 }
 
+/** Modelos aceitos por asr.realtime.translate: LFM3-Audio (:8091) e LFM3-Omni (:8092). */
+export function isAsrLfm3Model(id: string): boolean {
+  return /lfm.*(audio|omni)/i.test(id);
+}
+export function isOmniModel(id: string): boolean {
+  return /lfm.*omni/i.test(id);
+}
+
 /** Runtime + porta REAL do serviço usado pelo nó, para exibir no Runner bar e nos logs.
- *  `params` é necessário: asr.lfm3/tts.sts podem apontar para :8092 (mlx-vlm/Omni)
+ *  `params` é necessário: asr.realtime.translate/tts.sts podem apontar para :8092 (mlx-vlm/Omni)
  *  em vez de :8091 (mlx-audio) — sem isso o Omni aparecia como mlx-audio. */
 export function runtimePortOfNode(type: string, params?: Record<string, unknown>): string {
   if (type === 'sink.captions' && params?.outputMode !== 'speak') return 'NODE.JS:8787';
@@ -183,7 +191,7 @@ export const PARAM_HELP: Record<string, Record<string, ParamDoc>> = {
     emitInterruptOnSpeech: { help: 'emite barge-in (interrupt) quando fala recomeça para abortar geração obsoleta', def: 'false', control: 'toggle' },
     bargeInDebounceMs: { help: 'duração mínima de fala sustentada (ms) para disparar interrupt (filtra ruído)', def: '300', control: 'slider', min: 50, max: 1500, step: 50, unit: 'ms' },
   },
-  'asr.lfm3': {
+  'asr.realtime.translate': {
     url: { help: 'sidecar de tradução (POST /asr-translate)', def: 'http://127.0.0.1:8091' },
     model: { help: 'modelo multimodal LFM3-Audio', def: 'LiquidAI--LFM3-Audio-2B-MLX-8bit', control: 'model' },
     targetLanguage: { help: 'idioma de saída (vazio = só transcreve no idioma original)', def: '', control: 'dropdown', options: [{ val: '', label: '— (só transcrever)' }, ...LANGS] },

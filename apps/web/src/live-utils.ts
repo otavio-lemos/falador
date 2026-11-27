@@ -189,7 +189,7 @@ export function deriveStages(flow: Flow): Stage[] {
         kind: 'model-asr',
         value: String(p.model ?? ''),
       });
-    } else if (n.type === 'asr.lfm3') {
+    } else if (n.type === 'asr.realtime.translate') {
       out.push({
         key: `asr-lfm3-${n.id}`,
         label: 'Speech Translation',
@@ -545,7 +545,7 @@ export function inferOutputLanguage(flow: Flow, outputNodeId: string): string {
     seen.add(id);
     const n = byId.get(id);
     if (!n) continue;
-    if ((n.type === 'translate.llm' || n.type === 'llm.omlx' || n.type === 'asr.lfm3') && typeof n.params?.targetLanguage === 'string') {
+    if ((n.type === 'translate.llm' || n.type === 'llm.omlx' || n.type === 'asr.realtime.translate') && typeof n.params?.targetLanguage === 'string') {
       const lang = n.params.targetLanguage.trim();
       if (lang && lang !== '-' && lang !== '—') return lang;
     }

@@ -316,7 +316,7 @@ describe('falador-nodes — integração ao vivo (gate por porta)', () => {
 
 test('N5: catálogo de nós reais registrado', () => {
   const r = reg();
-  for (const t of ['llm.omlx', 'tts.sts', 'asr.realtime', 'asr.lfm3', 'capture.ffmpeg', 'sink.captions', 'sink.playback']) {
+  for (const t of ['llm.omlx', 'tts.sts', 'asr.realtime', 'asr.realtime.translate', 'capture.ffmpeg', 'sink.captions', 'sink.playback']) {
     assert.ok(r.has(t), `tipo ${t} registrado`);
   }
 });
@@ -411,10 +411,10 @@ test('N9: decision.llm roteia o payload para a porta da opção escolhida', asyn
   srv.close();
 });
 
-// N10 — asr.lfm3 ao vivo: fala EN real (sidecar /tts) → tradução NATIVA PT (sidecar
+// N10 — asr.realtime.translate ao vivo: fala EN real (sidecar /tts) → tradução NATIVA PT (sidecar
 // /asr-translate, LFM3-Audio task='chat') DENTRO do engine. Falando em prova:
 // 4,64 s de áudio EN → 'Olá, posso te ouvir?...' PT em 0,31 s (~15× realtime, 2026-11-19).
-test('N10: asr.lfm3 tradução nativa EN→PT ao vivo dentro do engine', async () => {
+test('N10: asr.realtime.translate tradução nativa EN→PT ao vivo dentro do engine', async () => {
   const sidecarUp = await probeTcp(8091);
   if (!sidecarUp) return; // sidecar fora do ar: nada a provar aqui (live test)
   const fraseEn = 'This is a live test. The quick brown fox jumps over the lazy dog.';
@@ -453,7 +453,7 @@ test('N10: asr.lfm3 tradução nativa EN→PT ao vivo dentro do engine', async (
       // flushSec 10: a janela precisa caber a utterance INTEIRA — corte no meio da frase
       // faz o LFM3-Audio transcrever o fragmento em vez de traduzir (medido 2026-11-19:
       // áudio 4,64 s, janela 3 s → "O Quick Brown Fox" sem traduzir; inteiro → PT completo).
-      { id: 'asr3', type: 'asr.lfm3', params: { url: 'http://127.0.0.1:8091', flushSec: 10, sampleRateHz: sampleRate } },
+      { id: 'asr3', type: 'asr.realtime.translate', params: { url: 'http://127.0.0.1:8091', flushSec: 10, sampleRateHz: sampleRate } },
       { id: 'snk', type: 'sink.collect' },
     ],
     edges: [

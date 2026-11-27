@@ -20,10 +20,27 @@ test('Speech Translation com LFM3-Omni mostra MLX-VLM:8092, não mlx-audio', asy
   expect(runnerAccent).toBe('#3b82f6');
 
   await page.getByRole('button', { name: 'Builder' }).click();
-  const node = page.locator('.fnode').filter({ hasText: 'asr.lfm3' });
+  const node = page.locator('.fnode').filter({ hasText: 'asr.realtime.translate' });
   await expect(node).toHaveCount(1);
   const builderAccent = await node.evaluate((el) => getComputedStyle(el).getPropertyValue('--accent').trim());
   expect(builderAccent).toBe('#3b82f6');
+});
+
+test('trocar modelo do Omni mantém a opção Omni no dropdown e troca a porta', async ({ page }) => {
+  await openRunner(page, 'tradutor-omni');
+  const st = page.locator('.stage-dd').filter({ hasText: 'Speech Translation' });
+  const modelCombo = st.getByRole('combobox').nth(1);
+
+  await modelCombo.click();
+  await expect(page.getByRole('option').filter({ hasText: 'LFM3-Omni-2B-MLX-8bit' })).toHaveCount(1);
+  await page.getByRole('option').filter({ hasText: /^LiquidAI\/LFM3-Audio/ }).first().click();
+  await expect(stage(page, 'Speech Translation')).toHaveText('MLX-AUDIO:8091');
+
+  // O bug: depois de escolher outro, o Omni sumia do dropdown e não dava pra voltar.
+  await modelCombo.click();
+  await expect(page.getByRole('option').filter({ hasText: 'LFM3-Omni-2B-MLX-8bit' })).toHaveCount(1);
+  await page.getByRole('option').filter({ hasText: 'LFM3-Omni-2B-MLX-8bit' }).first().click();
+  await expect(stage(page, 'Speech Translation')).toHaveText('MLX-VLM:8092');
 });
 
 test('Transcription/Translate/Output mostram as portas dos respectivos serviços', async ({ page }) => {

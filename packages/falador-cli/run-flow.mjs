@@ -157,7 +157,7 @@ async function main() {
   // ASR sem sink.captions downstream ainda precisa aparecer na conversa web.
   // Se já houver sink no caminho, ele continua sendo a única fonte (sem duplicar STT).
   for (const n of flow.nodes ?? []) {
-    if ((n.type === 'asr.realtime' || n.type === 'asr.lfm3')
+    if ((n.type === 'asr.realtime' || n.type === 'asr.realtime.translate')
       && !hasCaptionSinkDownstream(flow, n.id)
       && !(flow.bindings[n.id]?.__onCaption)) {
       flow.bindings[n.id] = {

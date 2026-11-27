@@ -51,7 +51,7 @@ import {
 } from '@carbon/icons-react';
 import type { Runner, Gate, AgentStep, Caption, AuditEvent } from '../useRunner';
 import { exportSession, gateAction, type Flow, type ContextDoc, type ServiceStatusMap } from '../api';
-import { CATEGORIES } from '../data';
+import { CATEGORIES, isAsrLfm3Model } from '../data';
 import { openPopout, type PopoutPanel } from '../popout';
 import {
   deriveStages,
@@ -217,7 +217,7 @@ function stageItems(stage: Stage, models: { omlx: string[]; cache: string[]; det
     vals = [...omlxAsr, ...cacheAsr.filter((m) => !omlxAsr.includes(m))];
   } else if (stage.kind === 'model-asr-lfm3') {
     const combined = [...models.omlx, ...models.cache.filter((m) => !models.omlx.includes(m))];
-    vals = combined.filter((m) => /lfm.*audio/i.test(m));
+    vals = combined.filter((m) => isAsrLfm3Model(m));
     if (vals.length === 0) vals = ['LiquidAI--LFM3-Audio-2B-MLX-8bit'];
   } else if (stage.kind === 'model-llm' || stage.kind === 'model-translate') {
     vals = models.omlx.filter((m) => isTextModel(m, mType(m)));
@@ -730,7 +730,7 @@ export function LiveView({
         nodeId: sourceId,
         title: label(sourceId),
         subtitle: kind === 'stt'
-          ? (source?.type === 'asr.lfm3' ? 'STT + tradução · ao vivo' : 'STT · ao vivo')
+          ? (source?.type === 'asr.realtime.translate' ? 'STT + tradução · ao vivo' : 'STT · ao vivo')
           : 'Resposta · ao vivo',
         text: caption.text,
         ts: caption.ts,
@@ -759,14 +759,14 @@ export function LiveView({
         nodeId: sourceId,
         title: sourceLabel(c.nodeId),
         subtitle: isStt
-          ? (source?.type === 'asr.lfm3' ? 'STT + tradução' : 'STT')
+          ? (source?.type === 'asr.realtime.translate' ? 'STT + tradução' : 'STT')
           : source?.type === 'translate.llm' || (source?.type === 'llm.omlx' && source.params.targetLanguage !== undefined)
             ? 'Tradução'
             : 'Resposta',
         text: c.text,
         ts: c.ts,
         tag: isStt
-          ? (captureApp || (source?.type === 'asr.lfm3' ? 'Tradução' : 'ASR'))
+          ? (captureApp || (source?.type === 'asr.realtime.translate' ? 'Tradução' : 'ASR'))
           : (source?.type === 'agent.tools' ? 'Especialista' : source?.type === 'translate.llm' ? 'Tradução' : 'Resposta'),
         nodeType: source?.type,
       });

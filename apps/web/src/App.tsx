@@ -9,6 +9,7 @@ import { BuilderView } from './views/BuilderView';
 import { LiveView } from './views/LiveView';
 import { useRunner } from './useRunner';
 import { fetchCatalog, fetchFlows, fetchFlow, fetchModels, fetchApps, fetchContext, saveFlow, deleteFlow, uploadDoc, removeDoc, clearLogs, resetHistory, type Catalog, type Flow, type ContextDoc, type ServiceStatusMap } from './api';
+import { isOmniModel } from './data';
 import { applyContext, inferOutputLanguage, isDecisionModel, resolveDefaultNodeId, sanitizeFlow } from './live-utils';
 
 type InputMode = 'apps' | 'mic' | 'chat';
@@ -246,7 +247,7 @@ export function App() {
 
   const applyInputMode = (f: Flow, mode: InputMode, targetNodeId?: string): Flow => {
     const targetId = targetNodeId ?? resolveDefaultNodeId(f, 'capture.ffmpeg');
-    const asrTurnTypes = new Set(['asr.realtime', 'asr.lfm3', 'turn.detector']);
+    const asrTurnTypes = new Set(['asr.realtime', 'asr.realtime.translate', 'turn.detector']);
     const asrTurnIds = new Set(f.nodes.filter((n) => asrTurnTypes.has(n.type)).map((n) => n.id));
     const voiceOnlySinkIds = new Set<string>();
     for (const n of f.nodes) {
@@ -464,7 +465,7 @@ export function App() {
     const sourceNode = liveFlow.nodes.find((n) => n.id === nodeId);
     const syncSinkLang =
       sourceNode &&
-      (sourceNode.type === 'asr.lfm3' || sourceNode.type === 'translate.llm' || sourceNode.type === 'llm.omlx') &&
+      (sourceNode.type === 'asr.realtime.translate' || sourceNode.type === 'translate.llm' || sourceNode.type === 'llm.omlx') &&
       param === 'targetLanguage' &&
       typeof value === 'string' &&
       value.trim() !== '' &&
@@ -499,8 +500,14 @@ export function App() {
         if (n.type === 'decision.llm' && param === 'model') {
           nextParams.mode = isDecisionModel(String(value)) ? 'systemone' : 'chat';
         }
-        if (n.type === 'asr.lfm3' && param === 'targetLanguage') {
+        if (n.type === 'asr.realtime.translate' && param === 'targetLanguage') {
           delete nextParams.instruction;
+        }
+        // Trocar o modelo do Speech Translation muda o executor: Omni = :8092 (mlx-vlm),
+        // LFM3-Audio = :8091 (mlx-audio). Só mexe em URL padrão; endpoint customizado fica.
+        if (n.type === 'asr.realtime.translate' && param === 'model' && typeof value === 'string' &&
+            (nextParams.url === 'http://127.0.0.1:8091' || nextParams.url === 'http://127.0.0.1:8092')) {
+          nextParams.url = isOmniModel(value) ? 'http://127.0.0.1:8092' : 'http://127.0.0.1:8091';
         }
         if (n.type === 'llm.omlx' && param === 'targetLanguage') {
           delete nextParams.template;

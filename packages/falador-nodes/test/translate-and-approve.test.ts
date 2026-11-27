@@ -1,4 +1,4 @@
-// Testes para translate.llm, human.approve (mode auto/manual) e asr.lfm3 (targetLanguage)
+// Testes para translate.llm, human.approve (mode auto/manual) e asr.realtime.translate (targetLanguage)
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -24,7 +24,7 @@ function reg() {
     .register(sinkCollect);
 }
 
-describe('translate.llm, human.approve e asr.lfm3', () => {
+describe('translate.llm, human.approve e asr.realtime.translate', () => {
   test('entrevista: asr.out -> turn.detector -> agente.parcs valida e não força inglês', () => {
     const raw = JSON.parse(readFileSync(fileURLToPath(new URL('../../../apps/tui/flows/entrevista.json', import.meta.url)), 'utf-8')) as FlowSpec;
     const bindings: Record<string, Record<string, unknown>> = {};
@@ -194,7 +194,7 @@ describe('translate.llm, human.approve e asr.lfm3', () => {
     assert.deepEqual(manualCollected.received.map((r) => r.payload), ['APROVADO:resp-1']);
   });
 
-  test('asr.lfm3 ajusta instruction conforme targetLanguage ("-" vs "English")', async () => {
+  test('asr.realtime.translate ajusta instruction conforme targetLanguage ("-" vs "English")', async () => {
     const seenInstructions: string[] = [];
     const srv = await new Promise<{ url: string; close(): Promise<void> }>((resolve) => {
       const s = http.createServer((req, res) => {
@@ -238,7 +238,7 @@ describe('translate.llm, human.approve e asr.lfm3', () => {
           stopWhenSourcesDone: true,
           nodes: [
             { id: 'src', type: 'test.pcm', params: {} },
-            { id: 'asr', type: 'asr.lfm3', params: { url: srv.url, targetLanguage, flushSec: 10 } },
+            { id: 'asr', type: 'asr.realtime.translate', params: { url: srv.url, targetLanguage, flushSec: 10 } },
             { id: 'snk', type: 'sink.collect' },
           ],
           edges: [

@@ -1,4 +1,4 @@
-// falador-nodes — asr.lfm3: transcrição+TRADUÇÃO NATIVA por utterance (LFM3-Audio task='chat').
+// falador-nodes — asr.realtime.translate: transcrição+TRADUÇÃO NATIVA por utterance (LFM3-Audio task='chat').
 // Diferença do asr.realtime (Voxtral): Voxtral não traduz (medido, AGENTS.md §4);
 // LFM3-Audio traduz via messages com áudio tipado — mas NÃO é streaming.
 // ENTRADA:  in (pcm16k): Uint8Array s16le mono 16 kHz (capture.ffmpeg) — o nó embrulha em WAV
@@ -13,7 +13,7 @@ const DEFAULT_INSTRUCTION =
   'Transcribe the audio and translate it to Brazilian Portuguese. Output only the translation, nothing else.';
 
 export const asrLfm3: NodeTypeDef = {
-  type: 'asr.lfm3',
+  type: 'asr.realtime.translate',
   paramNames: ['url', 'model', 'targetLanguage', 'instruction', 'sampleRateHz', 'flushSec', 'timeoutMs', 'maxTranslateChars'],
   bindingNames: ['__onCaption'],
   inputs: [{ name: 'in', type: 'pcm16k' }],
@@ -101,13 +101,13 @@ export const asrLfm3: NodeTypeDef = {
           // janela pendente sempre se perde.
           fromStop ? undefined : ctx.signal,
         );
-        ctx.metrics.timer('asr.lfm3.ms', Date.now() - t0);
-        ctx.metrics.counter('asr.lfm3.seconds', seconds);
+        ctx.metrics.timer('asr.realtime.translate.ms', Date.now() - t0);
+        ctx.metrics.counter('asr.realtime.translate.seconds', seconds);
         let text = '';
         try {
           text = String((JSON.parse(new TextDecoder().decode(raw)) as { text?: string }).text ?? '');
         } catch {
-          ctx.log('error', 'asr.lfm3: resposta não-JSON do sidecar');
+          ctx.log('error', 'asr.realtime.translate: resposta não-JSON do sidecar');
         }
         text = text.slice(0, maxTranslateChars).trim();
         if (text) {
@@ -120,8 +120,8 @@ export const asrLfm3: NodeTypeDef = {
       } catch (e: unknown) {
         const err = e as Error;
         if (err?.name === 'AbortError' || ctx.signal.aborted) return;
-        ctx.log('error', `asr.lfm3 falhou: ${err?.message ?? String(e)}`);
-        ctx.metrics.counter('asr.lfm3.errors', 1);
+        ctx.log('error', `asr.realtime.translate falhou: ${err?.message ?? String(e)}`);
+        ctx.metrics.counter('asr.realtime.translate.errors', 1);
       } finally {
         inFlight = false;
       }

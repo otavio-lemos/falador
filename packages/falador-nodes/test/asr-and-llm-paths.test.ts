@@ -221,9 +221,9 @@ describe('sse.ts', () => {
   });
 });
 
-// ---- asr.lfm3 --------------------------------------------------------------
+// ---- asr.realtime.translate --------------------------------------------------------------
 
-describe('asr.lfm3', () => {
+describe('asr.realtime.translate', () => {
   test('valida params', () => {
     assert.ok(asrLfm3.validateParams!({ url: 1 }).some((e) => e.path === 'params.url'));
     assert.ok(asrLfm3.validateParams!({ flushSec: 0 }).some((e) => e.path === 'params.flushSec'));
@@ -252,7 +252,7 @@ describe('asr.lfm3', () => {
       assert.equal(ctx._emitted[0].port, 'out');
       assert.deepEqual(captions, [{ text: 'olá mundo', final: true }]);
       assert.ok(bodies[0].audioB64);
-      assert.ok((ctx._timers['asr.lfm3.ms']?.length ?? 0) >= 1);
+      assert.ok((ctx._timers['asr.realtime.translate.ms']?.length ?? 0) >= 1);
       await node.stop('done');
     } finally { await srv.close(); }
   });
@@ -340,9 +340,9 @@ describe('asr.lfm3', () => {
       const node = asrLfm3.create(ctx) as NodeRuntime;
       await node.start();
       await node.onInput('in', { seq: 1, ts: 1, payload: pcm16(3200) } as any);
-      await waitFor(() => (ctx._counters['asr.lfm3.errors'] ?? 0) >= 1 || ctx._logs.some((l) => l.level === 'error'), 3000);
+      await waitFor(() => (ctx._counters['asr.realtime.translate.errors'] ?? 0) >= 1 || ctx._logs.some((l) => l.level === 'error'), 3000);
       assert.equal(ctx._emitted.length, 0);
-      assert.ok((ctx._counters['asr.lfm3.errors'] ?? 0) >= 1);
+      assert.ok((ctx._counters['asr.realtime.translate.errors'] ?? 0) >= 1);
       await node.stop('done');
     } finally { await srv.close(); }
   });
