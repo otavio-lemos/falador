@@ -20,6 +20,7 @@ apps/web/dist/
 context/
 context/docs.json
 sessions/
+reports/
 logs/exec-audit.jsonl
 logs/audit/
 packages/falador-cli/logs/

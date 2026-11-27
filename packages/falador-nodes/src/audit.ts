@@ -21,6 +21,8 @@ export interface GoalValidationResult {
   confidence: number;
   gaps: string[];
   nextActions: string[];
+  /** true = falha TÉCNICA do avaliador (HTTP/timeout/JSON ilegível), não uma lacuna real do objetivo. */
+  validatorError?: boolean;
 }
 
 export interface AuditEvent {

@@ -29,8 +29,10 @@ OMLX_KEY_ARG=""
 
 # Lista completa: todos os serviços residentes do projeto (run.md §1).
 # Formato: nome|porta|health_path|comando|timeout_s
+# Nota: NÃO passar --model-dir para o omlx se ~/.omlx/settings.json já existir, pois o omlx
+# persiste flags de CLI por cima do settings.json (apagando model_dirs como ~/.lmstudio/models).
 SERVICES=(
-  "omlx|8080|/v1/models|omlx serve --model-dir \"$HOME/.omlx/models\" --host 127.0.0.1 --port 8080${OMLX_KEY_ARG}|30"
+  "omlx|8080|/v1/models|omlx serve --host 127.0.0.1 --port 8080${OMLX_KEY_ARG}|30"
   "asr|8090|/v1/models|\"$VENV_PYTHON\" \"$VENV_DIR/lib/python3.12/site-packages/mlx_audio/server.py\" --host 127.0.0.1 --port 8090 --realtime-model \"$SNAP_VOXTRAL\"|60"
   "tts|8091|/health|\"$VENV_PYTHON\" services/sts-sidecar.py --model \"$SNAP_LFM3_AUDIO\" --port 8091|30"
   "web|8787|/api/catalog|node apps/web-server.mjs|15"

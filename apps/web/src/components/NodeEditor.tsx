@@ -24,14 +24,18 @@ interface Props {
   onRefreshApps: () => void;
 }
 
-/** Lista de modelos filtrada pela capacidade do nó. */
-function modelsForNode(nodeType: string, models: { omlx: string[]; cache: string[] }): string[] {
+/** Lista de modelos filtrada pela capacidade do nó (usando model_type de /v1/models do omlx). */
+function modelsForNode(nodeType: string, models: { omlx: string[]; cache: string[]; details?: { id: string; model_type: string }[] }): string[] {
+  const typeById = new Map<string, string>((models.details ?? []).map((d) => [d.id, d.model_type]));
+  const mType = (id: string) => typeById.get(id);
   const all = [...models.omlx, ...models.cache.filter((m) => !models.omlx.includes(m))];
-  if (nodeType === 'asr.realtime' || nodeType === 'asr.lfm3') return all.filter(isAsrModel);
-  if (nodeType === 'tts.sts') return all.filter((m) => isTtsModel(m) || isStsModel(m));
-  if (nodeType === 'decision.llm') return [...all.filter(isDecisionModel), ...all.filter(isTextModel)];
-  if (nodeType === 'turn.detector') return all.filter(isDecisionModel);
-  if (nodeType === 'llm.omlx' || nodeType === 'translate.llm' || nodeType === 'agent.tools') return all.filter(isTextModel);
+  if (nodeType === 'asr.realtime' || nodeType === 'asr.lfm3') return all.filter((m) => isAsrModel(m, mType(m)));
+  if (nodeType === 'tts.sts') return all.filter((m) => isTtsModel(m, mType(m)) || isStsModel(m, mType(m)));
+  if (nodeType === 'decision.llm') return [...models.omlx.filter((m) => isDecisionModel(m, mType(m))), ...models.omlx.filter((m) => isTextModel(m, mType(m)))];
+  if (nodeType === 'turn.detector') return models.omlx.filter((m) => isDecisionModel(m, mType(m)));
+  if (nodeType === 'llm.omlx' || nodeType === 'translate.llm' || nodeType === 'agent.tools' || nodeType === 'goal.validator') {
+    return models.omlx.filter((m) => isTextModel(m, mType(m)));
+  }
   return all;
 }
 

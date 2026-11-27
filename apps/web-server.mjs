@@ -54,6 +54,14 @@ const PORT = Number(process.env.FALADOR_WEB_PORT ?? 8787);
       }
     } catch { /* arquivo ausente nesta candidata — tenta a próxima */ }
   }
+  // Fallback: lê auth.api_key de ~/.omlx/settings.json se FALADOR_OMLX_API_KEY não estiver no env
+  if (!process.env.FALADOR_OMLX_API_KEY) {
+    try {
+      const omlxSettings = JSON.parse(readFileSync(join(process.env.HOME ?? '', '.omlx', 'settings.json'), 'utf8'));
+      const k = typeof omlxSettings?.auth?.api_key === 'string' ? omlxSettings.auth.api_key.trim() : '';
+      if (k) process.env.FALADOR_OMLX_API_KEY = k;
+    } catch { /* sem settings.json local */ }
+  }
 }
 
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml' };
@@ -933,21 +941,50 @@ async function handleApi(req, res, pathname) {
     return json(res, 200, { services: { web: true, asr, omlx, tts }, ts: Date.now() }, { 'Cache-Control': 'no-store' }), true;
   }
   if (pathname === '/api/models' && req.method === 'GET') {
-    // REUTILIZA serviços que existem: /v1/models do omlx (:8080) + cache HF local (nomes de dir).
-    const omlx = await new Promise((resolve) => {
+    // Fonte única: GET /v1/models do omlx (:8080) com model_type de cada modelo.
+    const omlxData = await new Promise((resolve) => {
       let out = '';
       const h = omlxGet(`${getOmlxUrl()}/v1/models`, { timeout: 2500 }, (r) => {
         r.on('data', (d) => (out += d));
-        r.on('end', () => { try { resolve(JSON.parse(out).data.map((m) => m.id)); } catch { resolve([]); } });
+        r.on('end', () => {
+          try {
+            const parsed = JSON.parse(out);
+            resolve(Array.isArray(parsed?.data) ? parsed.data : []);
+          } catch { resolve([]); }
+        });
       });
       h.on('error', () => resolve([]));
       h.on('timeout', () => { h.destroy(); resolve([]); });
     });
+    const omlx = omlxData.map((m) => m.id).filter(Boolean);
+    const details = omlxData
+      .filter((m) => m && typeof m.id === 'string')
+      .map((m) => ({
+        id: m.id,
+        model_type: typeof m.model_type === 'string' ? m.model_type : 'llm',
+        max_model_len: typeof m.max_model_len === 'number' ? m.max_model_len : null,
+      }));
     const cacheDir = join(process.env.HOME ?? '', '.cache', 'huggingface', 'hub');
     const cache = existsSync(cacheDir)
-      ? readdirSync(cacheDir).filter((d) => d.startsWith('models--')).map((d) => d.replace(/^models--/, '').replace(/--/g, '/'))
+      ? readdirSync(cacheDir)
+          .filter((d) => {
+            if (!d.startsWith('models--')) return false;
+            const snapsDir = join(cacheDir, d, 'snapshots');
+            if (!existsSync(snapsDir)) return false;
+            try {
+              for (const snap of readdirSync(snapsDir)) {
+                const snapPath = join(snapsDir, snap);
+                const files = readdirSync(snapPath);
+                if (files.some((f) => f.endsWith('.safetensors') || f.endsWith('.gguf') || f.endsWith('.npz'))) {
+                  return true;
+                }
+              }
+            } catch { /* snapshot inacessível */ }
+            return false;
+          })
+          .map((d) => d.replace(/^models--/, '').replace(/--/g, '/'))
       : [];
-    return json(res, 200, { omlx, cache }), true;
+    return json(res, 200, { omlx, cache, details }, { 'Cache-Control': 'no-store' }), true;
   }
   if (pathname === '/api/apps' && req.method === 'GET') {
     // apps rodando via ScreenCaptureKit (--list) — picker de captura por app (W10)

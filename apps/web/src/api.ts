@@ -53,8 +53,18 @@ export async function deleteFlow(name: string): Promise<void> {
   const r = await fetch('/api/flows/' + encodeURIComponent(name), { method: 'DELETE' });
   if (!r.ok) throw new Error('falha ao remover workflow');
 }
-export async function fetchModels(): Promise<{ omlx: string[]; cache: string[] }> {
-  return (await fetch('/api/models')).json();
+export interface OmlxModelDetail {
+  id: string;
+  model_type: string;
+  max_model_len?: number | null;
+}
+export interface ModelsResponse {
+  omlx: string[];
+  cache: string[];
+  details?: OmlxModelDetail[];
+}
+export async function fetchModels(): Promise<ModelsResponse> {
+  return (await fetch(`/api/models?_t=${Date.now()}`, { cache: 'no-store' })).json();
 }
 export interface MicInfo { id: number; name: string; sampleRate: number }
 export async function fetchApps(): Promise<string[]> {

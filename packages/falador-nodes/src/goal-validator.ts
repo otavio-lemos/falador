@@ -47,35 +47,61 @@ Seja rigoroso: achieved=true só se a evidência PROVAR conclusão completa de T
 Evidência ausente, ambígua ou só parcial ⇒ achieved=false com gaps concretos.
 Evidência vazia ou plano incompleto ⇒ achieved=false, mesmo que você discorde.`;
 
-function tryParseValidation(text: string): GoalValidation | null {
+/** Candidatos a objeto JSON: texto inteiro, code-fence e cada bloco {...} balanceado (modelos que escrevem prosa antes/depois). */
+function jsonCandidates(text: string): string[] {
   const trimmed = text.trim();
-  let candidate = trimmed;
-  if (!candidate.startsWith('{')) {
-    const match = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    if (match) candidate = match[1].trim();
-  }
-  if (!candidate.startsWith('{')) return null;
-  try {
-    const parsed: unknown = JSON.parse(candidate);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      const obj = parsed as Partial<GoalValidation>;
-      if (typeof obj.achieved === 'boolean' && typeof obj.confidence === 'number') {
-        return {
-          achieved: obj.achieved,
-          confidence: obj.confidence,
-          gaps: Array.isArray(obj.gaps) ? obj.gaps.map(String) : [],
-          nextActions: Array.isArray(obj.nextActions) ? obj.nextActions.map(String) : [],
-        };
+  const out: string[] = [];
+  if (trimmed.startsWith('{')) out.push(trimmed);
+  const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) out.push(fence[1].trim());
+  for (let start = trimmed.indexOf('{'); start >= 0; start = trimmed.indexOf('{', start + 1)) {
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    for (let i = start; i < trimmed.length; i++) {
+      const ch = trimmed[i];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (ch === '\\') esc = true;
+        else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') inStr = true;
+      else if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0) { out.push(trimmed.slice(start, i + 1)); break; }
       }
     }
-  } catch {
-    /* não é JSON válido */
+  }
+  return out;
+}
+
+function tryParseValidation(text: string): GoalValidation | null {
+  for (const candidate of jsonCandidates(text)) {
+    try {
+      const parsed: unknown = JSON.parse(candidate);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const obj = parsed as Partial<GoalValidation>;
+        if (typeof obj.achieved === 'boolean' && typeof obj.confidence === 'number') {
+          return {
+            achieved: obj.achieved,
+            confidence: obj.confidence,
+            gaps: Array.isArray(obj.gaps) ? obj.gaps.map(String) : [],
+            nextActions: Array.isArray(obj.nextActions) ? obj.nextActions.map(String) : [],
+          };
+        }
+      }
+    } catch {
+      /* candidato não é JSON válido — tenta o próximo */
+    }
   }
   return null;
 }
 
+/** Falha TÉCNICA do avaliador (não é lacuna do objetivo): fail-closed + validatorError. */
 function failClosed(reason: string): GoalValidation {
-  return { achieved: false, confidence: 0, gaps: [reason], nextActions: ['Coletar evidência real e tentar novamente'] };
+  return { achieved: false, confidence: 0, gaps: [reason], nextActions: ['Coletar evidência real e tentar novamente'], validatorError: true };
 }
 
 /** Calibra deterministicamente a confiança do modelo contra evidência/plano reais (sem LLM extra). */
@@ -140,7 +166,9 @@ export async function validateGoal(o: {
         model: o.model,
         messages,
         temperature: 0.1,
-        max_tokens: 512,
+        // 512 era consumido inteiro em reasoning por modelos que ignoram enable_thinking
+        // (medido: Inkling-2-Mini, finish_reason=length, content vazio).
+        max_tokens: 2048,
         stream: false,
         chat_template_kwargs: { enable_thinking: false },
       }),
@@ -150,8 +178,15 @@ export async function validateGoal(o: {
       const txt = await res.text().catch(() => '');
       return failClosed(`Validador indisponível: HTTP ${res.status} ${txt.slice(0, 120)}`);
     }
-    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-    content = data.choices?.[0]?.message?.content ?? '';
+    const data = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string | null; reasoning_content?: string | null } }>;
+    };
+    const msg = data.choices?.[0]?.message;
+    content = typeof msg?.content === 'string' ? msg.content : '';
+    // Modelo de raciocínio pode deixar o JSON só no reasoning_content.
+    if (!tryParseValidation(content) && typeof msg?.reasoning_content === 'string') {
+      content = `${content}\n${msg.reasoning_content}`;
+    }
   } catch (e) {
     return failClosed(`Erro no validador: ${(e as Error)?.message ?? String(e)}`);
   }

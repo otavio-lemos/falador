@@ -264,3 +264,30 @@ test('nó goal.validator: flow source -> goal.validator -> collect emite o JSON 
     assert.equal(out.confidence, 0.9);
   } finally { await srv.close(); }
 });
+
+test('validateGoal: extrai JSON cercado de prosa e de reasoning_content; falha técnica marca validatorError', async () => {
+  const prose = await validateWith(`Analisando os dados...\n${VALID}\nTudo verificado.`, { evidence: ['e1', 'e2'] });
+  assert.equal(prose.achieved, true);
+  assert.equal(prose.confidence, 0.9);
+
+  const srvReasoning = await httpServer((_req, _body, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: '', reasoning_content: VALID } }] }));
+  });
+  try {
+    const r = await validateGoal({
+      baseUrl: srvReasoning.url, model: 'm', goal: 'g', evidence: ['e1', 'e2'], signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(r.achieved, true);
+    assert.equal(r.validatorError, undefined);
+  } finally { await srvReasoning.close(); }
+
+  const srvErr = await httpServer((_req, _body, res) => { res.statusCode = 500; res.end('boom'); });
+  try {
+    const r = await validateGoal({
+      baseUrl: srvErr.url, model: 'm', goal: 'g', evidence: ['e1', 'e2'], signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(r.achieved, false);
+    assert.equal(r.validatorError, true);
+  } finally { await srvErr.close(); }
+});

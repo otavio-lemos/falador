@@ -950,6 +950,61 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   padding-inline-end: $spacing-02;
   margin-inline-end: $spacing-01;
 }
+.live-chat-entry--agent .live-chat-block-body,
+.live-chat-entry--agent .live-chat-entry-body,
+.live-chat-entry--gate:has(.live-chat-goal-confirm) .live-chat-block-body {
+  align-items: flex-start;
+}
+.live-chat-entry--gate:has(.live-chat-goal-confirm) .live-chat-entry-body {
+  flex-direction: column;
+  align-items: stretch;
+}
+.live-chat-goal-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-03;
+  min-width: 0;
+}
+.live-chat-markdown {
+  flex: 1 1 auto;
+  min-width: 0;
+  @include type-style('body-compact-01');
+  color: $txt-1;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  h1, h2, h3, h4, h5, h6 {
+    font-size: 13px;
+    font-weight: 600;
+    margin: $spacing-02 0 $spacing-01;
+    &:first-child { margin-top: 0; }
+  }
+  p { margin: 0 0 $spacing-02; &:last-child { margin-bottom: 0; } }
+  ul, ol { margin: 0 0 $spacing-02; padding-left: $spacing-05; &:last-child { margin-bottom: 0; } }
+  hr { border: 0; border-top: 1px solid $border-1; margin: $spacing-02 0; }
+  pre {
+    background: $bg-bar;
+    border: 1px solid $border-1;
+    padding: $spacing-02 $spacing-03;
+    overflow-x: auto;
+    margin: $spacing-02 0;
+    @include type-style('code-01');
+  }
+  code { @include type-style('code-01'); }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: $spacing-02 0;
+    font-size: 12px;
+    th, td {
+      border: 1px solid $border-1;
+      padding: $spacing-01 $spacing-02;
+      text-align: left;
+    }
+    th { background: $bg-bar; font-weight: 600; }
+  }
+}
+
 .live-chat-entry-text {
   @include type-style('body-compact-01');
   color: $txt-1;

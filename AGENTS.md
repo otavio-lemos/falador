@@ -1,6 +1,6 @@
 # AGENTS.md — Falador
 
-> **MEMÓRIA VIVA DO PROJETO. Toda sessão de agente deve ler este arquivo primeiro e ATUALIZÁ-LO ao final de cada conquista.** Última atualização: 2026-11-25.
+> **MEMÓRIA VIVA DO PROJETO. Toda sessão de agente deve ler este arquivo primeiro e ATUALIZÁ-LO ao final de cada conquista.** Última atualização: 2026-11-27.
 > **Operação (subir/usar/derrubar serviços): ver `run.md`** — guia dedicado com comandos exatos, health checks e armadilhas.
 
 ## 1. O que é o Falador
@@ -310,6 +310,17 @@ App local (macOS, Apple Silicon M4 Pro 48 GB) que traduz conversas de conferênc
   - **Propagação no `run-flow.mjs` (Agentes e Decisão)**: o runner lê `human.approve.params.mode` (ou `flow.approvalLevel` quando não há `human.approve`) e sincroniza `human.approve`, `agent.tools` (`approvalPolicy`), `exec.command` (`approvalLevel`) e `decision.llm` (via `__forceOption` em `ask_all`, garantindo que mesmo o ramo `auto` de `entrevista.json` passe pelo gate humano quando em modo `A`, e faça bypass quando em modo `C`).
   - **Consolidação em 3 workflows canônicos (`apps/tui/flows/`)**: mantidos exclusivamente `especialista-ti.json`, `agente-workflows.json` e `entrevista.json` (removidos `ti-diagnostico.json` e `traducao-transcricao.json`).
   - **Terminal 100% dedicado + Sessão SSH persistente (`ControlMaster`)**: removido o box PTY local de 170px da aba `Terminal` (`TerminalPanel.tsx`), deduplicadas as entradas de comando (`useRunner.ts`), e ativada multiplexação OpenSSH (`ControlMaster=auto`, `ControlPersist=600`, `ControlPath=/tmp/falador-ssh-%C`) em `exec.command` com fluxo em 3 fases (`ask_user` → `update_plan` → `exec_ssh`) no `especialista-ti.json`.
+
+- **LISTAGEM DINÂMICA DE MODELOS `/v1/models` DO oMLX NA UI (2026-11-27)**:
+  - **Causa raiz corrigida no `faladorctl`**: o `omlx serve` persiste flags de CLI (`--model-dir`) por cima do `~/.omlx/settings.json` (`cli.py:302` → `settings.py:1683`), o que havia sobrescrito `model_dirs` do usuário (`/Users/otaviolemos/.lmstudio/models` → `/Users/otaviolemos/.omlx/models`). Removido `--model-dir` do `faladorctl` para respeitar integralmente o `~/.omlx/settings.json` gerenciado pelo oMLX.
+  - **`GET /api/models` com `details` (`model_type`) e filtro de pesos**: `apps/web-server.mjs` consulta `GET /v1/models` do oMLX (com fallback automático da chave `auth.api_key` de `~/.omlx/settings.json`), propaga `details: [{ id, model_type, max_model_len }]` com `Cache-Control: no-store`, e ignora diretórios órfãos do cache HF que não possuem arquivos de pesos (`.safetensors`/`.gguf`/`.npz`).
+  - **Roteamento por capacidade real (`model_type`) e refresh contínuo**: `live-utils.ts`, `LiveView.tsx`, `NodeEditor.tsx`, `TopBar.tsx` e `App.tsx` usam o `model_type` retornado pelo `/v1/models` (`llm`/`vlm` → Chat/Texto/MoE/Agente/Tradutor/Validador; `decision` → Decisão; `audio_stt` → Transcrição), atualizam a lista a cada health check do oMLX e descartam modelos deletados que estavam salvos em JSONs antigos (evitando HTTP 404).
+- **RELATÓRIOS MARKDOWN + `save_report` + `goal.confirm` INTERATIVO + RESILIÊNCIA DO VALIDADOR (2026-11-27)**:
+  - **Validador resiliente (`goal-validator.ts`, `audit.ts`)**: `jsonCandidates` extrai JSON cercado de prosa e faz fallback em `reasoning_content`; `max_tokens: 2048`; `failClosed` marca `validatorError: true` para distinguir falha técnica do avaliador de lacuna real.
+  - **Fluxo de conclusão e relatório (`agent-tools.ts`)**: adicionada tool interna `save_report` (grava `.md` sanitizado em `reports/` com redação de segredos e `tool_call` auditado); `MAX_VALIDATION_REJECTIONS = 2` e `validatorError` evitam loop infinito com plano 100% verificado; `goal.confirm` (`kind: 'respond'`) exibe o relatório e aceita `{"action":"continue","instruction":"..."}` para aprofundar o turno.
+  - **UI Markdown + Download (`Markdown.tsx`, `LiveView.tsx`, `index.scss`)**: renderizador Markdown sem dependências (`Markdown`, `downloadMarkdown`, `reportMarkdown`), botão `Salvar .md` nas respostas finais e no card `goal.confirm`, e input/botão `Continuar`. `.gitignore` ignora `reports/`.
+  - **Fix de teste pré-existente (`runner-audit.test.mjs`)**: conectada evidência real (`exec.command` readonly dryRun ×2) exigida por `applyEvidenceCalibration`.
+
 
 
 

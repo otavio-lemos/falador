@@ -70,3 +70,61 @@ test('exec stage "Exec ativo" grava dryRun boolean (não string "ativo")', async
   expect(typeof params.dryRun).toBe('boolean'); // era "ativo" (string) → INVALID_PARAM
   expect(params.dryRun).toBe(false);
 });
+
+test('modelo exibido no dropdown de Agent é exatamente o enviado ao /api/run (mesmo sem clicar no dropdown)', async ({ page }) => {
+  await page.route('**/api/models**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        omlx: [
+          'Inkling-2-Mini-oQ4e-mtp',
+          'LiquidAI--LFM3-1.7B-MLX-4bit',
+          'LiquidAI--d1-2B-MLX-4bit',
+          'gemma-4-26B-A4B-it-QAT-MLX-4bit',
+          'granite-4.2-30b-MLX-4bit',
+          'granite-4.2-8b-MLX-8bit',
+        ],
+        cache: [],
+        details: [
+          { id: 'Inkling-2-Mini-oQ4e-mtp', model_type: 'vlm' },
+          { id: 'LiquidAI--LFM3-1.7B-MLX-4bit', model_type: 'vlm' },
+          { id: 'LiquidAI--d1-2B-MLX-4bit', model_type: 'decision' },
+          { id: 'gemma-4-26B-A4B-it-QAT-MLX-4bit', model_type: 'vlm' },
+          { id: 'granite-4.2-30b-MLX-4bit', model_type: 'llm' },
+          { id: 'granite-4.2-8b-MLX-8bit', model_type: 'llm' },
+        ],
+      }),
+    });
+  });
+
+  let payload: { flow: { nodes: Array<{ id: string; params: Record<string, unknown> }> } } | null = null;
+  await page.route('**/api/run', async (route) => {
+    payload = route.request().postDataJSON();
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: 'event: ended\ndata: {"code":0}\n\n',
+    });
+  });
+
+  await page.goto('/');
+  const agentStage = page.locator('.stage-dd').filter({ has: page.locator('.stage-dd-label', { hasText: 'Agent' }) }).first();
+  await expect(agentStage).toBeVisible();
+  await expect(agentStage.locator('.stage-main-select')).toContainText('Inkling-2-Mini-oQ4e-mtp');
+
+  // Inicia sem clicar no dropdown: deve enviar Inkling-2-Mini-oQ4e-mtp (e nunca Qwen3-Coder-30B-A3B-Instruct-4bit)
+  await page.getByRole('button', { name: 'Iniciar', exact: true }).click();
+  await expect.poll(() => payload !== null).toBe(true);
+  expect(payload!.flow.nodes.find((n) => n.id === 'agente')?.params.model).toBe('Inkling-2-Mini-oQ4e-mtp');
+  expect(payload!.flow.nodes.find((n) => n.id === 'decisor_d1')?.params.model).toBe('LiquidAI--d1-2B-MLX-4bit');
+
+  // Troca no dropdown para gemma-4-26B-A4B-it-QAT-MLX-4bit e inicia
+  payload = null;
+  await agentStage.locator('.stage-main-select').click();
+  await page.getByRole('option', { name: 'gemma-4-26B-A4B-it-QAT-MLX-4bit' }).click();
+  await page.getByRole('button', { name: 'Iniciar', exact: true }).click();
+  await expect.poll(() => payload !== null).toBe(true);
+  expect(payload!.flow.nodes.find((n) => n.id === 'agente')?.params.model).toBe('gemma-4-26B-A4B-it-QAT-MLX-4bit');
+});
+

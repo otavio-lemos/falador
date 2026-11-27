@@ -20,6 +20,18 @@ const PLAN_VERIFIED = [{ id: '1', description: 'Checar disco', verification: 'df
 function mockLlm() {
   const execQ = [
     { choices: [{ message: { role: 'assistant', content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'update_plan', arguments: JSON.stringify({ items: PLAN_VERIFIED }) } }] } }] },
+    {
+      choices: [{
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            { id: 'c2', type: 'function', function: { name: 'exec_local', arguments: JSON.stringify({ command: 'df -h' }) } },
+            { id: 'c3', type: 'function', function: { name: 'exec_local', arguments: JSON.stringify({ command: 'uptime' }) } },
+          ],
+        },
+      }],
+    },
     { choices: [{ message: { role: 'assistant', content: 'OBJETIVO CONCLUÍDO' } }] },
   ];
   const srv = http.createServer((req, res) => {
@@ -52,12 +64,14 @@ function auditFlow(llmUrl) {
       { id: 'input', type: 'input.chat', params: {} },
       {
         id: 'agente', type: 'agent.tools',
-        params: { baseUrl: llmUrl, model: 'exec-model', validatorModel: 'val-model', approvalPolicy: 'always', maxSteps: 4 },
+        params: { baseUrl: llmUrl, model: 'exec-model', validatorModel: 'val-model', approvalPolicy: 'never', maxSteps: 5 },
       },
+      { id: 'exec', type: 'exec.command', params: { transport: 'local', mode: 'readonly', dryRun: true, toolName: 'exec_local' } },
       { id: 'out', type: 'sink.captions', params: { mode: 'callback', outputMode: 'write' } },
     ],
     edges: [
       { from: 'input.out', to: 'agente.in' },
+      { from: 'exec.tool', to: 'agente.tools' },
       { from: 'agente.out', to: 'out.in' },
     ],
   };

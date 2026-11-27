@@ -588,55 +588,98 @@ export function shortModel(id: string): string {
 }
 
 // ── Classificação de modelos por capacidade ──────────────────────────────────
-// Baseado nos modelos suportados pelo mlx-audio (https://github.com/Neywa-Labs/mlx-audio)
-// e pelos modelos servidos pelo omlx.
-//
-// IDs podem ter formato "org--nome-do-modelo" (omlx) ou "org/nome" (HF cache).
-// Normalizamos para comparação: -- e / viram espaço, lowercase.
+// Prioriza o `model_type` retornado diretamente por `GET /v1/models` do omlx
+// ("llm" | "vlm" | "decision" | "audio_stt" | "audio_tts" | "audio_sts" | "embedding" | "reranker")
+// e usa o nome do modelo apenas quando o model_type não está presente ou para
+// distinguir modelos multimodais de áudio (LFM3-Audio / silero-vad) que rodam na engine vlm/llm.
 function norm(id: string): string {
   return id.replace(/--|[/_]/g, ' ').toLowerCase();
 }
 
+export function isVadModel(id: string): boolean {
+  const s = norm(id);
+  return /silero|vad\b|diar |sortformer/i.test(s);
+}
+
 // STT / ASR — reconhecimento de fala
-export function isAsrModel(id: string): boolean {
+export function isAsrModel(id: string, modelType?: string): boolean {
+  if (modelType === 'audio_stt') return true;
+  if (modelType && modelType !== 'vlm') return false;
   const s = norm(id);
   return /whisper|voxtral(?!.*tts)|nemotron.*(asr|speech|transcribe)|qwen.*(asr|forced.align)|parakeet|moonshine|canary|granite.*speech|distil.*whisper|mimo.*asr|phonon.*(asr|\d)|vibevoice|medasr|moss.*transcribe|ming.*asr|sov.*transcribe|lfm3.*audio|lfm2.?5.*audio|fluid.*speech|mega.*asr/i.test(s);
 }
 
 // TTS — síntese de voz
-export function isTtsModel(id: string): boolean {
+export function isTtsModel(id: string, modelType?: string): boolean {
+  if (modelType === 'audio_tts') return true;
+  if (modelType && modelType !== 'vlm') return false;
   const s = norm(id);
   return /kokoro|qwen.*tts|voxtral.*tts|fish.*audio.*drama|csm.1b|miso.*tts|\bdia\b.*1\.|outetts|spark.*tts|higgs.*audio|chatterbox|melo.*tts|moss.*tts|ming.*tts|ming.*omni.*tts|rumik|voxcpm|kugelaudio|lfm3.*audio|lfm2.?5.*audio|maya.*native|soprano|reverb.*tts|longcat.*audio|omnivoice|zonos|audio8.*tts/i.test(s);
 }
 
 // STS — speech-to-speech
-export function isStsModel(id: string): boolean {
+export function isStsModel(id: string, modelType?: string): boolean {
+  if (modelType === 'audio_sts') return true;
+  if (modelType && modelType !== 'vlm') return false;
   const s = norm(id);
   return /lfm3.*audio|lfm2.?5.*audio|dialogue.*sidon|fastdialogue|haru.*4b|nemotronlabs.*voice|mimo.*audio|ming.*audio|mossformer|deepfilter|sam.*audio|re.*use/i.test(s);
 }
 
-// Decisão (System-1, d1, Laya): roteamento calibrado, NÃO gera texto via chat.
-export function isDecisionModel(id: string): boolean {
+// Decisão (System-1, d1, Laya): roteamento calibrado (/v1/systemone), NÃO gera texto via chat.
+export function isDecisionModel(id: string, modelType?: string): boolean {
+  if (modelType === 'decision') return true;
+  if (modelType) return false;
   const s = norm(id);
   return /\bd1\b|\bd1 |\bd1-|laya/i.test(s);
 }
 
-// Modelo de TEXTO puro (chat/completions). Exclui áudio/ASR/TTS/STS/decisão/VAD.
-export function isTextModel(id: string): boolean {
-  const s = norm(id);
-  return !isAsrModel(id) && !isTtsModel(id) && !isStsModel(id) && !isDecisionModel(id)
-    && !/silero|vad |diar |sortformer|mossformer|deepfilter|sam audio/i.test(s);
+// Modelo de CHAT / TEXTO / MoE / VLM (chat/completions). Exclui áudio/ASR/TTS/STS/decisão/VAD/embedding/reranker.
+export function isTextModel(id: string, modelType?: string): boolean {
+  if (modelType && modelType !== 'llm' && modelType !== 'vlm') return false;
+  if (isVadModel(id)) return false;
+  return !isAsrModel(id, modelType) && !isTtsModel(id, modelType) && !isStsModel(id, modelType) && !isDecisionModel(id, modelType);
 }
 
-// Remove modelo de LLM inválido (não-texto) pra o nó usar o default de texto —
-// evita run silenciosamente quebrado quando um d1/áudio foi parar no assistente.
-export function sanitizeFlow(flow: Flow): Flow {
+// Remove/substitui modelo de LLM inválido (não-texto ou inexistente no /v1/models do omlx)
+// antes de iniciar o run — garante que o payload enviado ao /api/run usa exatamente o ID do /v1/models.
+export function sanitizeFlow(
+  flow: Flow,
+  models?: { omlx: string[]; cache: string[]; details?: { id: string; model_type: string }[] },
+): Flow {
+  const omlxList = models?.omlx ?? [];
+  const typeById = new Map<string, string>((models?.details ?? []).map((d) => [d.id, d.model_type]));
+  const chatModels = omlxList.filter((m) => isTextModel(m, typeById.get(m)));
+  const decisionModels = omlxList.filter((m) => isDecisionModel(m, typeById.get(m)));
+  const resolveId = (val: unknown, allowed: string[], fallback?: string): string | undefined => {
+    if (typeof val !== 'string' || !val) return fallback;
+    if (allowed.length === 0) return isTextModel(val) ? val : fallback;
+    if (allowed.includes(val)) return val;
+    const shortVal = shortModel(val);
+    const match = allowed.find((m) => shortModel(m) === shortVal || m.endsWith(`--${val}`) || m.endsWith(`/${val}`));
+    return match ?? fallback;
+  };
   return {
     ...flow,
     nodes: flow.nodes.map((n) => {
-      if ((n.type === 'llm.omlx' || n.type === 'agent.tools') && typeof n.params.model === 'string' && !isTextModel(n.params.model)) {
-        const { model: _bad, ...rest } = n.params;
-        return { ...n, params: rest };
+      if (n.type === 'llm.omlx' || n.type === 'agent.tools' || n.type === 'goal.validator') {
+        const cur = typeof n.params.model === 'string' ? n.params.model : undefined;
+        if (chatModels.length > 0) {
+          const resolved = resolveId(cur, chatModels, chatModels[0]);
+          if (resolved && resolved !== cur) {
+            return { ...n, params: { ...n.params, model: resolved } };
+          }
+        } else if (cur && !isTextModel(cur)) {
+          const { model: _bad, ...rest } = n.params;
+          return { ...n, params: rest };
+        }
+      }
+      if ((n.type === 'decision.llm' || n.type === 'turn.detector') && decisionModels.length > 0) {
+        const cur = typeof n.params.model === 'string' ? n.params.model : undefined;
+        const allowed = n.type === 'decision.llm' ? [...decisionModels, ...chatModels] : decisionModels;
+        const resolved = resolveId(cur, allowed, decisionModels[0]);
+        if (resolved && resolved !== cur) {
+          return { ...n, params: { ...n.params, model: resolved } };
+        }
       }
       return n;
     }),

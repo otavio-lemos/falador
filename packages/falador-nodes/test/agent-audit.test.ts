@@ -4,6 +4,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   createRegistry,
   runGraph,
@@ -642,4 +645,56 @@ test('audit propaga result.meta.code em errorType e mascara segredos em tool_out
     assert.ok(!valUser.includes('ghp_abcdefghijklmnopqrstuvwxyz123456'));
     assert.ok(valUser.includes('[REDACTED:github_token]'));
   } finally { await rg.stop('fim'); await llm.close(); }
+});
+
+test('save_report grava .md em FALADOR_REPORTS_DIR mascarando segredos; validatorError e action=continue no goal.confirm', async () => {
+  const reportsTmp = mkdtempSync(join(tmpdir(), 'falador-reports-test-'));
+  const prevDir = process.env.FALADOR_REPORTS_DIR;
+  process.env.FALADOR_REPORTS_DIR = reportsTmp;
+  const llm = await mockLlm({
+    executor: [
+      toolCallResp('update_plan', { items: [PLAN_VERIFIED] }),
+      ...evidenceCalls(),
+      toolCallResp('save_report', { title: 'Diag Disco', markdown: '## Resultado\ntoken ghp_abcdefghijklmnopqrstuvwxyz123456' }),
+      finalResp('Relatório parcial'),
+      finalResp('Relatório aprofundado'),
+    ],
+    // 1ª validação falha com JSON inválido (validatorError => não trava em loop); 2ª após continue valida
+    validator: ['lixo', VALID_VALIDATION],
+  });
+  const gate = makeGate([
+    JSON.stringify({ action: 'continue', instruction: 'Aprofunde a análise' }),
+    '',
+  ]);
+  const h = await harness({
+    llm,
+    gate,
+    tools: evidenceTool(),
+    agentParams: { validatorModel: 'val-model', approvalPolicy: 'never', maxSteps: 8 },
+  });
+  try {
+    await h.src.emit('objetivo: gerar relatório');
+    await waitFor(() => h.received.length > 0);
+    const files = readdirSync(reportsTmp);
+    assert.equal(files.length, 1);
+    assert.match(files[0], /diag-disco\.md$/);
+    const saved = readFileSync(join(reportsTmp, files[0]), 'utf8');
+    assert.ok(saved.includes('[REDACTED:github_token]'));
+    assert.ok(!saved.includes('ghp_abcdefghijklmnopqrstuvwxyz123456'));
+    const saveAudit = h.audits.find((a) => a.op === 'tool_call' && a.tool === 'save_report');
+    assert.equal(saveAudit?.ok, true);
+
+    assert.equal(gate.requests.length, 2);
+    assert.equal(gate.requests[0].meta?.tool, 'goal.confirm');
+    assert.equal(gate.requests[0].text, 'Relatório parcial');
+    const out = h.received[h.received.length - 1];
+    assert.equal((out.payload as { text: string }).text, 'Relatório aprofundado');
+    assert.equal(out.meta?.goalAchieved, true);
+  } finally {
+    await h.stop();
+    await llm.close();
+    if (prevDir === undefined) delete process.env.FALADOR_REPORTS_DIR;
+    else process.env.FALADOR_REPORTS_DIR = prevDir;
+    rmSync(reportsTmp, { recursive: true, force: true });
+  }
 });

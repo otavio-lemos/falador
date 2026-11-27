@@ -21,7 +21,8 @@ interface Props {
   flows: FlowItem[];
   currentFlow: string;
   description: string;
-  models: { omlx: string[]; cache: string[] };
+  models: { omlx: string[]; cache: string[]; details?: { id: string; model_type: string }[] };
+  onRefreshModels?: () => void;
   editOpen: boolean;
   onOpenEdit: () => void;
   onCloseEdit: () => void;
@@ -38,13 +39,13 @@ interface Props {
   onOpenWorkflowAgent: () => void;
 }
 
-function classifyModel(id: string): string {
-  if (isAsrModel(id)) return 'ASR (Speech-to-Text)';
-  if (isTtsModel(id)) return 'TTS (Text-to-Speech)';
-  if (isStsModel(id)) return 'STS (Speech-to-Speech)';
-  if (isDecisionModel(id)) return 'Decisão (System-1)';
+function classifyModel(id: string, modelType?: string): string {
+  if (isAsrModel(id, modelType)) return 'ASR (Speech-to-Text)';
+  if (isTtsModel(id, modelType)) return 'TTS (Text-to-Speech)';
+  if (isStsModel(id, modelType)) return 'STS (Speech-to-Speech)';
+  if (isDecisionModel(id, modelType)) return 'Decisão (System-1)';
   if (/silero|vad\b|diar_|sortformer/i.test(id)) return 'VAD / Diarização';
-  if (isTextModel(id)) return 'LLM (Texto)';
+  if (isTextModel(id, modelType)) return 'LLM (Texto)';
   return 'Outro';
 }
 
@@ -85,11 +86,12 @@ export function TopBar(p: Props) {
 
   const selectedFlowItem = p.flows.find((f) => f.name === p.currentFlow) ?? null;
 
+  const typeById = new Map<string, string>((p.models.details ?? []).map((d) => [d.id, d.model_type]));
   const allModels = [...p.models.omlx, ...p.models.cache.filter((m) => !p.models.omlx.includes(m))];
   const filteredModels = allModels.filter((m) => !modelSearch || m.toLowerCase().includes(modelSearch.toLowerCase()));
   const grouped: Record<string, string[]> = {};
   for (const m of filteredModels) {
-    const cat = classifyModel(m);
+    const cat = classifyModel(m, typeById.get(m));
     (grouped[cat] ??= []).push(m);
   }
 
@@ -192,7 +194,10 @@ export function TopBar(p: Props) {
           kind="tertiary"
           size="sm"
           renderIcon={Catalog}
-          onClick={() => setModelsOpen(true)}
+          onClick={() => {
+            p.onRefreshModels?.();
+            setModelsOpen(true);
+          }}
         >
           Modelos
         </Button>

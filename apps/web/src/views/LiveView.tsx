@@ -66,6 +66,7 @@ import {
 } from '../live-utils';
 import { WorkflowMiniMap } from '../components/WorkflowMiniMap';
 import { LogsPanel } from '../components/LogsPanel';
+import { Markdown, downloadMarkdown, reportMarkdown } from '../components/Markdown';
 
 const WEBHOOK_STORAGE_KEY = 'falador.webhookUrl';
 const THOUGHTS_STORAGE_KEY = 'falador.showThoughts';
@@ -89,7 +90,7 @@ interface Props {
   outputResetTick?: number;
   onToggleMicMute: () => void;
   onToggleOutputMode: () => void;
-  models: { omlx: string[]; cache: string[] };
+  models: { omlx: string[]; cache: string[]; details?: { id: string; model_type: string }[] };
   apps: string[];
   mics?: { id: number; name: string; sampleRate: number }[];
   contextDocs: ContextDoc[];
@@ -155,7 +156,9 @@ interface ConversationEntry {
   gateTool?: string;
 }
 
-function stageItems(stage: Stage, models: { omlx: string[]; cache: string[] }, apps: string[]): Item[] {
+function stageItems(stage: Stage, models: { omlx: string[]; cache: string[]; details?: { id: string; model_type: string }[] }, apps: string[]): Item[] {
+  const typeById = new Map<string, string>((models.details ?? []).map((d) => [d.id, d.model_type]));
+  const mType = (id: string) => typeById.get(id);
   if (stage.kind === 'approve-mode') {
     return [
       { id: 'ask_all', label: 'A · Perguntar tudo' },
@@ -205,18 +208,20 @@ function stageItems(stage: Stage, models: { omlx: string[]; cache: string[] }, a
   }
   let vals: string[] = [];
   if (stage.kind === 'model-asr') {
-    // asr.realtime só aceita modelos streaming (voxtral / nemotron_asr); evita IDs omlx com -- ou LFM3-Audio não-streaming
-    vals = models.cache.filter((m) => isAsrModel(m) && /voxtral|nemotron.*asr/i.test(m));
+    // Transcrição streaming (asr.realtime): modelos audio_stt do /v1/models + cache local com pesos
+    const omlxAsr = models.omlx.filter((m) => isAsrModel(m, mType(m)) && !/lfm.*audio/i.test(m));
+    const cacheAsr = models.cache.filter((m) => isAsrModel(m) && /voxtral|nemotron.*asr/i.test(m));
+    vals = [...omlxAsr, ...cacheAsr.filter((m) => !omlxAsr.includes(m))];
   } else if (stage.kind === 'model-asr-lfm3') {
     const combined = [...models.omlx, ...models.cache.filter((m) => !models.omlx.includes(m))];
     vals = combined.filter((m) => /lfm.*audio/i.test(m));
     if (vals.length === 0) vals = ['LiquidAI--LFM3-Audio-2B-MLX-8bit'];
   } else if (stage.kind === 'model-llm' || stage.kind === 'model-translate') {
-    vals = models.omlx.filter(isTextModel);
+    vals = models.omlx.filter((m) => isTextModel(m, mType(m)));
     if (vals.length === 0 && stage.kind === 'model-llm') vals = [DEFAULT_LLM_MODEL];
   } else if (stage.kind === 'model-decision') {
-    const dec = models.omlx.filter(isDecisionModel);
-    vals = stage.nodeType === 'decision.llm' ? [...dec, ...models.omlx.filter(isTextModel)] : dec;
+    const dec = models.omlx.filter((m) => isDecisionModel(m, mType(m)));
+    vals = stage.nodeType === 'decision.llm' ? [...dec, ...models.omlx.filter((m) => isTextModel(m, mType(m)))] : dec;
     if (vals.length === 0) vals = [DEFAULT_DECISION_MODEL];
   }
 
@@ -230,14 +235,19 @@ function stageItems(stage: Stage, models: { omlx: string[]; cache: string[] }, a
     }
   }
 
+  // SÓ mantém stage.value se o omlx estiver offline (models.omlx vazio) ou se o modelo existir de fato nos modelos descobertos.
+  // Assim, um modelo deletado que ficou salvo no JSON do workflow NÃO fica fantasma no topo do dropdown causando HTTP 404.
+  const isAvailableInOmlx =
+    models.omlx.length === 0 ||
+    models.omlx.some((m) => m === stage.value || shortModel(m) === shortModel(stage.value));
   const isDisabledVal = !stage.value || stage.value === '-' || stage.value === '—';
   const validCurrent = !isDisabledVal && (
     stage.kind === 'model-asr' ||
     stage.kind === 'model-asr-lfm3' ||
-    ((stage.kind === 'model-llm' || stage.kind === 'model-translate') && isTextModel(stage.value)) ||
-    (stage.kind === 'model-decision' && (isDecisionModel(stage.value) || (stage.nodeType === 'decision.llm' && isTextModel(stage.value))))
+    ((stage.kind === 'model-llm' || stage.kind === 'model-translate') && isAvailableInOmlx && isTextModel(stage.value, mType(stage.value))) ||
+    (stage.kind === 'model-decision' && isAvailableInOmlx && (isDecisionModel(stage.value, mType(stage.value)) || (stage.nodeType === 'decision.llm' && isTextModel(stage.value, mType(stage.value)))))
   );
-  if (validCurrent && !items.some((i) => i.id === stage.value)) {
+  if (validCurrent && !items.some((i) => i.id === stage.value || i.label === shortModel(stage.value))) {
     const label = shortModel(stage.value);
     const filtered = items.filter((i) => i.label !== label);
     filtered.unshift({ id: stage.value, label });
@@ -256,6 +266,7 @@ function stageItems(stage: Stage, models: { omlx: string[]; cache: string[] }, a
 function parseGateCommand(gate: Gate | undefined): {
   isCommand: boolean;
   isAskUser: boolean;
+  isGoalConfirm: boolean;
   prompt?: string;
   tool?: string;
   host: string;
@@ -266,7 +277,7 @@ function parseGateCommand(gate: Gate | undefined): {
   context?: string;
   fields?: { name: string; label: string; type?: string; placeholder?: string; options?: string[]; required?: boolean }[];
 } {
-  if (!gate) return { isCommand: false, isAskUser: false, host: 'local', command: '', options: [], fields: [] };
+  if (!gate) return { isCommand: false, isAskUser: false, isGoalConfirm: false, host: 'local', command: '', options: [], fields: [] };
   const meta = gate.meta;
   let tool = meta?.tool;
   let host = meta?.host;
@@ -301,11 +312,13 @@ function parseGateCommand(gate: Gate | undefined): {
     } catch { /* não é JSON */ }
   }
 
-  const isAskUser = tool === 'ask_user' || meta?.tool === 'ask_user' || gate.nodeId.includes('ask_user') || trimmed.includes('"ask_user"');
+  // goal.confirm: o texto do gate É o relatório final (Markdown), não um comando.
+  const isGoalConfirm = meta?.tool === 'goal.confirm';
+  const isAskUser = !isGoalConfirm && (tool === 'ask_user' || meta?.tool === 'ask_user' || gate.nodeId.includes('ask_user') || trimmed.includes('"ask_user"'));
   if (isAskUser && !prompt) {
     prompt = reason || trimmed;
   }
-  const isCommand = !isAskUser && Boolean(command || tool || meta?.host || meta?.command || meta?.reason || meta?.tool);
+  const isCommand = !isAskUser && !isGoalConfirm && Boolean(command || tool || meta?.host || meta?.command || meta?.reason || meta?.tool);
   const metaOptions = meta?.args?.options;
   if (!ctxVal && typeof meta?.args?.context === 'string') ctxVal = meta.args.context as string;
   if (!fieldsVal && Array.isArray(meta?.args?.fields)) fieldsVal = meta.args.fields;
@@ -315,6 +328,7 @@ function parseGateCommand(gate: Gate | undefined): {
   return {
     isCommand,
     isAskUser,
+    isGoalConfirm,
     options,
     prompt,
     tool,
@@ -521,11 +535,11 @@ export function LiveView({
 
   // Sincroniza rascunho editável do comando sempre que chegar um novo gate de comando
   useEffect(() => {
-    if (gate && (gateInfo.isCommand || gateInfo.isAskUser)) {
-      setCmdDraft(gateInfo.isAskUser ? "" : gateInfo.command);
+    if (gate && (gateInfo.isCommand || gateInfo.isAskUser || gateInfo.isGoalConfirm)) {
+      setCmdDraft(gateInfo.isCommand ? gateInfo.command : '');
       setFieldValues({});
     }
-  }, [gate, gateInfo.isCommand, gateInfo.isAskUser, gateInfo.command]);
+  }, [gate, gateInfo.isCommand, gateInfo.isAskUser, gateInfo.isGoalConfirm, gateInfo.command]);
 
   const suggestion = gate ? gate.text : (lastOf(sinks.suggestion)?.text ?? '');
 
@@ -825,7 +839,8 @@ export function LiveView({
           nodeId: ev.nodeId,
           title: 'Validação de Objetivo',
           subtitle: 'Limite de passos atingido',
-          text: ev.text ?? 'Limite máximo de passos atingido.',
+          // O relatório completo já está no card do agente: aqui só o aviso (sem repetir o texto cortado).
+          text: `Limite de passos atingido${ev.step != null ? ` (${ev.step})` : ''} — síntese exibida na resposta do agente.`,
           ts: ev.ts,
           tag: 'Limite de passos',
           auditEvent: ev,
@@ -921,7 +936,9 @@ export function LiveView({
   const lastCaption = runner.captions[runner.captions.length - 1];
   const agentBusy = runner.agentSteps.some((s) => s.phase === 'calling') || Boolean(lastCaption && !lastCaption.final);
   const turnStatus = gate
-    ? gateInfo.isAskUser
+    ? gateInfo.isGoalConfirm
+      ? { label: 'Aguardando confirmação', type: 'green' as const, hint: 'Leia o relatório abaixo e diga se é suficiente.' }
+      : gateInfo.isAskUser
       ? { label: 'Aguardando resposta', type: 'cyan' as const, hint: 'Responda à pergunta do agente abaixo para continuar.' }
       : { label: 'Aguardando aprovação', type: 'teal' as const, hint: 'Revise e aprove ou rejeite a ação abaixo.' }
     : !runner.running
@@ -941,13 +958,13 @@ export function LiveView({
         <ChatCard
           kind="gate"
           nodeId={gate.nodeId}
-          role={gateInfo.isAskUser ? 'Pergunta do Agente' : 'Aprovação'}
-          tag={gateInfo.isAskUser ? '' : (gateInfo.isCommand ? 'Comando' : 'Revisão')}
-          tagType={gateInfo.isAskUser ? 'cyan' : gateInfo.isCommand ? 'teal' : 'purple'}
-          accent={gateInfo.isAskUser ? 'var(--cds-support-info)' : 'var(--cds-support-warning, #f1c21b)'}
-          icon={gateInfo.isAskUser ? <Chat size={18} /> : <Checkmark size={18} />}
+          role={gateInfo.isGoalConfirm ? 'Relatório do Agente' : gateInfo.isAskUser ? 'Pergunta do Agente' : 'Aprovação'}
+          tag={gateInfo.isGoalConfirm ? 'Suficiente?' : gateInfo.isAskUser ? '' : (gateInfo.isCommand ? 'Comando' : 'Revisão')}
+          tagType={gateInfo.isGoalConfirm ? 'green' : gateInfo.isAskUser ? 'cyan' : gateInfo.isCommand ? 'teal' : 'purple'}
+          accent={gateInfo.isGoalConfirm ? 'var(--cds-support-success)' : gateInfo.isAskUser ? 'var(--cds-support-info)' : 'var(--cds-support-warning, #f1c21b)'}
+          icon={gateInfo.isGoalConfirm ? <Bot size={18} /> : gateInfo.isAskUser ? <Chat size={18} /> : <Checkmark size={18} />}
           ts={gate.ts}
-          ariaLabel={gateInfo.isAskUser ? 'Pergunta guiada pendente' : gateInfo.isCommand ? 'Aprovação de comando pendente' : 'Aprovação de resposta pendente'}
+          ariaLabel={gateInfo.isGoalConfirm ? 'Confirmação de conclusão pendente' : gateInfo.isAskUser ? 'Pergunta guiada pendente' : gateInfo.isCommand ? 'Aprovação de comando pendente' : 'Aprovação de resposta pendente'}
           body={(
             <>
               <div className="live-chat-gate-tags">
@@ -958,7 +975,48 @@ export function LiveView({
                 )}
                 {runner.testMode && <Tag type="magenta" size="sm">TESTE</Tag>}
               </div>
-              {gateInfo.isAskUser ? (
+              {gateInfo.isGoalConfirm ? (
+                <div className="live-chat-goal-confirm">
+                  <Markdown text={gate.text} />
+                  <p className="live-chat-entry-text" style={{ fontWeight: 600 }}>
+                    Esta análise/execução é suficiente ou deseja aprofundar algum ponto?
+                  </p>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                    <Button kind="primary" size="sm" renderIcon={Checkmark} className="approve-btn" onClick={() => runner.gate(gate.nodeId, '')}>
+                      Concluir — está suficiente
+                    </Button>
+                    <Button kind="tertiary" size="sm" renderIcon={Download} onClick={() => downloadMarkdown(`relatorio-${currentFlow || 'agente'}`, reportMarkdown(gate.text))}>
+                      Salvar .md
+                    </Button>
+                    <TextInput
+                      id="goal-confirm-instruction"
+                      labelText="O que mais deseja?"
+                      hideLabel
+                      size="sm"
+                      placeholder="Peça para aprofundar/executar mais algo e pressione Continuar..."
+                      value={cmdDraft}
+                      onChange={(e) => setCmdDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && cmdDraft.trim()) {
+                          e.preventDefault();
+                          runner.gate(gate.nodeId, JSON.stringify({ action: 'continue', instruction: cmdDraft.trim() }));
+                          setCmdDraft('');
+                        }
+                      }}
+                      style={{ flex: 1, minWidth: '16rem' }}
+                    />
+                    <Button
+                      kind="tertiary"
+                      size="sm"
+                      renderIcon={Send}
+                      disabled={!cmdDraft.trim()}
+                      onClick={() => { runner.gate(gate.nodeId, JSON.stringify({ action: 'continue', instruction: cmdDraft.trim() })); setCmdDraft(''); }}
+                    >
+                      Continuar
+                    </Button>
+                  </div>
+                </div>
+              ) : gateInfo.isAskUser ? (
                 <>
                   <p className="live-chat-entry-text" style={{ fontWeight: 500 }}>
                     {gateInfo.prompt || gate.text}
@@ -1306,7 +1364,7 @@ export function LiveView({
             <span className="live-chat-entry-text" title={m.text}>
               {v
                 ? `${v.achieved ? 'atingido' : 'pendente'} · confiança ${Math.round(v.confidence * 100)}% · lacunas: ${v.gaps.length ? v.gaps.join('; ') : 'nenhuma'}`
-                : (ev.text || 'Limite de passos atingido')}
+                : (m.text || 'Limite de passos atingido')}
             </span>
           )}
         />
@@ -1362,10 +1420,25 @@ export function LiveView({
         onOpenAudit={m.kind === 'agent-step' || m.kind === 'decision' ? () => openAuditFor(m.nodeId) : undefined}
         body={(
           <>
-            <span className="live-chat-entry-text" title={m.text}>
-              {m.text}
-              {m.live && <span className="live-cursor" />}
-            </span>
+            {m.kind === 'agent' ? (
+              <Markdown text={m.text} />
+            ) : (
+              <span className="live-chat-entry-text" title={m.text}>
+                {m.text}
+                {m.live && <span className="live-cursor" />}
+              </span>
+            )}
+            {m.kind === 'agent' && !m.live && m.text.trim() && (
+              <Button
+                kind="ghost"
+                size="sm"
+                hasIconOnly
+                renderIcon={Download}
+                iconDescription="Salvar .md"
+                tooltipPosition="left"
+                onClick={() => downloadMarkdown(`relatorio-${currentFlow || 'agente'}`, reportMarkdown(m.text))}
+              />
+            )}
             {(isExecStep || (isStructuredSearch && searchArgs && Object.keys(searchArgs).length > 0)) && (
               <Button
                 kind="ghost"

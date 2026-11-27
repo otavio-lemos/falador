@@ -85,7 +85,7 @@ export function App() {
   const [readyFlow, setReadyFlow] = useState<string | null>(null);
   const [editFlowOpen, setEditFlowOpen] = useState(false);
   const [liveFlow, setLiveFlow] = useState<Flow | null>(null);
-  const [models, setModels] = useState<{ omlx: string[]; cache: string[] }>({ omlx: [], cache: [] });
+  const [models, setModels] = useState<{ omlx: string[]; cache: string[]; details?: { id: string; model_type: string }[] }>({ omlx: [], cache: [] });
   const [apps, setApps] = useState<string[]>([]);
   const [contextDocs, setContextDocs] = useState<ContextDoc[]>([]);
   const [toast, setToast] = useState<string | null>(null);
@@ -93,17 +93,26 @@ export function App() {
   const runner = useRunner();
   const actionsRef = useRef<{ getFlow: () => Flow; save: () => void } | null>(null);
   const seenAgentStepsRef = useRef(0);
-  const lastOmlxUpRef = useRef<boolean | null>(null);
-  const modelsRef = useRef(models);
-  modelsRef.current = models;
+
+  const syncModels = useCallback((next: { omlx: string[]; cache: string[]; details?: { id: string; model_type: string }[] }) => {
+    setModels((prev) => {
+      if (
+        prev.omlx.length === next.omlx.length &&
+        prev.cache.length === next.cache.length &&
+        prev.omlx.every((m, i) => m === next.omlx[i]) &&
+        prev.cache.every((m, i) => m === next.cache[i])
+      ) {
+        return prev;
+      }
+      return next;
+    });
+  }, []);
 
   const handleServiceStatus = useCallback((status: ServiceStatusMap) => {
-    const wasUp = lastOmlxUpRef.current;
-    lastOmlxUpRef.current = status.omlx;
-    if (status.omlx && (wasUp === false || (wasUp === null && modelsRef.current.omlx.length === 0))) {
-      fetchModels().then(setModels).catch(() => {});
+    if (status.omlx) {
+      fetchModels().then(syncModels).catch(() => {});
     }
-  }, []);
+  }, [syncModels]);
 
   const toggleTheme = () => {
     setTheme((cur) => {
@@ -130,10 +139,79 @@ export function App() {
         }).catch(() => setToast('Falha ao carregar fluxo inicial'));
       }
     }).catch(() => setToast('Falha ao listar flows'));
-    fetchModels().then(setModels).catch(() => {});
+    fetchModels().then(syncModels).catch(() => {});
     fetchApps().then(setApps).catch(() => {});
     fetchContext().then(setContextDocs).catch(() => {});
-  }, []);
+  }, [syncModels]);
+
+  // Se o workflow carregado referencia um modelo LLM/Agente/Decisão que não existe mais no /v1/models do omlx,
+  // ajusta automaticamente para o primeiro modelo disponível no /v1/models (evitando HTTP 404).
+  useEffect(() => {
+    if (models.omlx.length === 0 || !liveFlow) return;
+    const typeById = new Map<string, string>((models.details ?? []).map((d) => [d.id, d.model_type]));
+    const chatModels = models.omlx.filter((m) => {
+      const mt = typeById.get(m);
+      return (!mt || mt === 'llm' || mt === 'vlm') && !/silero|vad\b|lfm.*audio|voxtral/i.test(m) && !isDecisionModel(m, mt);
+    });
+    const decisionModels = models.omlx.filter((m) => isDecisionModel(m, typeById.get(m)));
+    if (chatModels.length === 0) return;
+    const resolveOmlxId = (val: unknown, allowed: string[], fallback: string): string => {
+      if (typeof val !== 'string' || !val || val === '-' || val === '—') return fallback;
+      if (allowed.includes(val)) return val;
+      const shortVal = val.split('/').pop()?.replace(/^models--/, '').replace(/--/g, '/') ?? val;
+      const match = allowed.find((m) => {
+        const shortM = m.split('/').pop()?.replace(/^models--/, '').replace(/--/g, '/') ?? m;
+        return m === val || shortM === shortVal || m.endsWith(`--${val}`) || m.endsWith(`/${val}`);
+      });
+      return match ?? fallback;
+    };
+    let changed = false;
+    const nextNodes = liveFlow.nodes.map((n) => {
+      if (n.type === 'llm.omlx' || n.type === 'agent.tools' || n.type === 'goal.validator') {
+        const nextParams = { ...n.params };
+        let nodeChanged = false;
+        const resolvedModel = resolveOmlxId(n.params.model, chatModels, chatModels[0]);
+        if (n.params.model !== resolvedModel) {
+          nextParams.model = resolvedModel;
+          nodeChanged = true;
+        }
+        if (n.type === 'agent.tools') {
+          if (typeof n.params.validatorModel === 'string') {
+            const resolvedVal = resolveOmlxId(n.params.validatorModel, chatModels, chatModels[0]);
+            if (n.params.validatorModel !== resolvedVal) {
+              nextParams.validatorModel = resolvedVal;
+              nodeChanged = true;
+            }
+          }
+          if (typeof n.params.d1Model === 'string' && decisionModels.length > 0) {
+            const resolvedD1 = resolveOmlxId(n.params.d1Model, decisionModels, decisionModels[0]);
+            if (n.params.d1Model !== resolvedD1) {
+              nextParams.d1Model = resolvedD1;
+              nodeChanged = true;
+            }
+          }
+        }
+        if (nodeChanged) {
+          changed = true;
+          return { ...n, params: nextParams };
+        }
+      }
+      if ((n.type === 'decision.llm' || n.type === 'turn.detector') && decisionModels.length > 0) {
+        const allowed = n.type === 'decision.llm' ? [...decisionModels, ...chatModels] : decisionModels;
+        const resolvedDec = resolveOmlxId(n.params.model, allowed, decisionModels[0]);
+        if (n.params.model !== resolvedDec) {
+          changed = true;
+          return { ...n, params: { ...n.params, model: resolvedDec } };
+        }
+      }
+      return n;
+    });
+    if (changed) {
+      const updated = { ...liveFlow, nodes: nextNodes };
+      setLiveFlow(updated);
+      if (runner.running) startWithContext(updated, currentFlow);
+    }
+  }, [models, liveFlow]);
 
   const registerActions = useCallback((a: { getFlow: () => Flow; save: () => void }) => { actionsRef.current = a; }, []);
   const handleFlowLoaded = useCallback((name: string | null) => { setReadyFlow(name); }, []);
@@ -232,10 +310,10 @@ export function App() {
       setToast('Adicione pelo menos um nó antes de testar');
       return;
     }
-    runner.start(applyContext(sanitizeFlow(f), contextDocs), currentFlow, true);
+    runner.start(applyContext(sanitizeFlow(f, models), contextDocs), currentFlow, true);
   };
   const startWithContext = (f: Flow, name?: string) =>
-    runner.start(applyContext(sanitizeFlow(f), contextDocs), name ?? currentFlow);
+    runner.start(applyContext(sanitizeFlow(f, models), contextDocs), name ?? currentFlow);
 
   const setModeAndSync = (next: InputMode, baseFlow = liveFlow, targetNodeId?: string) => {
     const defId = baseFlow ? resolveDefaultNodeId(baseFlow, 'capture.ffmpeg') : null;
@@ -429,6 +507,7 @@ export function App() {
       const updated = applyOutputMode(applyInputMode(f, m), outM);
       setCurrentFlow(name);
       setLiveFlow(updated);
+      fetchModels().then(syncModels).catch(() => {});
       if (runner.running) startWithContext(updated, name);
     } catch { setToast('Falha ao carregar o flow'); }
   };
@@ -486,6 +565,7 @@ export function App() {
             flows={flows} currentFlow={currentFlow}
             description={currentDesc}
             models={models}
+            onRefreshModels={() => fetchModels().then(syncModels).catch(() => {})}
             editOpen={editFlowOpen}
             onOpenEdit={() => setEditFlowOpen(true)}
             onCloseEdit={() => setEditFlowOpen(false)}

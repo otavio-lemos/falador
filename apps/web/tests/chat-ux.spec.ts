@@ -141,3 +141,33 @@ test('ask_user com fields estruturados envia POST /api/gate ao pressionar Enter 
   await expect.poll(() => gatePayloads.length).toBe(1);
   expect(JSON.parse(String(gatePayloads[0]?.text)).host).toBe('192.168.64.7');
 });
+
+test('goal.confirm renderiza Markdown e envia Continuar ou Concluir para /api/gate', async ({ page }) => {
+  const gatePayloads: Record<string, unknown>[] = [];
+  await page.route('**/api/gate', (route) => {
+    gatePayloads.push(route.request().postDataJSON() as Record<string, unknown>);
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
+  });
+  await startRun(page, [
+    { type: 'run_started' },
+    {
+      type: 'gate',
+      nodeId: 'agente',
+      text: '## Resumo\n- **Status**: OK',
+      meta: { tool: 'goal.confirm', kind: 'respond' },
+    },
+  ]);
+
+  const status = page.getByTestId('turn-status');
+  await expect(status).toHaveText('Aguardando confirmação');
+  const card = page.locator('.live-chat-entry--gate');
+  await expect(card.locator('.live-chat-markdown strong')).toHaveText('Status');
+
+  await page.locator('#goal-confirm-instruction').fill('Verifique também os logs');
+  await card.getByRole('button', { name: 'Continuar' }).click();
+  await expect.poll(() => gatePayloads.length).toBe(1);
+  expect(JSON.parse(String(gatePayloads[0]?.text))).toEqual({
+    action: 'continue',
+    instruction: 'Verifique também os logs',
+  });
+});
