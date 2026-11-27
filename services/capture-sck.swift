@@ -14,10 +14,20 @@ var appName = ""
 var rate = 16000
 var listOnly = false
 let args = CommandLine.arguments
+var pidExcludes = Set<Int32>()
+var nameExcludes = Set<String>()
 var i = 1
 while i < args.count {
     if args[i] == "--app" && i + 1 < args.count { i += 1; appName = args[i] }
     else if args[i] == "--rate" && i + 1 < args.count { i += 1; rate = Int(args[i]) ?? 16000 }
+    else if args[i] == "--exclude-pid" && i + 1 < args.count {
+        i += 1
+        if let p = Int32(args[i]) { pidExcludes.insert(p) }
+    }
+    else if args[i] == "--exclude-name" && i + 1 < args.count {
+        i += 1
+        nameExcludes.insert(args[i].lowercased())
+    }
     else if args[i] == "--list" { listOnly = true }
     i += 1
 }
@@ -109,7 +119,17 @@ for attempt in 1...30 {
         exit(3)
     }
     if appName.isEmpty {
-        filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+        // Nomes são resolvidos AQUI, no momento do filtro — pega processo que subiu depois do start().
+        let excluded = c.applications.filter { app in
+            if pidExcludes.contains(app.processID) { return true }
+            let name = app.applicationName.lowercased()
+            let bundle = app.bundleIdentifier.lowercased()
+            return nameExcludes.contains { token in name.contains(token) || bundle.contains(token) }
+        }
+        if !excluded.isEmpty {
+            log("ignorando áudio próprio: \(excluded.map { "\($0.applicationName)(\($0.processID))" }.joined(separator: ","))")
+        }
+        filter = SCContentFilter(display: display, excludingApplications: excluded, exceptingWindows: [])
         break
     }
     let apps = c.applications.filter {

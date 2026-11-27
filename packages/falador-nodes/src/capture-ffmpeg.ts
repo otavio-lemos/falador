@@ -31,6 +31,21 @@ export function resolveSounddeviceInput(rawInput: string): string {
   return trimmed === '' ? 'Microfone' : trimmed.replace(/^:/, '').trim();
 }
 
+/** PIDs dos nossos serviços de áudio e do afplay, para o SCK ignorar no modo "todos". */
+async function ownAudioPids(explicit?: string): Promise<number[]> {
+  if (explicit !== undefined) {
+    return explicit.split(/[\s,]+/).map((n: string): number => Number(n)).filter((n: number) => Number.isFinite(n) && n > 0);
+  }
+  try {
+    const { stdout } = await promisify(execFile)('pgrep', [
+      '-f', 'services/(sts-sidecar|omni-sidecar)\\.py|mlx_audio/server\\.py|omlx serve|/afplay ',
+    ]);
+    return stdout.split(/[\s,]+/).map((n: string): number => Number(n)).filter((n: number) => Number.isFinite(n) && n > 0);
+  } catch {
+    return []; // pgrep exit 1 = nenhum processo nosso rodando
+  }
+}
+
 export const captureFfmpeg: NodeTypeDef = {
   type: 'capture.ffmpeg',
   sourceOnly: true,
@@ -44,6 +59,8 @@ export const captureFfmpeg: NodeTypeDef = {
     'pythonPath',
     'sidecarPath',
     'sckPath',
+    'excludePids',
+    'excludeNames',
     'muted',
     'placeholder',
     'initialMessage',
@@ -71,7 +88,7 @@ export const captureFfmpeg: NodeTypeDef = {
         errs.push({ path: `params.${k}`, code: 'INVALID_PARAM', message: `${k} deve ser número > 0` });
       }
     }
-    for (const k of ['ffmpegPath', 'pythonPath', 'sidecarPath', 'sckPath', 'placeholder', 'initialMessage'] as const) {
+    for (const k of ['ffmpegPath', 'pythonPath', 'sidecarPath', 'sckPath', 'excludePids', 'excludeNames', 'placeholder', 'initialMessage'] as const) {
       if (p[k] !== undefined && typeof p[k] !== 'string') {
         errs.push({ path: `params.${k}`, code: 'INVALID_PARAM', message: `${k} deve ser string` });
       }
@@ -158,12 +175,24 @@ export const captureFfmpeg: NodeTypeDef = {
         const isLegacyIndex = /^:\d+$/.test(rawInput);
         // sounddevice: device de entrada — vazio ⇒ 'Microfone' como substring padrão.
         const sdDevice = resolveSounddeviceInput(input);
+        // Nomes são resolvidos DENTRO do SCK, no momento do filtro — pega processo que subir depois.
+        // Sem "python" genérico: PIDs vêm dos argumentos exatos dos nossos serviços;
+        // afplay é efêmero e é resolvido por nome dentro do SCK.
+        const excludeNames = String(ctx.params.excludeNames ?? 'afplay,omlx')
+          .split(/[\s,]+/).map((s: string) => s.trim().toLowerCase()).filter(Boolean);
+        const excludeArgs = backend === 'sck'
+          ? [
+              ...(await ownAudioPids(ctx.params.excludePids as string | undefined))
+                .flatMap((p) => ['--exclude-pid', String(p)]),
+              ...excludeNames.flatMap((n) => ['--exclude-name', n]),
+            ]
+          : [];
         const args = backend === 'sounddevice'
           ? [sidecarPath, '--device', sdDevice, '--rate', String(sampleRate), '--chunk-ms', String(chunkMs)]
           : backend === 'sck'
             ? (sckApp && sckApp !== 'auto' && !isLegacyIndex
-              ? ['--app', sckApp, '--rate', String(sampleRate)]
-              : ['--rate', String(sampleRate)])
+              ? ['--app', sckApp, '--rate', String(sampleRate), ...excludeArgs]
+              : ['--rate', String(sampleRate), ...excludeArgs])
             : [
               '-f', 'avfoundation',
               '-i', input,

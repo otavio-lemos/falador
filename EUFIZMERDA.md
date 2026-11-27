@@ -93,3 +93,30 @@
 - Teste E2E real do workflow `tradutor.json` com `nemotron-3.5-asr-streaming-0.6b` no `:8090` + `translate.llm` `:8080` + `sts-sidecar.py` `:8091`.
 - Teste E2E real do workflow `tradutor-omni.json` com `omni-sidecar.py` no `:8092` após o ajuste de prompt.
 - Teste da suíte completa de `packages/falador-nodes/test/` após todas as edições finais.
+
+---
+
+## 4. Status após a finalização (2026-11-27)
+
+O histórico acima fica como registro. O que foi corrigido:
+
+1. **Eco / `outputMode` (`tradutor-omni.json`)** — RESOLVIDO. `outputMode` restaurado para `"speak"`. A causa real do texto repetido era `applyInputMode()` em `apps/web/src/App.tsx` apagar `params.input`: o `capture-sck` subia com `app=TODOS` e recapturava o `afplay` do próprio TTS. Fix: o app configurado no flow (`Google Chrome`) é preservado. Regressão em `apps/web/tests/capture-app-scope.spec.ts` (falha sem o fix, passa com ele). O nó de captura também passa a mandar `--exclude-pid` (PIDs dos nossos serviços, via `pgrep -f` dos argumentos exatos) e `--exclude-name afplay,omlx`, resolvidos **no momento do filtro** do SCK — processo que sobe depois do `start()` também é excluído.
+
+2. **`tradutor.json` / Nemotron no `:8090`** — RESOLVIDO e verificado ao vivo na sessão anterior: o WS usa o path local `/Users/otaviolemos/.lmstudio/models/mlx-community/nemotron-3.5-asr-streaming-0.6b`; transcreveu frase real de 6,36 s em 7,2 s, sem `Fetching 4 files`. A aresta morta `capture1.out_text → translate3.in` foi removida (`out_text` só existe no backend `chat`).
+
+3. **Streaming vs VAD / Omni** — `translate.llm` continua traduzindo por frase (descarta parciais por design, igual ao `llm.omlx`); `asr.realtime.translate` (ex-`asr.lfm3`) com `flushSec: 6` foi mantido por decisão do dono (testar ao vivo antes de mexer). `services/omni-sidecar.py`: a instrução saiu de `role:'system'` e foi para o mesmo `message` do áudio; verificado ao vivo na sessão anterior (`/asr-translate` 200, PT puro, 472 ms; `/tts` 200, WAV 24 kHz).
+
+4. **Builder com legendas órfãs** — RESOLVIDO: `apps/web/src/views/BuilderView.tsx` só renderiza legendas de `runner.testMode` iniciado no Builder; regressão em `apps/web/tests/builder-caption-scope.spec.ts` (falha sem o fix, passa com ele).
+
+### Verificação desta finalização (2026-11-27)
+- `packages/falador-nodes`: **254 pass / 2 skip / 0 fail**.
+- `packages/falador-graph`: **49/49**.
+- host HTTP + runner CLI: **32/32**.
+- `apps/web`: `tsc --noEmit` + `vite build` verdes.
+- Playwright: **53/53**.
+- `services/capture-sck` recompilado com suporte a `--exclude-pid` / `--exclude-name`.
+
+### Ainda NÃO verificado ao vivo
+- E2E completo dos flows com SCK/Chrome em conferência real (áudio de call de verdade).
+- Exclusão por nome dos tokens `afplay`/`omlx` observada ao vivo: a prova ao vivo anterior usou `--exclude-name chrome` (4 processos Chrome) e `--exclude-pid` com o PID do Chrome; os tokens `afplay`/`omlx` só serão observados se esses processos aparecerem no `SCShareableContent`.
+- `tradutor-omni` rodando de ponta a ponta após o fix do app preservado (o teste automatizado cobre o payload `input=Google Chrome`; falta a call real).

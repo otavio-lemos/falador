@@ -27,13 +27,23 @@ test('Speech Translation com LFM3-Omni mostra MLX-VLM:8092, não mlx-audio', asy
 });
 
 test('trocar modelo do Omni mantém a opção Omni no dropdown e troca a porta', async ({ page }) => {
+  // catálogo determinístico: o teste não depende de omlx/cache estarem no ar.
+  await page.route('**/api/models**', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      omlx: ['LFM3-Omni-2B-MLX-8bit'],
+      cache: ['LiquidAI/LFM3-Audio-2B-MLX-8bit', 'LFM3-Audio-2B-MLX-8bit'],
+      details: [],
+    }),
+  }));
   await openRunner(page, 'tradutor-omni');
   const st = page.locator('.stage-dd').filter({ hasText: 'Speech Translation' });
   const modelCombo = st.getByRole('combobox').nth(1);
 
   await modelCombo.click();
   await expect(page.getByRole('option').filter({ hasText: 'LFM3-Omni-2B-MLX-8bit' })).toHaveCount(1);
-  await page.getByRole('option').filter({ hasText: /^LiquidAI\/LFM3-Audio/ }).first().click();
+  await page.getByRole('option').filter({ hasText: /^LFM3-Audio/ }).first().click();
   await expect(stage(page, 'Speech Translation')).toHaveText('MLX-AUDIO:8091');
 
   // O bug: depois de escolher outro, o Omni sumia do dropdown e não dava pra voltar.

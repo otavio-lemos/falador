@@ -161,3 +161,33 @@ test('C4: muted=true em capture.ffmpeg, tts.sts e sink.playback não spawna/emit
     assert.ok(validated.nodes.size > 0, `${rel} deve validar com muted=true`);
   }
 });
+
+test('C4: excludePids passa --exclude-pid ao capture-sck', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'falador-exclude-'));
+  const argsFile = join(dir, 'args');
+  const path = join(dir, 'fake-sck');
+  // escrita atômica: o teste nunca lê um arquivo pela metade
+  writeFileSync(path, `#!/bin/sh\nprintf '%s\\n' "$@" > "${argsFile}.tmp"\nmv "${argsFile}.tmp" "${argsFile}"\nexec sleep 30\n`);
+  chmodSync(path, 0o755);
+  const node = captureFfmpeg.create(makeCtx({
+    backend: 'sck', input: '', chunkMs: 80, sckPath: path, excludePids: '111, 222', excludeNames: 'afplay, python',
+  }));
+  await node.start();
+  try {
+    let args: string[] = [];
+    for (let i = 0; i < 100 && args.length === 0; i++) {
+      try {
+        args = readFileSync(argsFile, 'utf-8').trim().split('\n').filter(Boolean);
+      } catch {
+        await new Promise<void>((r) => setTimeout(r, 20));
+      }
+    }
+    assert.deepEqual(args, [
+      '--rate', '16000',
+      '--exclude-pid', '111', '--exclude-pid', '222',
+      '--exclude-name', 'afplay', '--exclude-name', 'python',
+    ]);
+  } finally {
+    await node.stop();
+  }
+});

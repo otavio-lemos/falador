@@ -268,7 +268,8 @@ export function App() {
           params.input = '';
         } else {
           params.backend = 'sck';
-          params.input = '';
+          // NÃO apagar o app configurado no flow: input vazio faz o capture-sck capturar
+          // TODOS os apps — inclusive o afplay da própria tradução (eco e texto repetido).
         }
         return { ...n, enabled: true, params };
       }
