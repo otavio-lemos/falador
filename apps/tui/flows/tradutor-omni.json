@@ -31,10 +31,10 @@
       "params": {
         "mode": "callback",
         "showParcials": true,
-        "outputMode": "speak",
+        "outputMode": "write",
         "language": "Portuguese",
         "voice": "male",
-        "isDefault": false,
+        "isDefault": true,
         "ttsUrl": "http://127.0.0.1:8092",
         "playbackRate": 1.15,
         "maxQueue": 4,
