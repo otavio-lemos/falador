@@ -54,10 +54,12 @@ test('trocar modelo do Omni mantém a opção Omni no dropdown e troca a porta',
 });
 
 test('Transcription/Translate/Output mostram as portas dos respectivos serviços', async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem('falador.outputMode', 'speak'));
   await openRunner(page, 'tradutor');
   await expect(stage(page, 'Transcription')).toHaveText('MLX-AUDIO:8090');
   await expect(stage(page, 'Translate')).toHaveText('OMLX:8080');
+  // tradutor*.json sai em modo write (sem TTS repetindo o Chrome); o toggle volta a falar.
+  await expect(stage(page, 'Output')).toHaveText('NODE.JS:8787');
+  await page.getByRole('button', { name: 'Falar' }).click();
   await expect(stage(page, 'Output')).toHaveText('MLX-AUDIO:8091');
 });
 

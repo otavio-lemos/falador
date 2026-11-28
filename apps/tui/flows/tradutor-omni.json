@@ -34,10 +34,11 @@
         "outputMode": "speak",
         "language": "Portuguese",
         "voice": "male",
-        "isDefault": true,
+        "isDefault": false,
         "ttsUrl": "http://127.0.0.1:8092",
-        "playbackRate": 1.25,
-        "maxQueue": 2
+        "playbackRate": 1.15,
+        "maxQueue": 4,
+        "sampleRateHz": 16000
       }
     }
   ],

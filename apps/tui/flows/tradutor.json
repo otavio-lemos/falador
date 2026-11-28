@@ -29,7 +29,7 @@
       "type": "translate.llm",
       "params": {
         "baseUrl": "http://127.0.0.1:8080",
-        "model": "LiquidAI--LFM3-1.7B-MLX-4bit",
+        "model": "LFM3-Omni-2B-MLX-8bit",
         "targetLanguage": "Portuguese",
         "enableThinking": false,
         "temperature": 0.1,
@@ -41,8 +41,8 @@
       "type": "sink.captions",
       "params": {
         "mode": "callback",
-        "showParcials": true,
-        "outputMode": "speak",
+        "showParcials": false,
+        "outputMode": "write",
         "language": "Portuguese",
         "voice": "male",
         "isDefault": true,

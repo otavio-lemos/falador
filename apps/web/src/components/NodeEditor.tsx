@@ -74,7 +74,7 @@ export function NodeEditor({ nodeId, data, onChange, onClose, metrics, events, m
                   doc={docs[name]}
                   value={p[name]}
                   onChange={(v) => set(name, v)}
-                  nodeModels={name === 'model' ? nodeModels : []}
+                  nodeModels={docs[name]?.control === 'model' ? nodeModels : []}
                   apps={name === 'input' && data.type.startsWith('capture.') ? apps : []}
                   onRefreshApps={onRefreshApps}
                 />
