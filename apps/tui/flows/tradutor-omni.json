@@ -1,7 +1,7 @@
 {
   "version": 1,
   "stopWhenSourcesDone": false,
-  "description": "Tradução somente com LFM3-Omni-2B-MLX-8bit (:8092) para comparação lado a lado com o pipeline Nemotron + LFM3-1.7B + LFM3-Audio.",
+  "description": "Tradução nativa LFM3-Omni-2B (:8092): captura SCK (Chrome) → ASR+tradução nativa → Output (write padrão; speak via :8092).",
   "nodes": [
     {
       "id": "capture1",
@@ -24,22 +24,6 @@
         "sampleRateHz": 16000,
         "flushSec": 6
       }
-    },
-    {
-      "id": "sink4",
-      "type": "sink.captions",
-      "params": {
-        "mode": "callback",
-        "showParcials": true,
-        "outputMode": "write",
-        "language": "Portuguese",
-        "voice": "male",
-        "isDefault": true,
-        "ttsUrl": "http://127.0.0.1:8092",
-        "playbackRate": 1.15,
-        "maxQueue": 4,
-        "sampleRateHz": 16000
-      }
     }
   ],
   "edges": [
@@ -49,12 +33,6 @@
       "capacity": 32,
       "overflow": "drop_oldest",
       "ttlMs": 1500
-    },
-    {
-      "from": "asr2.out",
-      "to": "sink4.in",
-      "capacity": 16,
-      "overflow": "drop_oldest"
     }
   ]
 }

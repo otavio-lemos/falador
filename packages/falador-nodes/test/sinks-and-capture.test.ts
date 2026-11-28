@@ -356,9 +356,13 @@ describe('sink.captions', () => {
         nodes: Array<{ type: string; params: Record<string, unknown> }>;
       };
       const sink = flow.nodes.find((n) => n.type === 'sink.captions');
-      assert.ok(sink, `${file} precisa de sink.captions`);
-      const params = sink!.params;
-      assert.equal(params.outputMode, 'speak', file);
+      if (!sink) {
+        const asrTranslate = flow.nodes.find((n) => n.type === 'asr.realtime.translate');
+        assert.ok(asrTranslate && asrTranslate.params?.outputRequired !== true, `${file} sem sink.captions exige asr.realtime.translate com outputRequired !== true`);
+        continue;
+      }
+      const params = sink.params;
+      assert.equal(params.outputMode, 'write', `${file}: default salvo é write (sem duplicar fala do Chrome)`);
       assert.equal(params.language, 'Portuguese', file);
       assert.equal(params.voice, 'male', file);
       assert.equal(params.playbackRate, 1.25, file);
@@ -391,7 +395,7 @@ describe('sink.captions', () => {
       const port = (srv.address() as { port: number }).port;
 
       const ctx = makeCtx(
-        { ...params, ttsUrl: `http://127.0.0.1:${port}`, player: fakePlayer },
+        { ...params, outputMode: 'speak', ttsUrl: `http://127.0.0.1:${port}`, player: fakePlayer },
         { __onCaption: () => {} },
       );
       const node = sinkCaptions.create(ctx) as NodeRuntime;

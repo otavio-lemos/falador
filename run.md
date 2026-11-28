@@ -1,7 +1,7 @@
 # run.md — Guia de operação do Falador (subir · usar · derrubar)
 
 > Como subir todos os serviços, acessar a UI, rodar testes e desligar tudo.
-> Última atualização: 2026-11-21. Hardware de referência: MacBook Pro M4 Pro 48 GB.
+> Última atualização: 2026-11-28. Hardware de referência: MacBook Pro M4 Pro 48 GB.
 > Regra de ouro: **modelos são RESIDENTES** (carga fria 1,5–1,8 s — nunca recarregar por utterance, AGENTS.md §4/L2).
 
 ---
@@ -10,10 +10,10 @@
 
 | Porta | Serviço | O que faz | Modelo residente |
 |---|---|---|---|
-| **8080** | `omlx-server` (brew, Apache-2.0) | LLM texto, OpenAI-compat (SSE) | LFM3-1.7B-MLX-4bit (tradução, decisão, assistente) |
-| **8090** | `python -m mlx_audio.server` | ASR **streaming** OpenAI Realtime subset (`/v1/realtime`) | Voxtral-Mini-4B-Realtime-2602-4bit |
-| **8091** | `services/sts-sidecar.py` (nosso) | `POST /tts` (WAV) + `POST /tts-stream` (PCM por frame) + `POST /asr-translate` (tradução nativa por janela) | LFM3-Audio-2B-MLX-8bit |
-| **8092** | `services/omni-sidecar.py` (nosso) | mesmos endpoints do 8091 (`/tts`, `/tts-stream`, `/asr-translate`) | LFM3-Omni-2B-MLX-8bit |
+| **8080** | `omlx-server` (brew, Apache-2.0) | LLM texto, OpenAI-compat (SSE) + `/v1/systemone` | `LFM3-Omni-2B-MLX-8bit` / `LFM3-1.7B-MLX-4bit` / `d1-2B-MLX-4bit` |
+| **8090** | `python -m mlx_audio.server` | ASR **streaming** OpenAI Realtime subset (`/v1/realtime`) | `nemotron-3.5-asr-streaming-0.6b` (40 idiomas, auto-detect EN/PT; Voxtral-4B também suportado) |
+| **8091** | `services/sts-sidecar.py` (nosso) | `POST /tts` (WAV) + `POST /tts-stream` (PCM por frame) + `POST /asr-translate` (tradução nativa por janela, `role:"system"`) | `LFM3-Audio-2B-MLX-8bit` |
+| **8092** | `services/omni-sidecar.py` (nosso) | mesmos endpoints do 8091 (`/tts`, `/tts-stream`, `/asr-translate` via `stream_slots` `generation_mode="text"`) | `LFM3-Omni-2B-MLX-8bit` |
 | **8787** | `apps/web-server.mjs` (nosso, zero-dep) | UI web + host: catálogo, flows, run NDJSON/SSE, gates | — (spawn do runner) |
 
 Nenhum serviço sai para a rede — tudo bind em `127.0.0.1`.
@@ -104,7 +104,7 @@ import base64, json, urllib.request
 wav = open('/tmp/smoke.wav','rb').read()
 req = urllib.request.Request('http://127.0.0.1:8091/asr-translate',
   data=json.dumps({'audioB64': base64.b64encode(wav).decode(),
-    'instruction': 'Transcribe the audio and translate it to Brazilian Portuguese. Output only the translation, nothing else.',
+    'instruction': 'Translate the following speech into Brazilian Portuguese in text form. Respond in text.',
     'sample_rate': 24000}).encode(), headers={'Content-Type':'application/json'})
 print(json.loads(urllib.request.urlopen(req, timeout=60).read()))
 EOF
@@ -127,11 +127,11 @@ EOF
 
 | Flow | O que é |
 |---|---|
-| `assistente-entrevista.json` | **Default (ADR-005/006):** captura SCK (`drop_oldest`, `ttlMs: 1500`) → Voxtral streaming → transcrição → `turn.detector` (`d1`,systemone, fronteira de turno) → assistente LLM → votação `d1` auto/humano → sugestão na tela (auto) ou card editável (humano). Sem TTS = sem eco |
-| `traducao-transcricao.json` | **Tradução / Transcrição unificada (2026-11-23):** captura SCK → Voxtral streaming → `translate.llm` (passthrough se idioma desabilitado) → Output (`write` legenda / `speak` TTS). Idioma de destino + modo write/speak ajustáveis em runtime |
-| `revisao-servidor-ops.json` | **Ops / SRE com risco e HITL (ADR-007, chat-only):** pedido digitado → planejador LLM (`useContext: true`, RAG BM25) → triagem `d1` (`leitura_segura` / `sensivel` / `bloqueado`) → `human.approve` → `exec.command` (`dryRun: true`) → analista LLM → diagnóstico |
-| `agente-workflows.json` | **Agente Especialista em Workflows (chat-only):** `input.chat` → `agent.tools` com `tool.workflow` (valida/salva workflows e auto-atualiza o AGENTS.md) + `tool.web_search` (anti-SSRF) → legendas. Botão «Agente Workflows» na TopBar |
-| `test/demo-engine` / `test/demo-live` | fixtures de smoke (sintético / integração omlx+sidecar) — em `flows/test/`, fora do dropdown |
+| `entrevista.json` | **Entrevista técnica (ADR-005/006):** captura SCK → ASR streaming → `turn.detector` (`d1`, systemone) → assistente LLM → votação `d1` auto/humano → sugestão na tela (auto) ou card editável (humano) |
+| `tradutor.json` | **Tradução contínua em pipeline:** captura SCK (`Google Chrome`) → ASR Nemotron (`:8090`, EN/PT auto) → `translate.llm` (`LFM3-Omni-2B` no `:8080`, prompt SFT oficial) → Output (`write` padrão; `speak` via `:8091`) |
+| `tradutor-omni.json` | **Tradução nativa ponta-a-ponta com Omni:** captura SCK (`Google Chrome`) → `asr.realtime.translate` (`LFM3-Omni-2B` no `:8092`, `flushSec: 6`, `role:"system"` + `generation_mode:"text"`) → Output (`write` padrão; `speak` via `:8092`) |
+| `especialista-ti.json` | **Ops / SRE auditado (ADR-007/012):** entrevista inicial (`ask_user`) → plano verificável (`update_plan`) → `agent.tools` + SSH persistente (`exec.command`) + RAG BM25 + avaliador independente `validateGoal` |
+| `agente-workflows.json` | **Agente Especialista em Workflows (chat-only):** `capture.ffmpeg` (`chat`) → `agent.tools` com `tool.workflow` (valida/salva workflows e auto-atualiza o `AGENTS.md`) + `tool.web_search` → legendas |
 
 > Captura nos flows: `backend: 'sck'`, `input: ''` — **escolha o app da call** no Inspector (Teams, zoom.us, Google Chrome…). SCK ouve SÓ esse app; precisa de permissão de Gravação de Tela (Ajustes → Privacidade e Segurança).
 

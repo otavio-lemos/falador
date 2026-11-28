@@ -190,6 +190,7 @@ export const PARAM_HELP: Record<string, Record<string, ParamDoc>> = {
     maxPendingMs: { help: 'teto em ms de áudio retido antes de conectar/reconectar (anti-drift)', def: '2000', control: 'slider', min: 200, max: 10000, step: 200, unit: 'ms' },
     emitInterruptOnSpeech: { help: 'emite barge-in (interrupt) quando fala recomeça para abortar geração obsoleta', def: 'false', control: 'toggle' },
     bargeInDebounceMs: { help: 'duração mínima de fala sustentada (ms) para disparar interrupt (filtra ruído)', def: '300', control: 'slider', min: 50, max: 1500, step: 50, unit: 'ms' },
+    outputRequired: { help: 'exige conexão na porta de saída out (OFF = funciona sem nó Output)', def: 'false', control: 'toggle' },
   },
   'asr.realtime.translate': {
     url: { help: 'sidecar de tradução (POST /asr-translate)', def: 'http://127.0.0.1:8091' },
@@ -200,6 +201,7 @@ export const PARAM_HELP: Record<string, Record<string, ParamDoc>> = {
     flushSec: { help: 'janela de tradução (s). Janela que corta a frase faz o modelo transcrever em vez de traduzir — use ≥ duração da fala', def: '30', control: 'slider', min: 3, max: 60, step: 1, unit: 's' },
     timeoutMs: { help: 'timeout de cada tradução (ms)', def: '120000' },
     maxTranslateChars: { help: 'corta a tradução em N caracteres', def: '4000' },
+    outputRequired: { help: 'exige conexão na porta de saída out (OFF = funciona sem nó Output)', def: 'false', control: 'toggle' },
   },
   'translate.llm': {
     baseUrl: { help: 'servidor OpenAI-compat (omlx)', def: 'http://127.0.0.1:8080' },

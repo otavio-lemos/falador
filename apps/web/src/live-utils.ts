@@ -604,8 +604,9 @@ export function isVadModel(id: string): boolean {
   return /silero|vad\b|diar |sortformer/i.test(s);
 }
 
-// STT / ASR — reconhecimento de fala
+// STT / ASR — reconhecimento de fala (exclui GGUF pois o server mlx-audio exige MLX StreamingSession)
 export function isAsrModel(id: string, modelType?: string): boolean {
+  if (/\.gguf$|gguf/i.test(id)) return false;
   if (modelType === 'audio_stt') return true;
   if (modelType && modelType !== 'vlm') return false;
   const s = norm(id);

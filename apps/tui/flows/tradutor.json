@@ -1,7 +1,7 @@
 {
   "version": 1,
   "stopWhenSourcesDone": false,
-  "description": "Tradução contínua em tempo real: captura por app (SCK) → ASR streaming Voxtral (:8090) → tradutor LLM (:8080) → Output (:8091 se voz).",
+  "description": "Tradução contínua: captura SCK (Chrome) → ASR Nemotron (:8090) → tradução LFM3-Omni-2B (:8080) → Output (write padrão; speak via :8091).",
   "nodes": [
     {
       "id": "capture1",

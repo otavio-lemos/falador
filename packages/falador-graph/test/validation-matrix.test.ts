@@ -370,6 +370,32 @@ test('outputsFor: portas dinâmicas entram na validação e no in-degree', () =>
     () => validateFlow(bad, registryToMap(registry)),
     (err: unknown) => err instanceof GraphError && err.code === 'UNKNOWN_PORT',
   );
+
+  // V6 DEAD_OUTPUT_PORT respeita required de outputsFor(params) por instância
+  const optToggle: NodeTypeDef = {
+    type: 'test.optToggle',
+    paramNames: ['outputRequired'],
+    inputs: [{ name: 'in', type: 'phrase' }],
+    outputs: [{ name: 'out', type: 'phrase', required: false }],
+    outputsFor: (p) => [{ name: 'out', type: 'phrase', required: p.outputRequired === true }],
+    create: () => ({ async start() {}, async onInput() {}, async stop() {} }),
+  };
+  const mOpt = registryToMap(reg().register(optToggle));
+  const fOpt: FlowSpec = {
+    version: 1,
+    stopWhenSourcesDone: true,
+    nodes: [
+      { id: 'src', type: 'source.tone', params: { count: 1 } },
+      { id: 'n', type: 'test.optToggle', params: {} },
+    ],
+    edges: [{ from: 'src.out', to: 'n.in' }],
+  };
+  validateFlow(fOpt, mOpt);
+  validateFlow({ ...fOpt, nodes: [fOpt.nodes[0], { id: 'n', type: 'test.optToggle', params: { outputRequired: false } }] }, mOpt);
+  assert.throws(
+    () => validateFlow({ ...fOpt, nodes: [fOpt.nodes[0], { id: 'n', type: 'test.optToggle', params: { outputRequired: true } }] }, mOpt),
+    (err: unknown) => err instanceof GraphError && err.code === 'DEAD_OUTPUT_PORT',
+  );
 });
 
 test('V10 — tool.mcp exige allowedTools não-vazio; SSH com allowedHosts vazio continua válido', () => {

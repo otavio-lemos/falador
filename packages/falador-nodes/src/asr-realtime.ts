@@ -9,6 +9,9 @@
 //                    input_audio_buffer.speech_started/.speech_stopped, error.
 // Modo 'server_vad' (default): Silero roda no server e auto-committa cada fala — ideal p/ conferência.
 // Modo 'manual': cliente comita por commitEveryMs após a última chegada de áudio.
+import { existsSync, readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { NodeCtx, NodeRuntime, NodeTypeDef } from '../../falador-graph/src/index.ts';
 import { inheritTrace, type TraceMeta } from './trace.ts';
 
@@ -19,6 +22,55 @@ export const LFM3_AUDIO_SNAPSHOT =
 // Voxtral-Mini-4B-Realtime 4bit — streaming STT nativo (contrato StreamingSession), PT incluído.
 export const VOXTRAL_SNAPSHOT =
   '/Users/otaviolemos/.cache/huggingface/hub/models--mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit/snapshots/fdebf7b2af834a1db4b8a3c99ab7480b333adf9e';
+
+/**
+ * mlx_audio/server.py (:8090) exige path local do snapshot para não tentar baixar do HF
+ * nem rejeitar IDs do omlx com `--` ou repo sem org (L28). Se `raw` já existe ou não há
+ * match local, devolve `raw` inalterado.
+ */
+export function resolveLocalAsrModelPath(raw: string, home = homedir()): string {
+  const trimmed = raw.trim();
+  if (!trimmed || existsSync(trimmed)) return trimmed;
+  const normalized = trimmed.replace(/^models--/, '').replace(/--/g, '/');
+  const parts = normalized.split('/').filter(Boolean);
+  const lmRoot = join(home, '.lmstudio', 'models');
+  const hfRoot = join(home, '.cache', 'huggingface', 'hub');
+
+  if (parts.length >= 2) {
+    const [org, repo] = [parts[parts.length - 2], parts[parts.length - 1]];
+    const lmCandidate = join(lmRoot, org, repo);
+    if (existsSync(lmCandidate)) return lmCandidate;
+    const hfSnaps = join(hfRoot, `models--${org}--${repo}`, 'snapshots');
+    if (existsSync(hfSnaps)) {
+      try {
+        const revs = readdirSync(hfSnaps).filter((d) => !d.startsWith('.'));
+        if (revs.length > 0) return join(hfSnaps, revs[0]);
+      } catch { /* ignore */ }
+    }
+  } else if (parts.length === 1) {
+    const repo = parts[0];
+    if (existsSync(lmRoot)) {
+      try {
+        for (const org of readdirSync(lmRoot)) {
+          if (org.startsWith('.')) continue;
+          const cand = join(lmRoot, org, repo);
+          if (existsSync(cand)) return cand;
+        }
+      } catch { /* ignore */ }
+    }
+    if (existsSync(hfRoot)) {
+      try {
+        const hit = readdirSync(hfRoot).find((d) => d.startsWith('models--') && d.endsWith(`--${repo}`));
+        if (hit) {
+          const snaps = join(hfRoot, hit, 'snapshots');
+          const revs = readdirSync(snaps).filter((d) => !d.startsWith('.'));
+          if (revs.length > 0) return join(snaps, revs[0]);
+        }
+      } catch { /* ignore */ }
+    }
+  }
+  return trimmed;
+}
 
 export const asrRealtime: NodeTypeDef = {
   type: 'asr.realtime',
@@ -32,11 +84,16 @@ export const asrRealtime: NodeTypeDef = {
     'maxPendingMs',
     'emitInterruptOnSpeech',
     'bargeInDebounceMs',
+    'outputRequired',
   ],
   bindingNames: ['__onCaption'],
   inputs: [{ name: 'in', type: 'pcm16k' }],
   outputs: [
     { name: 'out', type: 'tokens_parcial', required: false },
+    { name: 'final', type: 'phrase', required: false },
+  ],
+  outputsFor: (p) => [
+    { name: 'out', type: 'tokens_parcial', required: p.outputRequired === true },
     { name: 'final', type: 'phrase', required: false },
   ],
   validateParams: (p) => {
@@ -60,12 +117,16 @@ export const asrRealtime: NodeTypeDef = {
     if (p.emitInterruptOnSpeech !== undefined && typeof p.emitInterruptOnSpeech !== 'boolean') {
       errs.push({ path: 'params.emitInterruptOnSpeech', code: 'INVALID_PARAM', message: 'emitInterruptOnSpeech deve ser boolean' });
     }
+    if (p.outputRequired !== undefined && typeof p.outputRequired !== 'boolean') {
+      errs.push({ path: 'params.outputRequired', code: 'INVALID_PARAM', message: 'outputRequired deve ser boolean' });
+    }
     return errs;
   },
   create: (ctx: NodeCtx): NodeRuntime => {
     if (process.env.FALADOR_ASR_DEBUG) console.error('[asr dbg] CREATE chamado');
     const baseUrl = (ctx.params.url as string | undefined) ?? DEFAULT_URL;
-    const model = (ctx.params.model as string | undefined) ?? VOXTRAL_SNAPSHOT;
+    const rawModel = (ctx.params.model as string | undefined) ?? VOXTRAL_SNAPSHOT;
+    const model = resolveLocalAsrModelPath(rawModel);
     const inputRate = (ctx.params.inputRate as number | undefined) ?? 16000;
     const serverVad = (ctx.params.serverVad as boolean | undefined) ?? true;
     const commitEveryMs = (ctx.params.commitEveryMs as number | undefined) ?? 900;

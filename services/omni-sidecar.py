@@ -12,11 +12,14 @@ Expõe o mesmo contrato HTTP do sts-sidecar.py para uso direto nos nós `asr.lfm
 """
 import argparse
 import base64
+import io
 import json
 import os
+import re
 import tempfile
 import threading
 import time
+import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import numpy as np
@@ -26,6 +29,55 @@ PROCESSOR = None
 MODEL_PATH = None
 LOCK = threading.Lock()  # MLX não é thread-safe entre generates
 FRAMES_PER_CHUNK = 4  # 4 frames de 80 ms = 320 ms de áudio por decode
+SILENCE_RMS_FLOOR = 1.5e-4
+SILENCE_PEAK_FLOOR = 2.0e-3
+TOOL_CALL_RE = re.compile(r"<tool_call>.*?</tool_call>", re.DOTALL)
+
+
+def _normalize_tts_language(language: str) -> str:
+    """Cartão oficial LFM3-Omni-2B: para inglês em TTS, usar American/British English."""
+    s = (language or "Portuguese").strip()
+    if s.lower() == "english":
+        return "American English"
+    return s
+
+
+def _instruction_to_system_prompt(instruction: str) -> str:
+    """Converte a instrução do nó para o system prompt oficial do cartão LFM3-Omni-2B."""
+    s = instruction.strip()
+    low = s.lower()
+    if low.startswith("perform asr") or "verbatim in its original language" in low:
+        return "Perform ASR. Respond in text."
+    for prefix in (
+        "Transcribe the audio and translate it to ",
+        "Translate the spoken audio directly into ",
+        "Translate the following speech into ",
+    ):
+        if s.startswith(prefix):
+            rest = s[len(prefix):]
+            lang = rest.split(" in text form")[0].split(".")[0].strip()
+            if lang:
+                return f"Translate the following speech into {lang} in text form. Respond in text."
+    if "respond in text" not in low:
+        return f"{s.rstrip('.')}." + " Respond in text."
+    return s
+
+
+def _is_silent_wav(wav_bytes: bytes) -> bool:
+    """Evita alucinações ('Nada.', 'Thank you.', <tool_call>) em janelas mudas do SCK."""
+    try:
+        with wave.open(io.BytesIO(wav_bytes), "rb") as r:
+            if r.getsampwidth() != 2 or r.getnframes() == 0:
+                return r.getnframes() == 0
+            pcm = np.frombuffer(r.readframes(r.getnframes()), dtype=np.int16)
+        if pcm.size == 0:
+            return True
+        f = pcm.astype(np.float32) / 32768.0
+        rms = float(np.sqrt(np.mean(f * f)))
+        peak = float(np.max(np.abs(f)))
+        return rms < SILENCE_RMS_FLOOR and peak < SILENCE_PEAK_FLOOR
+    except Exception:
+        return False
 
 
 def _to_pcm16(wav):
@@ -39,8 +91,9 @@ def _pcm16_chunks(text, language, voice):
     from mlx_vlm.prompt_utils import apply_chat_template
     from mlx_vlm.utils import prepare_inputs
 
+    tts_lang = _normalize_tts_language(language)
     messages = [
-        {"role": "system", "content": f"Perform TTS in {language} using a {voice} voice."},
+        {"role": "system", "content": f"Perform TTS in {tts_lang} using a {voice} voice."},
         {"role": "user", "content": text},
     ]
     prompt = apply_chat_template(PROCESSOR, MODEL.config, messages)
@@ -89,8 +142,8 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def _handle_asr_translate(self):
-        from mlx_vlm import generate
         from mlx_vlm.prompt_utils import apply_chat_template
+        from mlx_vlm.utils import prepare_inputs
 
         t0 = time.monotonic()
         tmp_path = None
@@ -103,28 +156,41 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("audioB64 obrigatorio (WAV PCM16)")
             if not instruction:
                 raise ValueError("instruction obrigatoria")
-            # Evita que LFM3-Omni repita a transcrição original antes da tradução
-            prefix = "Transcribe the audio and translate it to "
-            if instruction.startswith(prefix):
-                lang = instruction[len(prefix):].split(".")[0].strip()
-                instruction = f"Translate the spoken audio directly into {lang}. Output ONLY the translation, nothing else."
 
             wav_bytes = base64.b64decode(wav_b64)
+            if _is_silent_wav(wav_bytes):
+                ms = int((time.monotonic() - t0) * 1000)
+                print(f"[omni-sidecar] POST /asr-translate 200 ({ms}ms) silent=true chars=0", flush=True)
+                self._send_json(200, {"text": ""})
+                return
+
+            sys_prompt = _instruction_to_system_prompt(instruction)
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
                 tf.write(wav_bytes)
                 tmp_path = tf.name
 
-            # LFM3-Omni MEDIDO 2026-11-27: instrução em role='system' => saída VAZIA.
-            # A instrução tem que vir no MESMO message do áudio (role='user'); no system
-            # o chat template põe <|audio|> e o modelo fecha com EOS sem gerar texto.
+            # Contrato oficial LFM3-Omni-2B: instrução em role='system', áudio isolado em
+            # role='user' e generation_mode='text' em stream_slots (suprime <|audio_start|> e
+            # <|mixed_start|> — sem isso o mlx_vlm.generate abria modo áudio e devolvia '').
             messages = [
-                {"role": "user", "content": instruction},
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": ""},
             ]
             with LOCK:
                 prompt = apply_chat_template(PROCESSOR, MODEL.config, messages, num_audios=1)
-                result = generate(MODEL, PROCESSOR, prompt, audio=[tmp_path], temperature=0)
+                inputs = prepare_inputs(
+                    PROCESSOR, images=None, audio=[tmp_path], videos=None, prompts=prompt, add_special_tokens=True
+                )
+                input_ids = inputs.pop("input_ids")
+                inputs.pop("attention_mask", None)
+                toks = []
+                for tok, _codes in MODEL.stream_slots(
+                    input_ids, max_tokens=512, generation_mode="text", temperature=0.0, **inputs
+                ):
+                    toks.append(tok)
+                raw_text = PROCESSOR.tokenizer.decode(toks, skip_special_tokens=True)
 
-            text_out = (getattr(result, "text", None) or "").strip()
+            text_out = TOOL_CALL_RE.sub("", raw_text or "").strip()
             ms = int((time.monotonic() - t0) * 1000)
             print(f"[omni-sidecar] POST /asr-translate 200 ({ms}ms) chars={len(text_out)}", flush=True)
             self._send_json(200, {"text": text_out})
@@ -152,7 +218,7 @@ class Handler(BaseHTTPRequestHandler):
             if not text:
                 self._send_json(400, {"error": "text obrigatorio"})
                 return
-            language = req.get("language", "Portuguese")
+            language = _normalize_tts_language(req.get("language", "Portuguese"))
             voice = req.get("voice", "male")
 
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:

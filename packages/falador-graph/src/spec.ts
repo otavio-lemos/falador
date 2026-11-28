@@ -199,7 +199,7 @@ export function validateFlow(raw: FlowSpec, registry: Map<string, NodeTypeDef>):
     if (!hasIn && !n.def.sourceOnly && !n.def.sink && !hasProviderOut && !isProviderOnlyNode) {
       throw new GraphError('DISCONNECTED_NODE', `nodes[${n.id}]`, 'nó sem entrada: declare sourceOnly (ou é um sink?)');
     }
-    for (const p of n.def.outputs) {
+    for (const p of resolvedOutputs) {
       const required = p.required !== false;
       const used = edges.some((e) => e.fromNode === n.id && e.fromPort === p.name);
       if (required && !used && !hasProviderOut) {

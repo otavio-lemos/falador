@@ -83,12 +83,13 @@ export const translateLlm: NodeTypeDef = {
           messages: [
             {
               role: 'system',
-              content: `You are a real-time spoken-language translator. Translate the user's text naturally into ${rawLang}. Output ONLY the translation, with no explanations, quotes, or extra commentary.`,
+              content: `Translate the following text into ${rawLang}. Respond in text.`,
             },
-            { role: 'user', content: userText },
+            { role: 'user', content: `Translate into ${rawLang}:\n${userText}` },
           ],
           temperature,
           max_tokens: maxTokens,
+          ...(userText.includes('\n\n') ? {} : { stop: ['\n\n'] }),
           stream: true,
           chat_template_kwargs: { enable_thinking: enableThinking },
         };
@@ -123,7 +124,8 @@ export const translateLlm: NodeTypeDef = {
                   ctx.metrics.timer('translate.llm.ttftMs', t0);
                   ttftLogged = true;
                 }
-                acc += delta;
+                acc = (acc + delta).replace(/^(?:<\|(?:mixed_start|audio_start|text_end)\|>)+/, '');
+                if (!acc) return;
                 void ctx
                   .emit(
                     'out',

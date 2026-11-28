@@ -288,7 +288,7 @@ describe('translate.llm', () => {
       bodies.push(JSON.parse(body));
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       res.write('data: {"choices":[{"delta":{"reasoning_content":"Identificar idioma"}}]}\n\n');
-      res.write('data: {"choices":[{"delta":{"content":"olá"}}]}\n\n');
+      res.write('data: {"choices":[{"delta":{"content":"<|mixed_start|>olá"}}]}\n\n');
       res.write('data: {"choices":[{"delta":{"content":" mundo"}}]}\n\n');
       res.write('data: [DONE]\n\n');
       res.end();

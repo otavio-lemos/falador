@@ -12,8 +12,11 @@ import {
   type FlowSpec,
 } from '../../falador-graph/src/index.ts';
 import { registerFaladorNodes, humanApprove } from '../src/index.ts';
+import { resolveLocalAsrModelPath } from '../src/asr-realtime.ts';
 import { validateFlow } from '../../falador-graph/src/index.ts';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { NodeTypeDef } from '../../falador-graph/src/index.ts';
 
@@ -126,8 +129,9 @@ describe('translate.llm, human.approve e asr.realtime.translate', () => {
       assert.deepEqual(seenBody.chat_template_kwargs, { enable_thinking: false });
       const msgs = seenBody.messages as Array<{ role: string; content: string }>;
       assert.equal(msgs[0].role, 'system');
-      assert.ok(msgs[0].content.includes('Portuguese'));
-      assert.equal(msgs[1].content, 'hello world-1');
+      assert.equal(msgs[0].content, 'Translate the following text into Portuguese. Respond in text.');
+      assert.equal(msgs[1].content, 'Translate into Portuguese:\nhello world-1');
+      assert.deepEqual(seenBody.stop, ['\n\n']);
 
       const payloads = collected.received.map((r) => r.payload as { text: string; final: boolean });
       assert.equal(payloads.filter((p) => !p.final).length, 2);
@@ -251,10 +255,38 @@ describe('translate.llm, human.approve e asr.realtime.translate', () => {
         await rg.done;
       }
       assert.equal(seenInstructions.length, 2);
-      assert.match(seenInstructions[0], /verbatim in its original language/i);
-      assert.match(seenInstructions[1], /translate it to English/i);
+      assert.equal(seenInstructions[0], 'Perform ASR. Respond in text.');
+      assert.equal(seenInstructions[1], 'Translate the following speech into English in text form. Respond in text.');
     } finally {
       await srv.close();
+    }
+  });
+
+  test('resolveLocalAsrModelPath resolve ids omlx/HF para diretórios locais em .lmstudio e .cache/huggingface', () => {
+    const fakeHome = mkdtempSync(join(tmpdir(), 'falador-asr-path-'));
+    try {
+      const lmModel = join(fakeHome, '.lmstudio', 'models', 'mlx-community', 'nemotron-3.5-asr-streaming-0.6b');
+      const hfSnap = join(
+        fakeHome,
+        '.cache',
+        'huggingface',
+        'hub',
+        'models--mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit',
+        'snapshots',
+        'abc123snap',
+      );
+      mkdirSync(lmModel, { recursive: true });
+      mkdirSync(hfSnap, { recursive: true });
+
+      assert.equal(resolveLocalAsrModelPath('nemotron-3.5-asr-streaming-0.6b', fakeHome), lmModel);
+      assert.equal(resolveLocalAsrModelPath('mlx-community--nemotron-3.5-asr-streaming-0.6b', fakeHome), lmModel);
+      assert.equal(resolveLocalAsrModelPath('mlx-community/nemotron-3.5-asr-streaming-0.6b', fakeHome), lmModel);
+      assert.equal(resolveLocalAsrModelPath('mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit', fakeHome), hfSnap);
+      assert.equal(resolveLocalAsrModelPath('Voxtral-Mini-4B-Realtime-2602-4bit', fakeHome), hfSnap);
+      assert.equal(resolveLocalAsrModelPath(lmModel, fakeHome), lmModel);
+      assert.equal(resolveLocalAsrModelPath('org-inexistente/modelo', fakeHome), 'org-inexistente/modelo');
+    } finally {
+      rmSync(fakeHome, { recursive: true, force: true });
     }
   });
 });

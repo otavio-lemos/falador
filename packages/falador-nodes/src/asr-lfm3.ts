@@ -10,14 +10,15 @@ import { postJsonBytes } from './sse.ts';
 
 const DEFAULT_URL = 'http://127.0.0.1:8091';
 const DEFAULT_INSTRUCTION =
-  'Transcribe the audio and translate it to Brazilian Portuguese. Output only the translation, nothing else.';
+  'Translate the following speech into Brazilian Portuguese in text form. Respond in text.';
 
 export const asrLfm3: NodeTypeDef = {
   type: 'asr.realtime.translate',
-  paramNames: ['url', 'model', 'targetLanguage', 'instruction', 'sampleRateHz', 'flushSec', 'timeoutMs', 'maxTranslateChars'],
+  paramNames: ['url', 'model', 'targetLanguage', 'instruction', 'sampleRateHz', 'flushSec', 'timeoutMs', 'maxTranslateChars', 'outputRequired'],
   bindingNames: ['__onCaption'],
   inputs: [{ name: 'in', type: 'pcm16k' }],
-  outputs: [{ name: 'out', type: 'tokens_parcial' }],
+  outputs: [{ name: 'out', type: 'tokens_parcial', required: false }],
+  outputsFor: (p) => [{ name: 'out', type: 'tokens_parcial', required: p.outputRequired === true }],
   validateParams: (p) => {
     const errs: { path: string; code: string; message: string }[] = [];
     for (const k of ['url', 'model', 'targetLanguage', 'instruction']) {
@@ -29,6 +30,9 @@ export const asrLfm3: NodeTypeDef = {
       if (p[k] !== undefined && (typeof p[k] !== 'number' || p[k] <= 0)) {
         errs.push({ path: `params.${k}`, code: 'INVALID_PARAM', message: `${k} deve ser número > 0` });
       }
+    }
+    if (p.outputRequired !== undefined && typeof p.outputRequired !== 'boolean') {
+      errs.push({ path: 'params.outputRequired', code: 'INVALID_PARAM', message: 'outputRequired deve ser boolean' });
     }
     return errs;
   },
@@ -42,9 +46,9 @@ export const asrLfm3: NodeTypeDef = {
     } else if (ctx.params.targetLanguage !== undefined) {
       const lang = String(ctx.params.targetLanguage ?? '').trim();
       if (!lang || lang === '-' || lang === '—') {
-        instruction = 'Transcribe the audio verbatim in its original language. Output only the transcription, nothing else.';
+        instruction = 'Perform ASR. Respond in text.';
       } else {
-        instruction = `Transcribe the audio and translate it to ${lang}. Output only the translation, nothing else.`;
+        instruction = `Translate the following speech into ${lang} in text form. Respond in text.`;
       }
     }
     const sampleRateHz = (ctx.params.sampleRateHz as number | undefined) ?? 16000;

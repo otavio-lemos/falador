@@ -23,6 +23,7 @@ Endpoints:
 """
 import argparse
 import io
+import re
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -35,6 +36,38 @@ MODEL = None
 MODEL_PATH = None
 LOCK = threading.Lock()  # MLX não é thread-safe entre generates
 FRAMES_PER_CHUNK = 4  # 4 frames de 80 ms = 320 ms de áudio por decode
+SILENCE_RMS_FLOOR = 1.5e-4
+SILENCE_PEAK_FLOOR = 2.0e-3
+TOOL_CALL_RE = re.compile(r"<tool_call>.*?</tool_call>", re.DOTALL)
+
+
+def _normalize_tts_language(language: str) -> str:
+    """Cartão oficial LFM3-Audio-2B: para inglês em TTS, usar American/British English."""
+    s = (language or "English").strip()
+    if s.lower() == "english":
+        return "American English"
+    return s
+
+
+def _instruction_to_system_prompt(instruction: str) -> str:
+    """Converte a instrução do nó para o system prompt oficial do cartão LFM3-Audio-2B."""
+    s = instruction.strip()
+    low = s.lower()
+    if low.startswith("perform asr") or "verbatim in its original language" in low:
+        return "Perform ASR. Respond in text."
+    for prefix in (
+        "Transcribe the audio and translate it to ",
+        "Translate the spoken audio directly into ",
+        "Translate the following speech into ",
+    ):
+        if s.startswith(prefix):
+            rest = s[len(prefix):]
+            lang = rest.split(" in text form")[0].split(".")[0].strip()
+            if lang:
+                return f"Translate the following speech into {lang} in text form. Respond in text."
+    if "respond in text" not in low:
+        return f"{s.rstrip('.')}." + " Respond in text."
+    return s
 
 
 def _to_pcm16(wav):
@@ -50,8 +83,9 @@ def _pcm16_chunks(text, language, voice):
     """
     import mlx.core as mx
 
+    tts_lang = _normalize_tts_language(language)
     messages = [
-        {"role": "system", "content": f"Perform TTS in {language} using a {voice} voice."},
+        {"role": "system", "content": f"Perform TTS in {tts_lang} using a {voice} voice."},
         {"role": "user", "content": [{"type": "text", "text": text}]},
     ]
     inputs = MODEL.processor.prepare(messages)
@@ -128,23 +162,31 @@ class Handler(BaseHTTPRequestHandler):
             if sample_rate != sr:
                 raise ValueError(f"sample_rate do body ({sample_rate}) != do WAV ({sr})")
             audio = (pcm.astype(np.float32) / 32768.0).squeeze()
+            dur_s = len(pcm) / max(1, sample_rate)
+            rms = float(np.sqrt(np.mean(audio * audio))) if audio.size else 0.0
+            peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+            if audio.size == 0 or (rms < SILENCE_RMS_FLOOR and peak < SILENCE_PEAK_FLOOR):
+                ms = int((time.monotonic() - t0) * 1000)
+                print(f"[sts-sidecar] POST /asr-translate 200 ({ms}ms) audio={dur_s:.1f}s silent=true chars=0", flush=True)
+                self._send_json(200, {"text": ""})
+                return
 
+            # Contrato oficial LFM3-Audio-2B: instrução em role='system' e só o áudio em
+            # role='user' (evita que o modelo traduza o texto da instrução em janelas curtas).
+            sys_prompt = _instruction_to_system_prompt(instruction)
             with LOCK:
                 result = MODEL.generate(
                     messages=[
-                        {"role": "user", "content": [
-                            {"type": "audio", "audio": audio},
-                            {"type": "text", "text": instruction},
-                        ]},
+                        {"role": "system", "content": sys_prompt},
+                        {"role": "user", "content": [{"type": "audio", "audio": audio}]},
                     ],
                     task="chat",
                     sample_rate=sample_rate,
                     temperature=0.0,
                     top_k=1,
                 )
-            text_out = (result.text or "").strip()
+            text_out = TOOL_CALL_RE.sub("", result.text or "").strip()
             ms = int((time.monotonic() - t0) * 1000)
-            dur_s = len(pcm) / max(1, sample_rate)
             print(f"[sts-sidecar] POST /asr-translate 200 ({ms}ms) audio={dur_s:.1f}s chars={len(text_out)}", flush=True)
             self._send_json(200, {"text": text_out})
         except Exception as e:
@@ -224,7 +266,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
                 return
-            language = req.get("language", "English")
+            language = _normalize_tts_language(req.get("language", "English"))
             voice = req.get("voice", "female")
             sample_rate = int(req.get("sample_rate", 16000))
 

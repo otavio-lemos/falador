@@ -228,7 +228,11 @@ describe('asr.realtime.translate', () => {
     assert.ok(asrLfm3.validateParams!({ url: 1 }).some((e) => e.path === 'params.url'));
     assert.ok(asrLfm3.validateParams!({ flushSec: 0 }).some((e) => e.path === 'params.flushSec'));
     assert.ok(asrLfm3.validateParams!({ sampleRateHz: -1 }).some((e) => e.path === 'params.sampleRateHz'));
-    assert.equal(asrLfm3.validateParams!({ url: 'http://x', flushSec: 1, sampleRateHz: 16000 }).length, 0);
+    assert.ok(asrLfm3.validateParams!({ outputRequired: 'x' }).some((e) => e.path === 'params.outputRequired'));
+    assert.equal(asrLfm3.validateParams!({ url: 'http://x', flushSec: 1, sampleRateHz: 16000, outputRequired: false }).length, 0);
+    assert.equal(asrLfm3.outputsFor!({})[0].required, false);
+    assert.equal(asrLfm3.outputsFor!({ outputRequired: false })[0].required, false);
+    assert.equal(asrLfm3.outputsFor!({ outputRequired: true })[0].required, true);
   });
 
   test('PCM cru: acumula e flush no flushSec, emite tokens_parcial final:true', async () => {
@@ -317,12 +321,12 @@ describe('asr.realtime.translate', () => {
       await waitFor(() => c1._emitted.length >= 1, 3000); await n1.stop('done');
       assert.ok(bodies[0].instruction.includes('Spanish'));
 
-      // targetLanguage '-' => transcrição verbatim
+      // targetLanguage '-' => transcrição verbatim (Perform ASR oficial do cartão)
       const c2 = makeCtx({ url: srv.url, flushSec: 0.01, sampleRateHz: 16000, targetLanguage: '-' });
       const n2 = asrLfm3.create(c2) as NodeRuntime; await n2.start();
       await n2.onInput('in', { seq: 1, ts: 1, payload: pcm16(3200) } as any);
       await waitFor(() => c2._emitted.length >= 1, 3000); await n2.stop('done');
-      assert.ok(bodies[1].instruction.toLowerCase().includes('verbatim'));
+      assert.equal(bodies[1].instruction, 'Perform ASR. Respond in text.');
 
       // instruction explícita tem precedência
       const c3 = makeCtx({ url: srv.url, flushSec: 0.01, sampleRateHz: 16000, instruction: 'FAÇA ISSO', targetLanguage: 'Spanish' });
@@ -371,9 +375,13 @@ describe('asr.realtime', () => {
     assert.ok(asrRealtime.validateParams!({ inputRate: 0 }).some((e) => e.path === 'params.inputRate'));
     assert.ok(asrRealtime.validateParams!({ serverVad: 'x' }).some((e) => e.path === 'params.serverVad'));
     assert.ok(asrRealtime.validateParams!({ emitInterruptOnSpeech: 'x' }).some((e) => e.path === 'params.emitInterruptOnSpeech'));
+    assert.ok(asrRealtime.validateParams!({ outputRequired: 'x' }).some((e) => e.path === 'params.outputRequired'));
     assert.ok(asrRealtime.validateParams!({ bargeInDebounceMs: -1 }).some((e) => e.path === 'params.bargeInDebounceMs'));
     assert.ok(asrRealtime.validateParams!({ maxPendingMs: 0 }).some((e) => e.path === 'params.maxPendingMs'));
-    assert.equal(asrRealtime.validateParams!({ inputRate: 16000, serverVad: true, maxPendingMs: 1000, bargeInDebounceMs: 0 }).length, 0);
+    assert.equal(asrRealtime.validateParams!({ inputRate: 16000, serverVad: true, maxPendingMs: 1000, bargeInDebounceMs: 0, outputRequired: true }).length, 0);
+    assert.equal(asrRealtime.outputsFor!({})[0].required, false);
+    assert.equal(asrRealtime.outputsFor!({ outputRequired: true })[0].required, true);
+    assert.equal(asrRealtime.outputsFor!({ outputRequired: true })[1].required, false);
   });
 
   test('conecta, recebe delta+completed, emite tokens_parcial e final', async () => {
