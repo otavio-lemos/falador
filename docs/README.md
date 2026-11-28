@@ -16,6 +16,8 @@
 | [008 — agente + tools + MCP](adr/ADR-008-agente-tools-mcp.md) | `agent.tools` com `tool_calls` nativo, porta `tool`, `tool.mcp` | IMPLEMENTADO (MCP externo real: NÃO VERIFICADO) |
 | [009 — captura voz/chat + mic](adr/ADR-009-captura-entrada-dupla.md) | Aplicações (SCK) vs Microfone (PortAudio) no mesmo nó; botão alterna voz↔chat | IMPLEMENTADO (E2E fala real: NÃO VERIFICADO) |
 | [011 — Output unificado e instâncias](adr/ADR-011-output-unificado-e-instancias.md) | `Output` único (`Escrever`/`Falar`), instâncias por componente (`Componente 1`, `2`…) e `isDefault` | IMPLEMENTADO (E2E TTS browser: NÃO VERIFICADO) |
+| [012 — Assistente TI auditado](adr/ADR-012-assistente-ti-auditado.md) | Trilha única por run, avaliador independente, plano verificável, d1 | IMPLEMENTADO (E2E modelo real: NÃO VERIFICADO) |
+| [013 — Fala em streaming](adr/ADR-013-fala-em-streaming.md) | `/tts-stream` nos 2 sidecars (PCM por frame) + `ffplay` tocando em paralelo; SCK exclui o player | IMPLEMENTADO (1º som audível / conferência real: NÃO VERIFICADO) |
 | [F0 — POC de protocolo](adr/F0-poc-protocolo.md) | Protocolo da fase 0 | FECHADA (ver research) |
 
 Quadro detalhado de pendências e evidências: **[`adr/STATUS.md`](adr/STATUS.md)**.

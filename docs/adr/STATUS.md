@@ -1,6 +1,6 @@
 # Status dos ADRs — o que está implementado, o que falta, qual é a prova
 
-> Atualizado em **2026-11-22**. Fontes: código no repo, suítes de teste e `AGENTS.md` §4/§6. Quando este quadro divergir do código, o código vence — e este arquivo deve ser corrigido.
+> Atualizado em **2026-11-27**. Fontes: código no repo, suítes de teste e `AGENTS.md` §4/§6. Quando este quadro divergir do código, o código vence — e este arquivo deve ser corrigido.
 
 Legenda: ✅ implementado e verificado por teste/medição · 🟡 implementado, falta verificação no ambiente real · ⬜ não implementado / histórico.
 
@@ -15,6 +15,9 @@ Legenda: ✅ implementado e verificado por teste/medição · 🟡 implementado,
 | 007 RAG + exec.command | 🟡 | RAG BM25 multi-formato por nó; `exec.command` local/SSH com 4 camadas (d1 + gate + validador anti-injeção + dryRun/audit) | **SSH em host remoto real** (só `localhost`/alvos de teste) | [`ADR-007...`](ADR-007-rag-runbooks-conector-exec.md), `packages/falador-nodes/test/rag-exec.test.ts` |
 | 008 agente + tools + MCP | 🟡 | `agent.tools` (loop `tool_calls`), porta `tool` bidirecional, `tool.mcp` stdio/HTTP, `exec_local`/`rag.search` como tools, auditoria | **MCP server externo real**; SSH remoto; E2E do agente em call | [`ADR-008...`](ADR-008-agente-tools-mcp.md), `packages/falador-nodes/test/agent-tools.test.ts`, `tools-mcp.test.ts` |
 | 009 captura voz/chat + mic | 🟡 | Aplicações (SCK) vs Microfone (PortAudio) no mesmo nó; `/api/mics`; botão voz↔chat; `input.chat` no flow de entrevista | E2E com fala real/TCC/eco; Playwright (binário ausente); SCK `.microphone` | [`ADR-009...`](ADR-009-captura-entrada-dupla.md), [`input-modes-test-plan.md`](../input-modes-test-plan.md), `packages/falador-nodes/test/capture-input-modes.test.ts` |
+| 011 output unificado | 🟡 | `sink.captions` com `Escrever`/`Falar`, TTS+playback no próprio nó; instâncias por componente; `isDefault` | E2E ao vivo com TTS/fala real no browser | [`ADR-011...`](ADR-011-output-unificado-e-instancias.md), `AGENTS.md` §6 |
+| 012 assistente TI auditado | 🟡 | Trilha única por run, `validateGoal` fail-closed, plano verificável, d1, validador pós-run | E2E ao vivo com modelo real no browser | [`ADR-012...`](ADR-012-assistente-ti-auditado.md), `AGENTS.md` §6 |
+| 013 fala em streaming | 🟡 | `/tts-stream` nos dois sidecars (PCM s16le 24 kHz por 4 frames) + `sink.captions` tocando com `ffplay` em paralelo; SCK exclui `ffplay` | **1º som audível** (ffplay bufferiza) e E2E em conferência real | [`ADR-013...`](ADR-013-fala-em-streaming.md), `AGENTS.md` §4/§6, `packages/falador-nodes/test/sinks-and-capture.test.ts` |
 | F0 POC protocolo | ✅ fechada | Gates G1 (captura), G2, G3 (streaming, com modificação) | — | [`F0-poc-protocolo.md`](F0-poc-protocolo.md), [`research/F0-resultados.md`](research/F0-resultados.md) |
 | Spec v1.1 do motor | ✅ | Validação V0–V7, backpressure, cancel por seq/porta, ciclo de vida de `start()`, `stopWhenSourcesDone` | — | [`spec-falador-graph.md`](spec-falador-graph.md), `packages/falador-graph/test/` (41 testes, `spec.ts` 100% linhas) |
 
@@ -36,3 +39,4 @@ Legenda: ✅ implementado e verificado por teste/medição · 🟡 implementado,
 - Confirmação visual do dono no browser para a UI atual (Live em chat, painel de logs, gate).
 - Servidor MCP externo real e host SSH remoto real.
 - `audio.cpp` (GGUF) como runtime alternativo para STT+tradução streaming nativa.
+- Latência até o **primeiro som audível** do `/tts-stream` (medimos o 1º chunk gerado: 247/145 ms; o `ffplay` bufferiza).
