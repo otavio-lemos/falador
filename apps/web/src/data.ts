@@ -110,7 +110,13 @@ export function serviceOfNode(type: string, params?: Record<string, unknown>): '
     return 'omlx';
   }
   if (type === 'tts.sts' || type === 'asr.realtime.translate') {
-    return String(params?.url ?? '').includes(':8092') ? 'omni' : 'tts';
+    return String(params?.url ?? '').includes(':8092') || isOmniModel(String(params?.model ?? '')) ? 'omni' : 'tts';
+  }
+  if (type === 'sink.captions') {
+    if (params?.outputMode !== 'speak' || params?.model === '-' || params?.model === '—') {
+      return 'web';
+    }
+    return String(params?.ttsUrl ?? '').includes(':8092') || isOmniModel(String(params?.model ?? '')) ? 'omni' : 'tts';
   }
   return 'web';
 }
@@ -124,10 +130,12 @@ export function isOmniModel(id: string): boolean {
 }
 
 /** Runtime + porta REAL do serviço usado pelo nó, para exibir no Runner bar e nos logs.
- *  `params` é necessário: asr.realtime.translate/tts.sts podem apontar para :8092 (mlx-vlm/Omni)
+ *  `params` é necessário: asr.realtime.translate/tts.sts/sink.captions podem apontar para :8092 (mlx-vlm/Omni)
  *  em vez de :8091 (mlx-audio) — sem isso o Omni aparecia como mlx-audio. */
 export function runtimePortOfNode(type: string, params?: Record<string, unknown>): string {
-  if (type === 'sink.captions' && params?.outputMode !== 'speak') return 'NODE.JS:8787';
+  if (type === 'sink.captions' && (params?.outputMode !== 'speak' || params?.model === '-' || params?.model === '—')) {
+    return 'NODE.JS:8787';
+  }
   const svc = serviceOfNode(type, params);
   if (svc === 'omni') return 'MLX-VLM:8092';
   if (svc === 'tts') return 'MLX-AUDIO:8091';
@@ -354,6 +362,7 @@ export const PARAM_HELP: Record<string, Record<string, ParamDoc>> = {
     maxTextChars: { help: 'corta o texto em N caracteres', def: '2000' },
   },
   'sink.captions': {
+    model: { help: 'modelo de voz/áudio TTS no modo Falar (ex.: LFM3-Audio, LFM3-Omni, Voxtral; "-" = só escrever)', def: 'LiquidAI--LFM3-Audio-2B-MLX-8bit', control: 'model' },
     outputMode: {
       help: 'modo de saída: write = apenas texto na tela; speak = texto na tela + voz sintetizada',
       def: 'write',

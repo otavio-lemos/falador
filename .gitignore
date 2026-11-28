@@ -28,3 +28,5 @@ packages/falador-cli/logs/
 # artefatos de teste da UI
 apps/web/playwright-report/
 apps/web/test-results/
+.aider*
+.kilo/

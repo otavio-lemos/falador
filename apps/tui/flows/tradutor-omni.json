@@ -1,38 +1,43 @@
 {
   "version": 1,
   "stopWhenSourcesDone": false,
-  "description": "Tradução nativa LFM3-Omni-2B (:8092): captura SCK (Chrome) → ASR+tradução nativa → Output (write padrão; speak via :8092).",
+  "description": "Tradutor Omni (streaming áudio) — captura SCK → Voxtral ASR streaming → LFM3-Omni TTS direto (:8092). Fala em qualquer idioma → português falado + legenda. Mais rápido: ASR streaming + TTS streaming sem etapa de tradução de texto separada.",
   "nodes": [
     {
       "id": "capture1",
       "type": "capture.ffmpeg",
       "params": {
         "backend": "sck",
-        "input": "Google Chrome",
+        "input": "",
         "chunkMs": 80,
-        "isDefault": true,
-        "placeholder": "Digite sua mensagem ou comando (Enter para enviar)..."
+        "isDefault": true
       }
     },
     {
-      "id": "asr2",
-      "type": "asr.realtime.translate",
+      "id": "asr1",
+      "type": "asr.realtime",
       "params": {
-        "url": "http://127.0.0.1:8092",
-        "model": "LiquidAI/LFM3-Omni-2B-MLX-8bit",
-        "targetLanguage": "Portuguese",
-        "sampleRateHz": 16000,
-        "flushSec": 6
+        "model": "/Users/otaviolemos/.cache/huggingface/hub/models--mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit/snapshots/fdebf7b2af834a1db4b8a3c99ab7480b333adf9e",
+        "serverVad": true,
+        "inputRate": 16000,
+        "outputRequired": false
+      }
+    },
+    {
+      "id": "sink1",
+      "type": "sink.captions",
+      "params": {
+        "outputMode": "write",
+        "ttsUrl": "http://127.0.0.1:8092",
+        "language": "Portuguese",
+        "voice": "female",
+        "playbackRate": 1.25,
+        "isDefault": true
       }
     }
   ],
   "edges": [
-    {
-      "from": "capture1.out",
-      "to": "asr2.in",
-      "capacity": 32,
-      "overflow": "drop_oldest",
-      "ttlMs": 1500
-    }
+    { "from": "capture1.out", "to": "asr1.in", "capacity": 32, "overflow": "drop_oldest", "ttlMs": 1500 },
+    { "from": "asr1.out", "to": "sink1.in" }
   ]
 }

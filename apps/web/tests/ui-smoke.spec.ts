@@ -196,6 +196,23 @@ test('chat derives STT, agent, TTS and playback; thoughts toggle uses collapsed 
 });
 
 test('unified Input and Output stages use instance selectors and sync with topbar', async ({ page }) => {
+  await page.route('**/api/models**', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        omlx: ['LFM3-Omni-2B-MLX-8bit', 'LiquidAI--LFM3-1.7B-MLX-4bit', 'd1-2B-MLX-4bit'],
+        cache: [
+          'LiquidAI--LFM3-Audio-2B-MLX-8bit',
+          'mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit',
+        ],
+        details: [
+          { id: 'LiquidAI--LFM3-1.7B-MLX-4bit', model_type: 'llm' },
+          { id: 'd1-2B-MLX-4bit', model_type: 'decision' },
+        ],
+      }),
+    }),
+  );
   await page.evaluate(() => {
     localStorage.setItem('falador.inputMode', 'apps');
     localStorage.setItem('falador.outputMode', 'write');
@@ -244,37 +261,43 @@ test('unified Input and Output stages use instance selectors and sync with topba
   await expect(page.getByRole('button', { name: 'Usar chat' })).toHaveAttribute('aria-pressed', 'true');
   await expect.poll(() => page.evaluate(() => localStorage.getItem('falador.inputMode'))).toBe('mic');
 
-  // Output unificado com instâncias (entrevista tem 3 Outputs; padrão é Output 2)
+  // Output unificado com instâncias ([Instância] [Modelo] [Idioma]; padrão em especialista-ti é Output 2)
   const outputStage = page.locator('.stage-dd').filter({ has: page.locator('.stage-dd-label', { hasText: 'Output' }) }).first();
   await expect(outputStage).toBeVisible();
-  await expect(outputStage.getByRole('combobox')).toHaveCount(2);
+  await expect(outputStage).toHaveClass(/stage-dd--triple/);
+  await expect(outputStage.getByRole('combobox')).toHaveCount(3);
   const outInstCombo = outputStage.getByRole('combobox').nth(0);
-  const outModeCombo = outputStage.getByRole('combobox').nth(1);
+  const outModelCombo = outputStage.getByRole('combobox').nth(1);
+  const outLangCombo = outputStage.getByRole('combobox').nth(2);
   await expect(outInstCombo).toContainText('2');
-  await expect(outModeCombo).toContainText('Escrever');
+  await expect(outModelCombo).toContainText('— (só escrever)');
+  await expect(outLangCombo).toBeDisabled();
+  await expect(outputStage.locator('.stage-dd-solution')).toHaveText('NODE.JS:8787');
 
-  // Alterar Output 1 não altera Output 2 (padrão)
+  // Alterar Output 1 para modelo de voz ativa MLX-AUDIO:8091 sem alterar Output 2 (padrão)
   await outInstCombo.click();
   await expect(outputStage.getByRole('option')).toHaveText(['1', '2']);
   await outputStage.getByRole('option', { name: '1', exact: true }).click();
-  await outModeCombo.click();
-  await outputStage.getByRole('option', { name: 'Falar', exact: true }).click();
-  await expect(outModeCombo).toContainText('Falar');
+  await outModelCombo.click();
+  await outputStage.getByRole('option').filter({ hasText: /LFM3-Audio/ }).first().click();
+  await expect(outModelCombo).toContainText(/LFM3-Audio/);
+  await expect(outLangCombo).toBeEnabled();
+  await expect(outputStage.locator('.stage-dd-solution')).toHaveText('MLX-AUDIO:8091');
 
-  // Botão UserSpeaker na topbar volta o seletor de instância para o padrão (Output 2) e alterna para Falar
-  const speakBtn = page.getByRole('button', { name: 'Falar' });
-  await expect(speakBtn).toHaveAttribute('aria-pressed', 'false');
-  await speakBtn.click();
-  await expect(outInstCombo).toContainText('2');
-  await expect(outModeCombo).toContainText('Falar');
-  const writeBtn = page.getByRole('button', { name: 'Só escrever' });
-  await expect(writeBtn).toHaveAttribute('aria-pressed', 'true');
-  await expect.poll(() => page.evaluate(() => localStorage.getItem('falador.outputMode'))).toBe('speak');
-
-  await writeBtn.click();
-  await expect(outModeCombo).toContainText('Escrever');
-  await expect(page.getByRole('button', { name: 'Falar' })).toHaveAttribute('aria-pressed', 'false');
+  // Botão speaker da topbar = mute local desta janela (não toca Output/nós): alterna sem mudar a etapa.
+  const muteBtn = page.getByRole('button', { name: 'Mutar esta janela' });
+  await expect(muteBtn).toHaveAttribute('aria-pressed', 'false');
+  await muteBtn.click();
+  await expect(page.getByRole('button', { name: 'Desmutar esta janela' })).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('falador.windowMuted'))).toBe('1');
+  await expect(outInstCombo).toContainText('1');
+  await expect(outModelCombo).toContainText(/LFM3-Audio/);
+  await expect(outputStage.locator('.stage-dd-solution')).toHaveText('MLX-AUDIO:8091');
   await expect.poll(() => page.evaluate(() => localStorage.getItem('falador.outputMode'))).toBe('write');
+
+  await page.getByRole('button', { name: 'Desmutar esta janela' }).click();
+  await expect(page.getByRole('button', { name: 'Mutar esta janela' })).toHaveAttribute('aria-pressed', 'false');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('falador.windowMuted'))).toBe('0');
 });
 
 test('console modal, plan progress indicator, goal validation, gate history and audit validation tab', async ({ page }) => {

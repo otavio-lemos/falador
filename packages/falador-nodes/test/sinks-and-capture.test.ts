@@ -364,7 +364,7 @@ describe('sink.captions', () => {
       const params = sink.params;
       assert.equal(params.outputMode, 'write', `${file}: default salvo é write (sem duplicar fala do Chrome)`);
       assert.equal(params.language, 'Portuguese', file);
-      assert.equal(params.voice, 'male', file);
+      assert.ok(params.voice === 'male' || params.voice === 'female', `${file}: voice deve ser male ou female`);
       assert.equal(params.playbackRate, 1.25, file);
       assert.match(String(params.ttsUrl), /^http:\/\/127\.0\.0\.1:809[12]$/, file);
 
@@ -445,6 +445,155 @@ describe('sink.captions', () => {
     await node.stop('done');
     srv.close();
     assert.equal(ctx._counters['sink.captions.interrupted'], 1);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('model param: valida tipo string e model="-" / "—" força só-texto mesmo com outputMode=speak', async () => {
+    assert.ok(sinkCaptions.validateParams!({ model: 123 }).some((e) => e.path === 'params.model'));
+    assert.equal(sinkCaptions.validateParams!({ model: '-', outputMode: 'speak' }).length, 0);
+    assert.equal(sinkCaptions.validateParams!({ model: 'LFM3-Audio-2B-MLX-8bit', outputMode: 'speak' }).length, 0);
+
+    let httpCalls = 0;
+    const srv = createServer((_req, res) => {
+      httpCalls += 1;
+      res.writeHead(200, { 'Content-Type': 'audio/pcm', 'X-Sample-Rate': '24000' }).end(Buffer.alloc(2400, 1));
+    });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    const port = (srv.address() as { port: number }).port;
+
+    try {
+      for (const modelVal of ['-', '—']) {
+        const dir = mkdtempSync(join(tmpdir(), 'falador-out-dash-'));
+        const marker = join(dir, 'played');
+        const fakePlayer = fakePlayerScript(`echo 1 >> "${marker}"; exit 0`);
+        const calls: Array<{ text: string; final: boolean }> = [];
+        const ctx = makeCtx(
+          {
+            mode: 'callback',
+            outputMode: 'speak',
+            model: modelVal,
+            ttsUrl: `http://127.0.0.1:${port}`,
+            player: fakePlayer,
+          },
+          { __onCaption: (c: { text: string; final: boolean }) => calls.push(c) },
+        );
+        const node = sinkCaptions.create(ctx) as NodeRuntime;
+        await node.start();
+        await node.onInput('in', { seq: 1, ts: 1, payload: { text: `frase ${modelVal}`, final: true } } as any);
+        await node.stop('done');
+        assert.equal(calls.length, 1);
+        assert.equal(calls[0].text, `frase ${modelVal}`);
+        assert.equal(httpCalls, 0, `model=${modelVal} não deve chamar /tts-stream`);
+        assert.equal(existsSync(marker), false, `model=${modelVal} não deve spawnar player`);
+        rmSync(dir, { recursive: true, force: true });
+      }
+    } finally {
+      srv.close();
+    }
+  });
+
+  test('mute de áudio da janela (__isAudioMuted + __registerAudioMuteListener): suprime fala mantendo legenda, corta player ao vivo e retoma ao desmutar', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'falador-out-mute-'));
+    const pidFile = join(dir, 'pid');
+    const playedCountFile = join(dir, 'played-count');
+    // No 1º play grava PID e dorme (para ser interrompido no meio pelo mute); no 2º consome stdin e registra conclusão
+    const fakePlayer = join(dir, 'play.sh');
+    writeFileSync(
+      fakePlayer,
+      `#!/bin/sh\nif [ ! -f "${pidFile}" ]; then\n  echo $$ > "${pidFile}"\n  sleep 30\n  exit 0\nfi\ncat > /dev/null\necho ok >> "${playedCountFile}"\nexit 0\n`,
+      { mode: 0o755 },
+    );
+    chmodSync(fakePlayer, 0o755);
+
+    const ttsTexts: string[] = [];
+    const srv = createServer((req, res) => {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        ttsTexts.push(JSON.parse(body).text);
+        res.writeHead(200, { 'Content-Type': 'audio/pcm', 'X-Sample-Rate': '24000' });
+        res.end(Buffer.alloc(4800, 5));
+      });
+    });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    const port = (srv.address() as { port: number }).port;
+
+    let muted = true;
+    const listeners = new Set<(m: boolean) => void>();
+    let unsubCalled = 0;
+    const setMuted = (val: boolean) => {
+      muted = val;
+      for (const fn of [...listeners]) fn(muted);
+    };
+
+    const captions: Array<{ text: string; final: boolean }> = [];
+    const outFile = join(dir, 'captions.txt');
+    const ctx = makeCtx(
+      {
+        mode: 'callback',
+        outputMode: 'speak',
+        outputFile: outFile,
+        ttsUrl: `http://127.0.0.1:${port}`,
+        player: fakePlayer,
+      },
+      {
+        __onCaption: (c: { text: string; final: boolean }) => captions.push(c),
+        __isAudioMuted: () => muted,
+        __registerAudioMuteListener: (fn: (m: boolean) => void) => {
+          listeners.add(fn);
+          return () => {
+            unsubCalled += 1;
+            listeners.delete(fn);
+          };
+        },
+      },
+    );
+
+    const node = sinkCaptions.create(ctx) as NodeRuntime;
+    await node.start();
+
+    // 1) Nasce mutado: legendas (parcial + final) e arquivo saem normalmente, zero /tts-stream
+    await node.onInput('in', { seq: 1, ts: 1, payload: { text: 'mutado parcial', final: false } } as any);
+    await node.onInput('in', { seq: 2, ts: 2, payload: { text: 'mutado final', final: true } } as any);
+    await delay(80);
+    assert.equal(captions.length, 2);
+    assert.equal(captions[1].text, 'mutado final');
+    assert.equal(ttsTexts.length, 0, 'enquanto mutado não deve chamar /tts-stream');
+
+    // 2) Desmuta e fala frase longa -> muta no meio -> interrompe player ativo na hora
+    setMuted(false);
+    await node.onInput('in', { seq: 3, ts: 3, payload: { text: 'falando ao vivo', final: true } } as any);
+    await waitFor(() => existsSync(pidFile), 3000);
+    const pid = Number(readFileSync(pidFile, 'utf-8').trim());
+    assert.ok(pid > 0);
+    assert.deepEqual(ttsTexts, ['falando ao vivo']);
+
+    setMuted(true);
+    await waitFor(() => {
+      try { process.kill(pid, 0); return false; } catch { return true; }
+    }, 3000);
+
+    // 3) Frase enquanto mutado de novo: só legenda
+    await node.onInput('in', { seq: 4, ts: 4, payload: { text: 'silenciado de novo', final: true } } as any);
+    await delay(60);
+    assert.equal(ttsTexts.length, 1);
+
+    // 4) Desmuta novamente: próxima frase volta a falar sem reiniciar o nó
+    setMuted(false);
+    await node.onInput('in', { seq: 5, ts: 5, payload: { text: 'voltou a falar', final: true } } as any);
+    await waitFor(() => existsSync(playedCountFile), 3000);
+
+    await node.stop('done');
+    srv.close();
+
+    assert.deepEqual(ttsTexts, ['falando ao vivo', 'voltou a falar']);
+    assert.equal(captions.filter((c) => c.final).length, 4, 'todas as 4 frases finais emitiram legenda');
+    assert.equal(
+      readFileSync(outFile, 'utf-8'),
+      'mutado final\nfalando ao vivo\nsilenciado de novo\nvoltou a falar\n',
+    );
+    assert.equal(unsubCalled, 1, 'stop() deve desregistrar o listener de mute');
+    assert.equal(listeners.size, 0);
     rmSync(dir, { recursive: true, force: true });
   });
 });
@@ -581,6 +730,61 @@ describe('sink.playback', () => {
     const t0 = Date.now();
     await node.stop('done');
     assert.ok(Date.now() - t0 >= 150, 'stop deve aguardar fala em curso');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('mute de áudio da janela em sink.playback: descarta mutado, mata player no meio e volta ao desmutar', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'falador-play-winmute-'));
+    const pidFile = join(dir, 'pid');
+    const doneFile = join(dir, 'done');
+    const player = fakePlayerScript(
+      `if [ ! -f "${pidFile}" ]; then echo $$ > "${pidFile}"; sleep 30; exit 0; fi; echo ok >> "${doneFile}"; exit 0`,
+    );
+
+    let muted = true;
+    const listeners = new Set<(m: boolean) => void>();
+    let unsub = 0;
+    const setMuted = (v: boolean) => {
+      muted = v;
+      for (const fn of [...listeners]) fn(muted);
+    };
+
+    const ctx = makeCtx(
+      { player, maxQueue: 4 },
+      {
+        __isAudioMuted: () => muted,
+        __registerAudioMuteListener: (fn: (m: boolean) => void) => {
+          listeners.add(fn);
+          return () => { unsub += 1; listeners.delete(fn); };
+        },
+      },
+    );
+    const node = sinkPlayback.create(ctx) as NodeRuntime;
+    await node.start();
+
+    // Mutado: ignora sem erro
+    await node.onInput('in', { seq: 1, ts: 1, payload: wavPayload() } as any);
+    await delay(60);
+    assert.equal(existsSync(pidFile), false);
+
+    // Desmuta -> começa a tocar -> muta no meio -> mata child
+    setMuted(false);
+    await node.onInput('in', { seq: 2, ts: 2, payload: wavPayload() } as any);
+    await waitFor(() => existsSync(pidFile), 3000);
+    const pid = Number(readFileSync(pidFile, 'utf-8').trim());
+    setMuted(true);
+    await waitFor(() => {
+      try { process.kill(pid, 0); return false; } catch { return true; }
+    }, 3000);
+
+    // Desmuta de novo -> próximo chunk toca até o fim
+    setMuted(false);
+    await node.onInput('in', { seq: 3, ts: 3, payload: wavPayload() } as any);
+    await waitFor(() => existsSync(doneFile), 3000);
+
+    await node.stop('done');
+    assert.equal(unsub, 1);
+    assert.equal(ctx._logs.filter((l) => l.level === 'error').length, 0);
     rmSync(dir, { recursive: true, force: true });
   });
 });

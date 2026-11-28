@@ -1,76 +1,61 @@
 {
   "version": 1,
   "stopWhenSourcesDone": false,
-  "description": "Tradução contínua: captura SCK (Chrome) → ASR Nemotron (:8090) → tradução LFM3-Omni-2B (:8080) → Output (write padrão; speak via :8091).",
+  "description": "Tradutor universal — captura SCK → Voxtral ASR streaming → translate.llm (LFM3-1.7B) → sink.captions (legenda na tela, sem síntese de fala para não duplicar o áudio do Chrome). Qualquer idioma de entrada → português.",
   "nodes": [
     {
       "id": "capture1",
       "type": "capture.ffmpeg",
       "params": {
         "backend": "sck",
-        "input": "Google Chrome",
+        "input": "",
         "chunkMs": 80,
-        "isDefault": true,
-        "placeholder": "Digite sua mensagem ou comando (Enter para enviar)..."
+        "isDefault": true
       }
     },
     {
-      "id": "asr2",
+      "id": "asr1",
       "type": "asr.realtime",
       "params": {
-        "url": "ws://127.0.0.1:8090/v1/realtime",
-        "model": "/Users/otaviolemos/.lmstudio/models/mlx-community/nemotron-3.5-asr-streaming-0.6b",
+        "model": "mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit",
         "serverVad": true,
-        "inputRate": 16000
+        "inputRate": 16000,
+        "outputRequired": false,
+        "bargeInDebounceMs": 100,
+        "commitEveryMs": 600,
+        "silenceThresholdMs": 400,
+        "maxPendingMs": 1200,
+        "emitInterruptOnSpeech": true
       }
     },
     {
-      "id": "translate3",
-      "type": "translate.llm",
-      "params": {
-        "baseUrl": "http://127.0.0.1:8080",
-        "model": "LFM3-Omni-2B-MLX-8bit",
-        "targetLanguage": "Portuguese",
-        "enableThinking": false,
-        "temperature": 0.1,
-        "maxTokens": 256
-      }
-    },
-    {
-      "id": "sink4",
+      "id": "sink1",
       "type": "sink.captions",
       "params": {
-        "mode": "callback",
-        "showParcials": false,
-        "outputMode": "write",
-        "language": "Portuguese",
+        "outputMode": "speak",
+        "language": "English",
         "voice": "male",
-        "isDefault": true,
-        "ttsUrl": "http://127.0.0.1:8091",
         "playbackRate": 1.25,
-        "maxQueue": 2
+        "isDefault": true,
+        "model": "LFM3-Omni-2B-MLX-8bit",
+        "showParcials": false,
+        "mode": "callback"
       }
     }
   ],
   "edges": [
     {
       "from": "capture1.out",
-      "to": "asr2.in",
+      "to": "asr1.in",
       "capacity": 32,
       "overflow": "drop_oldest",
       "ttlMs": 1500
     },
     {
-      "from": "asr2.out",
-      "to": "translate3.parcs",
+      "from": "asr1.out",
+      "to": "sink1.in",
       "capacity": 16,
-      "overflow": "drop_oldest"
-    },
-    {
-      "from": "translate3.out",
-      "to": "sink4.in",
-      "capacity": 16,
-      "overflow": "drop_oldest"
+      "overflow": "block"
     }
   ]
 }

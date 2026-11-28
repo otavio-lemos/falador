@@ -8,8 +8,33 @@
 // Stdout é 100% NDJSON (logs do server ficam no stderr do spawn da TUI).
 import { createRegistry, runGraph, sourceTone, pipeDelay, pipeParcs, sinkCollect } from '../falador-graph/src/index.ts';
 import { registerFaladorNodes, GENESIS_HASH, chainAuditEvent } from '../falador-nodes/src/index.ts';
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const ROOT = resolve(__dirname, '../..');
+
+// Carrega .env.falador (fora do git) para FALADOR_OMLX_API_KEY etc.
+for (const f of [join(ROOT, '.env.falador'), join(process.env.HOME ?? '', 'ml', 'falador', '.env.falador')]) {
+  if (existsSync(f)) {
+    for (const line of readFileSync(f, 'utf8').split('\n')) {
+      const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$/);
+      if (!m || process.env[m[1]]) continue;
+      const v = m[2].replace(/^['\"]|['\"]$/g, '').trim();
+      if (v) process.env[m[1]] = v;
+    }
+  }
+}
+// Fallback: lê auth.api_key de ~/.omlx/settings.json
+if (!process.env.FALADOR_OMLX_API_KEY) {
+  try {
+    const omlxSettings = JSON.parse(readFileSync(join(process.env.HOME ?? '', '.omlx', 'settings.json'), 'utf8'));
+    const k = typeof omlxSettings?.auth?.api_key === 'string' ? omlxSettings.auth.api_key.trim() : '';
+    if (k) process.env.FALADOR_OMLX_API_KEY = k;
+  } catch { /* sem settings.json local */ }
+}
 
 function buildRegistry() {
   return registerFaladorNodes(createRegistry())
@@ -68,6 +93,10 @@ async function main() {
   }
   const { readFileSync } = await import('node:fs');
   const flow = JSON.parse(readFileSync(flowPath, 'utf-8'));
+  const line = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
+
+  let audioMuted = process.env.FALADOR_AUDIO_MUTED === '1' || process.env.FALADOR_AUDIO_MUTED === 'true';
+  const audioMuteListeners = new Set();
 
   // Nível de aprovação do fluxo (A/B/C): governado pelo nó human.approve (params.mode)
   // ou, quando não há human.approve no grafo, por flow.approvalLevel.
@@ -150,6 +179,21 @@ async function main() {
           final: cap.final,
           ...(cap.trace ? { trace: cap.trace } : {}),
         }),
+      };
+    }
+    if (n.type === 'sink.captions' || n.type === 'sink.playback') {
+      const cur = flow.bindings[n.id] ?? {};
+      flow.bindings[n.id] = {
+        ...cur,
+        ...(!cur.__isAudioMuted ? { __isAudioMuted: () => audioMuted } : {}),
+        ...(!cur.__registerAudioMuteListener
+          ? {
+              __registerAudioMuteListener: (fn) => {
+                audioMuteListeners.add(fn);
+                return () => audioMuteListeners.delete(fn);
+              },
+            }
+          : {}),
       };
     }
   }
@@ -367,12 +411,16 @@ async function main() {
             line({ type: 'chat_sent', nodeId: target, text });
             audit({ op: 'chat_input', nodeId: target, text: text.slice(0, 2000) });
           }
+        } else if (m.type === 'audio_mute') {
+          audioMuted = Boolean(m.muted);
+          for (const fn of [...audioMuteListeners]) {
+            try { fn(audioMuted); } catch {}
+          }
+          line({ type: 'audio_mute', muted: audioMuted });
         }
       } catch { /* linha inválida: ignora */ }
     }
   });
-
-  const line = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
 
   // ADR-012 / P3: trilha de auditoria ÚNICA tamper-evident (SHA-256) por run — NDJSON no stdout + JSONL append-only.
   // runId é gerado antes de runGraph() e initAuditFile() roda ANTES de runGraph() (elimina race condition).

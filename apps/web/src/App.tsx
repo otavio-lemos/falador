@@ -79,7 +79,6 @@ export function App() {
   const lastVoiceModeRef = useRef<'apps' | 'mic'>('mic');
   const [outputMode, setOutputMode] = useState<OutputMode>(() => readSavedOutputMode() ?? 'write');
   const [inputResetTick, setInputResetTick] = useState(0);
-  const [outputResetTick, setOutputResetTick] = useState(0);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [flows, setFlows] = useState<{ name: string; description: string }[]>([]);
   const [currentFlow, setCurrentFlow] = useState('');
@@ -132,7 +131,7 @@ export function App() {
       if (defaultName) {
         fetchFlow(defaultName).then((f) => {
           const initialMode = readSavedInputMode() ?? modeFromFlow(f);
-          const initialOut = readSavedOutputMode() ?? outputModeFromFlow(f);
+          const initialOut = outputModeFromFlow(f);
           if (initialMode !== 'chat') lastVoiceModeRef.current = initialMode;
           setInputMode(initialMode);
           setOutputMode(initialOut);
@@ -299,8 +298,15 @@ export function App() {
       nodes: f.nodes.map((n) => {
         if (n.type === 'sink.captions' && (!targetId || n.id === targetId)) {
           const nextParams: Record<string, unknown> = { ...n.params, outputMode: mode };
-          if (mode === 'speak' && (!nextParams.language || typeof nextParams.language !== 'string')) {
-            nextParams.language = inferOutputLanguage(f, n.id);
+          if (mode === 'speak') {
+            if (!nextParams.language || typeof nextParams.language !== 'string') {
+              nextParams.language = inferOutputLanguage(f, n.id);
+            }
+            if (!nextParams.model || nextParams.model === '-' || nextParams.model === '—') {
+              nextParams.model = String(nextParams.ttsUrl ?? '').includes(':8092')
+                ? 'LFM3-Omni-2B-MLX-8bit'
+                : 'LiquidAI--LFM3-Audio-2B-MLX-8bit';
+            }
           }
           return { ...n, params: nextParams };
         }
@@ -363,21 +369,23 @@ export function App() {
       setModeAndSync('chat', liveFlow, defId);
     }
   };
-  const onToggleOutputMode = () => {
-    const defId = liveFlow ? resolveDefaultNodeId(liveFlow, 'sink.captions') ?? undefined : undefined;
-    setOutputResetTick((n) => n + 1);
-    const next: OutputMode = outputMode === 'speak' ? 'write' : 'speak';
-    setOutputModeAndSync(next, liveFlow, defId);
-  };
+  // write/speak do Output vive só no dropdown da etapa (setOutputModeAndSync via onUpdateStage).
+  // O botão speaker da topbar é mute local desta janela (estado em LiveView), sem tocar em nós.
   const onGoLive = () => {
     const f = actionsRef.current?.getFlow();
     if (!f) return;
     runner.stop();
-    const initialMode = readSavedInputMode() ?? modeFromFlow(f);
-    const initialOut = readSavedOutputMode() ?? outputModeFromFlow(f);
+    // Ao vir do Builder para o Runner, a fonte da verdade é SEMPRE o grafo editado no Builder
+    // (nunca sobrescrever backend/outputMode com localStorage antigo, senão desliga o ASR e a voz).
+    const initialMode = modeFromFlow(f);
+    const initialOut = outputModeFromFlow(f);
     if (initialMode !== 'chat') lastVoiceModeRef.current = initialMode;
     setInputMode(initialMode);
     setOutputMode(initialOut);
+    try {
+      localStorage.setItem('falador.inputMode', initialMode);
+      localStorage.setItem('falador.outputMode', initialOut);
+    } catch { /* ignore */ }
     setLiveFlow(applyOutputMode(applyInputMode(f, initialMode), initialOut));
     setView('live');
     fetchApps().then(setApps).catch(() => {});
@@ -444,6 +452,43 @@ export function App() {
       setOutputModeAndSync(mode, liveFlow, nodeId);
       return;
     }
+    if (target?.type === 'sink.captions' && param === 'model') {
+      const defId = resolveDefaultNodeId(liveFlow, 'sink.captions');
+      const isDefault = !defId || defId === nodeId;
+      const isWriteOnly = !value || value === '-' || value === '—';
+      const nextMode: OutputMode = isWriteOnly ? 'write' : 'speak';
+      if (isDefault) {
+        setOutputMode(nextMode);
+        try { localStorage.setItem('falador.outputMode', nextMode); } catch { /* ignore */ }
+      }
+      const next: Flow = {
+        ...liveFlow,
+        nodes: liveFlow.nodes.map((n) => {
+          if (n.id !== nodeId) return n;
+          if (isWriteOnly) {
+            return { ...n, params: { ...n.params, model: '-', outputMode: 'write' } };
+          }
+          const modelStr = String(value);
+          const nextParams: Record<string, unknown> = {
+            ...n.params,
+            model: modelStr,
+            outputMode: 'speak',
+            language:
+              typeof n.params.language === 'string' && n.params.language.trim() !== ''
+                ? n.params.language
+                : inferOutputLanguage(liveFlow, nodeId),
+          };
+          const curTtsUrl = String(n.params.ttsUrl ?? '').trim();
+          if (!curTtsUrl || curTtsUrl === 'http://127.0.0.1:8091' || curTtsUrl === 'http://127.0.0.1:8092') {
+            nextParams.ttsUrl = isOmniModel(modelStr) ? 'http://127.0.0.1:8092' : 'http://127.0.0.1:8091';
+          }
+          return { ...n, params: nextParams };
+        }),
+      };
+      setLiveFlow(next);
+      if (runner.running) startWithContext(next);
+      return;
+    }
     if (
       (target?.type === 'human.approve' && param === 'mode') ||
       (target?.type === 'agent.tools' && param === 'approvalPolicy')
@@ -506,8 +551,9 @@ export function App() {
         }
         // Trocar o modelo do Speech Translation muda o executor: Omni = :8092 (mlx-vlm),
         // LFM3-Audio = :8091 (mlx-audio). Só mexe em URL padrão; endpoint customizado fica.
+        // url === undefined (não consta no JSON) é tratado como default :8091.
         if (n.type === 'asr.realtime.translate' && param === 'model' && typeof value === 'string' &&
-            (nextParams.url === 'http://127.0.0.1:8091' || nextParams.url === 'http://127.0.0.1:8092')) {
+            (nextParams.url === undefined || nextParams.url === 'http://127.0.0.1:8091' || nextParams.url === 'http://127.0.0.1:8092')) {
           nextParams.url = isOmniModel(value) ? 'http://127.0.0.1:8092' : 'http://127.0.0.1:8091';
         }
         if (n.type === 'llm.omlx' && param === 'targetLanguage') {
@@ -630,8 +676,8 @@ export function App() {
               runner={runner} flow={liveFlow} scenarioName={scenarioLabel(currentFlow)}
               theme={theme} onToggleTheme={toggleTheme}
               inputMode={inputMode} outputMode={outputMode}
-              inputResetTick={inputResetTick} outputResetTick={outputResetTick}
-              onToggleMicMute={onToggleInputMode} onToggleOutputMode={onToggleOutputMode}
+              inputResetTick={inputResetTick}
+              onToggleMicMute={onToggleInputMode}
               models={models} apps={apps}
               contextDocs={contextDocs} onUploadDoc={onUploadDoc} onRemoveDoc={onRemoveDoc}
               onStart={startWithContext}

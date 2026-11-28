@@ -1,7 +1,7 @@
 // Deriva as ETAPAS do workflow (dropdowns por etapa da tela de execução) e
 // classifica os sinks de legenda em transcrição (alimentado pelo ASR) vs sugestão.
 import type { Flow, ContextDoc } from './api';
-import { accentOf, runtimePortOfNode, shortNodeName } from './data';
+import { accentOf, isAsrLfm3Model, isOmniModel, runtimePortOfNode, shortNodeName } from './data';
 
 export interface Stage {
   key: string;
@@ -17,6 +17,7 @@ export interface Stage {
     | 'model-llm'
     | 'model-translate'
     | 'model-decision'
+    | 'model-tts'
     | 'approve-mode'
     | 'voice'
     | 'output-mode'
@@ -167,16 +168,28 @@ export function deriveStages(flow: Flow): Stage[] {
         isDefault: p.isDefault === true,
       });
     } else if (n.type === 'sink.captions') {
+      const isSpeak = p.outputMode === 'speak' && p.model !== '-' && p.model !== '—';
+      const resolvedModel = !isSpeak
+        ? '-'
+        : typeof p.model === 'string' && p.model.trim() !== '' && p.model !== '-' && p.model !== '—'
+          ? p.model
+          : String(p.ttsUrl ?? '').includes(':8092')
+            ? 'LFM3-Omni-2B-MLX-8bit'
+            : 'LiquidAI--LFM3-Audio-2B-MLX-8bit';
       out.push({
-        key: `output-${n.id}`,
+        key: `output-${n.id}-model`,
         label: 'Output',
         accent: accentOf(n.type),
         nodeId: n.id,
         nodeType: n.type,
-        param: 'outputMode',
-        kind: 'output-mode',
-        value: p.outputMode === 'speak' ? 'speak' : 'write',
+        param: 'model',
+        kind: 'model-tts',
+        value: resolvedModel,
         isDefault: p.isDefault === true,
+        secondaryParam: 'language',
+        secondaryKind: 'language-required',
+        secondaryValue: String(p.language ?? 'Portuguese'),
+        secondaryLabel: 'Idioma',
       });
     } else if (n.type === 'asr.realtime') {
       out.push({
@@ -629,6 +642,13 @@ export function isStsModel(id: string, modelType?: string): boolean {
   return /lfm3.*audio|lfm2.?5.*audio|dialogue.*sidon|fastdialogue|haru.*4b|nemotronlabs.*voice|mimo.*audio|ming.*audio|mossformer|deepfilter|sam.*audio|re.*use/i.test(s);
 }
 
+// Modelos de síntese de voz para Output (sink.captions / tts.sts) — exclui STT puro (ex.: Voxtral-Realtime / Nemotron-ASR)
+export function isVoiceOutputModel(id: string, modelType?: string): boolean {
+  if (/\.gguf$|gguf/i.test(id)) return false;
+  if (modelType === 'audio_stt') return false;
+  return isTtsModel(id, modelType) || isStsModel(id, modelType) || isAsrLfm3Model(id);
+}
+
 // Decisão (System-1, d1, Laya): roteamento calibrado (/v1/systemone), NÃO gera texto via chat.
 export function isDecisionModel(id: string, modelType?: string): boolean {
   if (modelType === 'decision') return true;
@@ -691,6 +711,17 @@ export function sanitizeFlow(
         const resolved = resolveId(cur, allowed, decisionModels[0]);
         if (resolved && resolved !== cur) {
           return { ...n, params: { ...n.params, model: resolved } };
+        }
+      }
+      // Sincroniza URL do Speech Translation com o modelo: Omni → :8092, Audio → :8091.
+      // Só mexe em URL padrão (ausente ou :8091/:8092); endpoint customizado fica intacto.
+      if (n.type === 'asr.realtime.translate' && typeof n.params.model === 'string') {
+        const curUrl = typeof n.params.url === 'string' ? n.params.url : undefined;
+        if (curUrl === undefined || curUrl === 'http://127.0.0.1:8091' || curUrl === 'http://127.0.0.1:8092') {
+          const nextUrl = isOmniModel(n.params.model) ? 'http://127.0.0.1:8092' : 'http://127.0.0.1:8091';
+          if (curUrl !== nextUrl) {
+            return { ...n, params: { ...n.params, url: nextUrl } };
+          }
         }
       }
       return n;

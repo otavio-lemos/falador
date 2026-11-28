@@ -580,3 +580,95 @@ test('workflow com agent.tools sem human.approve respeita agent.tools.params.app
     await new Promise((r) => srv.close(r));
   }
 });
+
+test('stdin audio_mute alterna estado em tempo real, emite evento audio_mute e suprime/retoma TTS mantendo caption', async () => {
+  const ttsTexts = [];
+  const ttsSrv = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      ttsTexts.push(JSON.parse(body).text);
+      res.writeHead(200, { 'Content-Type': 'audio/pcm', 'X-Sample-Rate': '24000' });
+      res.end(Buffer.alloc(2400, 1));
+    });
+  });
+  await new Promise((r) => ttsSrv.listen(0, '127.0.0.1', r));
+  const ttsUrl = `http://127.0.0.1:${ttsSrv.address().port}`;
+  const fakePlayer = join(tmp, 'noop-player.sh');
+  writeFileSync(fakePlayer, '#!/bin/sh\ncat > /dev/null\nexit 0\n', { mode: 0o755 });
+
+  const flowPath = writeFlow({
+    version: 1,
+    stopWhenSourcesDone: false,
+    nodes: [
+      { id: 'chat', type: 'input.chat', params: { initialMessage: '' } },
+      {
+        id: 'cap',
+        type: 'sink.captions',
+        params: { outputMode: 'speak', ttsUrl, player: fakePlayer },
+      },
+    ],
+    edges: [{ from: 'chat.out', to: 'cap.phrase' }],
+  });
+
+  const seen = [];
+  const child = spawn(process.execPath, [CLI, flowPath], { stdio: ['pipe', 'pipe', 'pipe'] });
+  let buf = '';
+  const waitForEv = (pred, label, timeoutMs = 10_000) =>
+    new Promise((resolve, reject) => {
+      const hitNow = seen.find(pred);
+      if (hitNow) return resolve(hitNow);
+      const iv = setInterval(() => {
+        const h = seen.find(pred);
+        if (h) {
+          clearInterval(iv);
+          clearTimeout(to);
+          resolve(h);
+        }
+      }, 20);
+      const to = setTimeout(() => {
+        clearInterval(iv);
+        reject(new Error(`timeout esperando ${label}; eventos: ${JSON.stringify(seen.slice(-8))}`));
+      }, timeoutMs);
+    });
+
+  const closed = new Promise((resolve) => child.on('close', (code) => resolve(code)));
+  child.stdout.on('data', (d) => {
+    buf += String(d);
+    let idx;
+    while ((idx = buf.indexOf('\n')) >= 0) {
+      const l = buf.slice(0, idx).trim();
+      buf = buf.slice(idx + 1);
+      if (l) seen.push(JSON.parse(l));
+    }
+  });
+
+  try {
+    await waitForEv((e) => e.type === 'run_started', 'run_started');
+
+    // Muta via stdin e verifica evento NDJSON {"type":"audio_mute","muted":true}
+    child.stdin.write(JSON.stringify({ type: 'audio_mute', muted: true }) + '\n');
+    await waitForEv((e) => e.type === 'audio_mute' && e.muted === true, 'audio_mute true');
+
+    // Envia frase mutada: legenda sai, /tts-stream NÃO é chamado
+    child.stdin.write(JSON.stringify({ type: 'chat_input', nodeId: 'chat', text: 'frase silenciada' }) + '\n');
+    await waitForEv((e) => e.type === 'caption' && e.text === 'frase silenciada', 'caption silenciada');
+    await new Promise((r) => setTimeout(r, 80));
+    assert.deepEqual(ttsTexts, []);
+
+    // Desmuta via stdin -> próxima frase chama /tts-stream
+    child.stdin.write(JSON.stringify({ type: 'audio_mute', muted: false }) + '\n');
+    await waitForEv((e) => e.type === 'audio_mute' && e.muted === false, 'audio_mute false');
+    child.stdin.write(JSON.stringify({ type: 'chat_input', nodeId: 'chat', text: 'frase falada' }) + '\n');
+    await waitForEv((e) => e.type === 'caption' && e.text === 'frase falada', 'caption falada');
+    await new Promise((r) => setTimeout(r, 150));
+    assert.deepEqual(ttsTexts, ['frase falada']);
+
+    child.kill('SIGTERM');
+    const code = await closed;
+    assert.equal(code, 0);
+  } finally {
+    try { child.kill('SIGKILL'); } catch { /* já encerrado */ }
+    await new Promise((r) => ttsSrv.close(r));
+  }
+});

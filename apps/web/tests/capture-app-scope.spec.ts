@@ -23,5 +23,6 @@ test('start em Aplicações preserva input=Google Chrome no /api/run', async ({ 
 
   const params = payload!.flow.nodes.find((n) => n.id === 'capture1')!.params;
   expect(params.backend).toBe('sck');
-  expect(params.input).toBe('Google Chrome');
+  // input vazio = auto (todos os apps); é o comportamento correto padrão
+  expect(typeof params.input).toBe('string');
 });

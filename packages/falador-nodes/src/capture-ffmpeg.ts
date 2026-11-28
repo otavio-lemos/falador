@@ -209,7 +209,9 @@ export const captureFfmpeg: NodeTypeDef = {
           child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
           child.stderr.on('data', (d: Buffer) => {
             const s = d.toString().trim();
-            if (s) ctx.log('warn', `capture: ${s.slice(0, 300)}`);
+            if (!s) return;
+            const isStartupInfo = /\[(capture-sck|capture-sidecar)\]\s+(PRONTO|aguardando)\b/i.test(s);
+            ctx.log(isStartupInfo ? 'info' : 'warn', `capture: ${s.slice(0, 300)}`);
           });
           child.on('error', reject);
           child.on('spawn', () => resolve());

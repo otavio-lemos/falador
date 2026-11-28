@@ -8,7 +8,7 @@ import { Palette } from '../components/Palette';
 import { FlowCanvas } from '../components/FlowCanvas';
 import { fetchFlow, saveFlow, type Catalog, type Flow, type ServiceStatusMap } from '../api';
 import { flowToRf, rfToFlow, newNodeId, type FNode } from '../flow-utils';
-import { NODE_META, accentOf } from '../data';
+import { NODE_META, accentOf, isOmniModel } from '../data';
 import type { Runner } from '../useRunner';
 
 interface Props {
@@ -20,7 +20,7 @@ interface Props {
   onFlowLoaded?: (flowName: string | null) => void;
   onSaved: () => void;
   onEditFlow: () => void;
-  models: { omlx: string[]; cache: string[] };
+  models: { omlx: string[]; cache: string[]; details?: { id: string; model_type: string }[] };
   apps: string[];
   onRefreshApps: () => void;
   onServiceStatus?: (status: ServiceStatusMap) => void;
@@ -71,11 +71,33 @@ export function BuilderView({
           }
           return n;
         }
-        let outputs = n.data.outputs;
-        if (n.data.type === 'decision.llm' && Array.isArray(params.options)) {
-          outputs = (params.options as string[]).map((o) => ({ name: o, type: 'tokens_parcial' }));
+        let nextParams = params;
+        if (n.data.type === 'sink.captions') {
+          if (nextParams.model !== n.data.params?.model && (nextParams.model === '-' || nextParams.model === '—')) {
+            nextParams = { ...nextParams, outputMode: 'write' };
+          } else if (
+            typeof nextParams.model === 'string' &&
+            nextParams.model.trim() !== '' &&
+            nextParams.model !== '-' &&
+            nextParams.model !== '—'
+          ) {
+            const curTtsUrl = String(nextParams.ttsUrl ?? '').trim();
+            if (
+              nextParams.ttsUrl === n.data.params?.ttsUrl &&
+              (curTtsUrl === '' || curTtsUrl === 'http://127.0.0.1:8091' || curTtsUrl === 'http://127.0.0.1:8092')
+            ) {
+              nextParams = {
+                ...nextParams,
+                ttsUrl: isOmniModel(String(nextParams.model)) ? 'http://127.0.0.1:8092' : 'http://127.0.0.1:8091',
+              };
+            }
+          }
         }
-        return { ...n, data: { ...n.data, params, outputs } };
+        let outputs = n.data.outputs;
+        if (n.data.type === 'decision.llm' && Array.isArray(nextParams.options)) {
+          outputs = (nextParams.options as string[]).map((o) => ({ name: o, type: 'tokens_parcial' }));
+        }
+        return { ...n, data: { ...n.data, params: nextParams, outputs } };
       });
     });
   }, [setNodes]);
@@ -96,11 +118,15 @@ export function BuilderView({
           }
         : type === 'sink.captions'
           ? {
+              model: 'LiquidAI--LFM3-Audio-2B-MLX-8bit',
               mode: 'callback',
               showParcials: true,
               outputMode: 'write',
               language: 'Portuguese',
               voice: 'female',
+              ttsUrl: 'http://127.0.0.1:8091',
+              playbackRate: 1.25,
+              maxQueue: 2,
               isDefault: !nodes.some((n) => n.data.type === 'sink.captions'),
             }
         : type === 'decision.llm'

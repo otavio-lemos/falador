@@ -42,7 +42,6 @@ import {
   MicrophoneOff,
   VolumeUp,
   VolumeMute,
-  VoiceActivate,
   ErrorFilled,
   Send,
   Launch,
@@ -50,8 +49,8 @@ import {
   ChevronUp,
 } from '@carbon/icons-react';
 import type { Runner, Gate, AgentStep, Caption, AuditEvent } from '../useRunner';
-import { exportSession, gateAction, type Flow, type ContextDoc, type ServiceStatusMap } from '../api';
-import { CATEGORIES, isAsrLfm3Model } from '../data';
+import { exportSession, gateAction, setAudioMute, type Flow, type ContextDoc, type ServiceStatusMap } from '../api';
+import { CATEGORIES, accentOf, isAsrLfm3Model, runtimePortOfNode } from '../data';
 import { openPopout, type PopoutPanel } from '../popout';
 import {
   deriveStages,
@@ -62,6 +61,7 @@ import {
   supportedLanguagesForModel,
   isTextModel,
   isAsrModel,
+  isVoiceOutputModel,
   isDecisionModel,
   DEFAULT_LLM_MODEL,
   DEFAULT_DECISION_MODEL,
@@ -90,9 +90,7 @@ interface Props {
   inputMode: 'apps' | 'mic' | 'chat';
   outputMode: 'write' | 'speak';
   inputResetTick?: number;
-  outputResetTick?: number;
   onToggleMicMute: () => void;
-  onToggleOutputMode: () => void;
   models: { omlx: string[]; cache: string[]; details?: { id: string; model_type: string }[] };
   apps: string[];
   mics?: { id: number; name: string; sampleRate: number }[];
@@ -219,6 +217,10 @@ function stageItems(stage: Stage, models: { omlx: string[]; cache: string[]; det
     const combined = [...models.omlx, ...models.cache.filter((m) => !models.omlx.includes(m))];
     vals = combined.filter((m) => isAsrLfm3Model(m));
     if (vals.length === 0) vals = ['LiquidAI--LFM3-Audio-2B-MLX-8bit'];
+  } else if (stage.kind === 'model-tts') {
+    const combined = [...models.omlx, ...models.cache.filter((m) => !models.omlx.includes(m))];
+    vals = combined.filter((m) => isVoiceOutputModel(m, mType(m)));
+    if (vals.length === 0) vals = ['LiquidAI--LFM3-Audio-2B-MLX-8bit', 'LFM3-Omni-2B-MLX-8bit'];
   } else if (stage.kind === 'model-llm' || stage.kind === 'model-translate') {
     vals = models.omlx.filter((m) => isTextModel(m, mType(m)));
     if (vals.length === 0 && stage.kind === 'model-llm') vals = [DEFAULT_LLM_MODEL];
@@ -247,6 +249,7 @@ function stageItems(stage: Stage, models: { omlx: string[]; cache: string[]; det
   const validCurrent = !isDisabledVal && (
     stage.kind === 'model-asr' ||
     stage.kind === 'model-asr-lfm3' ||
+    stage.kind === 'model-tts' ||
     ((stage.kind === 'model-llm' || stage.kind === 'model-translate') && isAvailableInOmlx && isTextModel(stage.value, mType(stage.value))) ||
     (stage.kind === 'model-decision' && isAvailableInOmlx && (isDecisionModel(stage.value, mType(stage.value)) || (stage.nodeType === 'decision.llm' && isTextModel(stage.value, mType(stage.value)))))
   );
@@ -257,11 +260,23 @@ function stageItems(stage: Stage, models: { omlx: string[]; cache: string[]; det
     if (stage.kind === 'model-translate') {
       return [{ id: '-', label: '— (desabilitado)' }, ...filtered];
     }
+    if (stage.kind === 'model-tts') {
+      return [{ id: '-', label: '— (só escrever)' }, ...filtered];
+    }
     return filtered;
   }
   if (stage.kind === 'model-translate') {
     if (items.length === 0) items.push({ id: DEFAULT_LLM_MODEL, label: shortModel(DEFAULT_LLM_MODEL) });
     return [{ id: '-', label: '— (desabilitado)' }, ...items];
+  }
+  if (stage.kind === 'model-tts') {
+    if (items.length === 0) {
+      items.push(
+        { id: 'LiquidAI--LFM3-Audio-2B-MLX-8bit', label: shortModel('LiquidAI--LFM3-Audio-2B-MLX-8bit') },
+        { id: 'LFM3-Omni-2B-MLX-8bit', label: shortModel('LFM3-Omni-2B-MLX-8bit') },
+      );
+    }
+    return [{ id: '-', label: '— (só escrever)' }, ...items];
   }
   return items.length ? items : [{ id: stage.value || '—', label: stage.value || '—' }];
 }
@@ -422,7 +437,7 @@ function ChatCard({
 
 export function LiveView({
   runner, flow, scenarioName, theme, onToggleTheme,
-  inputMode, outputMode, inputResetTick = 0, outputResetTick = 0, onToggleMicMute, onToggleOutputMode,
+  inputMode, outputMode, inputResetTick = 0, onToggleMicMute,
   models, apps, contextDocs,
   onUploadDoc, onRemoveDoc, onStart, flows, currentFlow,
   onSwitchFlow, onUpdateStage, onRegenerate, onServiceStatus, onNotify, onGoBuilder, onExit, onReset, resetSignal, popout, popoutServiceId,
@@ -447,15 +462,15 @@ export function LiveView({
     });
   }, [inputResetTick]);
 
+  const [windowMuted, setWindowMuted] = useState<boolean>(() => {
+    try { return localStorage.getItem('falador.windowMuted') === '1'; } catch { return false; }
+  });
   useEffect(() => {
-    if (outputResetTick === 0) return;
-    setSelectedByGroup((prev) => {
-      if (!('Output' in prev)) return prev;
-      const next = { ...prev };
-      delete next.Output;
-      return next;
+    document.querySelectorAll('audio,video').forEach((el) => {
+      (el as HTMLMediaElement).muted = windowMuted;
     });
-  }, [outputResetTick]);
+    void setAudioMute(windowMuted);
+  }, [windowMuted]);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [cmdDraft, setCmdDraft] = useState('');
@@ -553,7 +568,6 @@ export function LiveView({
     (n) => n.type === 'human.approve' || (n.type === 'agent.tools' && n.params.approvalPolicy !== 'never'),
   );
   const hasInput = flow.nodes.some((n) => n.type === 'capture.ffmpeg' || n.type === 'input.chat');
-  const hasOutput = flow.nodes.some((n) => n.enabled !== false && (n.type === 'sink.captions' || n.type === 'sink.playback' || n.type === 'tts.sts'));
   const hasTTS = flow.nodes.some((n) => n.type === 'tts.sts' || (n.type === 'sink.captions' && n.params?.outputMode === 'speak'));
   const hasLLM = flow.nodes.some((n) => n.type === 'llm.omlx' || n.type === 'agent.tools');
   const execNodes = flow.nodes.filter((n) => n.type === 'exec.command' || n.type === 'tool.mcp');
@@ -1374,6 +1388,7 @@ export function LiveView({
     } else if (m.kind === 'agent-step') {
       tagType = 'warm-gray'; accent = 'var(--cds-support-info)'; icon = <Terminal size={18} />;
     }
+    if (m.nodeType) accent = accentOf(m.nodeType);
     const meta = metricsByNode[m.nodeId] ? (
       <span className="live-chat-metrics" title="Contexto / Tokens por segundo / Tempo">
         {metricsByNode[m.nodeId]}
@@ -1817,15 +1832,18 @@ export function LiveView({
                 onClick={onToggleMicMute}
               />
               <Button
-                kind={outputMode === 'write' ? 'danger--tertiary' : 'tertiary'}
+                kind={windowMuted ? 'danger--tertiary' : 'tertiary'}
                 size="sm"
                 hasIconOnly
-                renderIcon={outputMode === 'write' ? VolumeMute : VoiceActivate}
-                aria-pressed={outputMode === 'speak'}
-                iconDescription={!hasOutput ? 'Workflow sem saída (Output)' : (outputMode === 'speak' ? 'Só escrever' : 'Falar')}
+                renderIcon={windowMuted ? VolumeMute : VolumeUp}
+                aria-pressed={windowMuted}
+                iconDescription={windowMuted ? 'Desmutar esta janela' : 'Mutar esta janela'}
                 tooltipPosition="bottom"
-                disabled={!hasOutput}
-                onClick={onToggleOutputMode}
+                onClick={() => {
+                  const next = !windowMuted;
+                  setWindowMuted(next);
+                  try { localStorage.setItem('falador.windowMuted', next ? '1' : '0'); } catch { /* ignore */ }
+                }}
               />
             </div>
           </div>
@@ -1869,7 +1887,10 @@ export function LiveView({
                 label: String(i.number),
               }));
               const items = stageItems(s, models, apps);
-              const primaryValue = s.kind === 'model-translate' && (!s.value || s.value === '—') ? '-' : s.value;
+              const primaryValue =
+                (s.kind === 'model-translate' || s.kind === 'model-tts') && (!s.value || s.value === '—' || s.value === '-')
+                  ? '-'
+                  : s.value;
               const selectedId = s.kind === 'app' && s.param === 'backend'
                 ? (s.isDefault ? inputMode : s.value)
                 : s.kind === 'output-mode'
@@ -1885,19 +1906,34 @@ export function LiveView({
                     )
                 : [];
               const curLang = s.secondaryValue === '-' || s.secondaryValue === '—' ? '' : (s.secondaryValue ?? '');
-              const langDisabled = s.kind === 'model-translate' && (!s.value || s.value === '-' || s.value === '—');
+              const langDisabled =
+                (s.kind === 'model-translate' || s.kind === 'model-tts') &&
+                (!selectedId || selectedId === '-' || selectedId === '—');
+              const disabledLangItem = s.kind === 'model-tts'
+                ? { id: '', label: '— (só escrever)' }
+                : { id: '', label: '— (desabilitado)' };
               const finalLangItems = curLang && !langItems.some((l) => l.id === curLang)
                 ? [{ id: curLang, label: curLang }, ...langItems]
                 : langItems;
+              const activeNodeParams = flow.nodes.find((n) => n.id === s.nodeId)?.params;
+              const solutionLabel = runtimePortOfNode(s.nodeType, activeNodeParams);
+              const selectedPrimaryItem =
+                items.find(
+                  (i) =>
+                    i.id === selectedId ||
+                    (Boolean(selectedId) && selectedId !== '-' && selectedId !== '—' && i.label === shortModel(selectedId)),
+                ) ?? items[0];
               return (
-                <div key={grp.key} className={`stage-dd ${isDual ? 'stage-dd--triple' : 'stage-dd--dual'}`} style={{ ['--accent' as string]: grp.accent }}>
+                <div
+                  key={grp.key}
+                  className={`stage-dd ${isDual ? 'stage-dd--triple' : 'stage-dd--dual'}`}
+                  style={{ ['--accent' as string]: grp.accent }}
+                >
                   <span className="stage-dd-label">
                     {grp.label}
-                    {grp.solution && (
+                    {solutionLabel && (
                       <span className="stage-dd-solution">
-                        {s.kind === 'output-mode'
-                          ? (outputMode === 'speak' ? 'MLX-AUDIO:8091' : 'NODE.JS:8787')
-                          : grp.solution}
+                        {solutionLabel}
                       </span>
                     )}
                   </span>
@@ -1919,7 +1955,7 @@ export function LiveView({
                       className="stage-main-select"
                       size="sm" titleText={grp.label} hideLabel label={grp.label}
                       items={items} itemToString={(it) => (it ? it.label : '')}
-                      selectedItem={items.find((i) => i.id === selectedId) ?? items[0]}
+                      selectedItem={selectedPrimaryItem}
                       onChange={({ selectedItem }) => selectedItem && selectedItem.id !== '—' && onUpdateStage(s.nodeId, s.param, selectedItem.id)}
                     />
                     {s.secondaryParam && (
@@ -1935,7 +1971,7 @@ export function LiveView({
                         itemToString={(it) => (it ? it.label : '')}
                         selectedItem={
                           langDisabled
-                            ? { id: '', label: '— (desabilitado)' }
+                            ? disabledLangItem
                             : (finalLangItems.find((i) => i.id === curLang) ?? finalLangItems[0])
                         }
                         onChange={({ selectedItem }) =>

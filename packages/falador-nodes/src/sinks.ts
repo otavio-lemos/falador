@@ -31,8 +31,9 @@ export const sinkCaptions: NodeTypeDef = {
     'player',
     'playbackRate',
     'maxQueue',
+    'model',
   ],
-  bindingNames: ['__onCaption'],
+  bindingNames: ['__onCaption', '__isAudioMuted', '__registerAudioMuteListener'],
   inputs: [
     { name: 'in', type: 'tokens_parcial' },
     { name: 'phrase', type: 'phrase' },
@@ -51,7 +52,7 @@ export const sinkCaptions: NodeTypeDef = {
         errs.push({ path: `params.${k}`, code: 'INVALID_PARAM', message: `${k} deve ser boolean` });
       }
     }
-    for (const k of ['outputFile', 'ttsUrl', 'language', 'voice', 'player'] as const) {
+    for (const k of ['outputFile', 'ttsUrl', 'language', 'voice', 'player', 'model'] as const) {
       if (p[k] !== undefined && typeof p[k] !== 'string') {
         errs.push({ path: `params.${k}`, code: 'INVALID_PARAM', message: `${k} deve ser string` });
       }
@@ -70,8 +71,23 @@ export const sinkCaptions: NodeTypeDef = {
     const mode = (ctx.params.mode as 'stdout' | 'callback' | undefined) ?? 'stdout';
     const showParcials = (ctx.params.showParcials as boolean | undefined) ?? true;
     const outputFile = (ctx.params.outputFile as string | undefined);
-    const outputMode = (ctx.params.outputMode as 'write' | 'speak' | undefined) ?? 'write';
-    const ttsUrl = ((ctx.params.ttsUrl as string | undefined) ?? 'http://127.0.0.1:8091').replace(/\/+$/, '');
+    const rawOutputMode = (ctx.params.outputMode as 'write' | 'speak' | undefined) ?? 'write';
+    const rawModel = typeof ctx.params.model === 'string' ? ctx.params.model.trim() : undefined;
+    const outputMode: 'write' | 'speak' =
+      ctx.params.model === '-' || ctx.params.model === '—' || rawModel === '-' || rawModel === '—'
+        ? 'write'
+        : rawOutputMode;
+    const isOmni = Boolean(rawModel && /lfm.*omni/i.test(rawModel));
+    const isLfmAudio = Boolean(rawModel && /lfm.*audio/i.test(rawModel));
+    const rawParamUrl = typeof ctx.params.ttsUrl === 'string' ? ctx.params.ttsUrl.trim() : '';
+    const isDefaultSidecarUrl =
+      rawParamUrl === '' ||
+      rawParamUrl === 'http://127.0.0.1:8091' ||
+      rawParamUrl === 'http://127.0.0.1:8092';
+    const resolvedTtsUrl = isDefaultSidecarUrl
+      ? (isOmni ? 'http://127.0.0.1:8092' : isLfmAudio ? 'http://127.0.0.1:8091' : (rawParamUrl || 'http://127.0.0.1:8091'))
+      : rawParamUrl;
+    const ttsUrl = resolvedTtsUrl.replace(/\/+$/, '');
     const language = (ctx.params.language as string | undefined) ?? 'Portuguese';
     const voice = (ctx.params.voice as string | undefined) ?? 'female';
     const sampleRateHz = (ctx.params.sampleRateHz as number | undefined) ?? 24000;
@@ -82,6 +98,10 @@ export const sinkCaptions: NodeTypeDef = {
     const maxQueue = (ctx.params.maxQueue as number | undefined) ?? 2;
     const cb = ctx.bindings.__onCaption as
       | ((c: { text: string; final: boolean; trace?: TraceMeta }) => void)
+      | undefined;
+    const isAudioMuted = ctx.bindings.__isAudioMuted as (() => boolean) | undefined;
+    const registerMute = ctx.bindings.__registerAudioMuteListener as
+      | ((fn: (muted: boolean) => void) => (() => void) | void)
       | undefined;
 
     // stream de arquivo aberto só se outputFile definido
@@ -94,11 +114,27 @@ export const sinkCaptions: NodeTypeDef = {
     let dropped = 0;
     let stopped = false;
     let generation = 0;
+    let clearGen = -1;
     let activeCtrl: AbortController | null = null;
     let activeChild: ChildProcess | null = null;
     // Fila só de pendentes (o item em reprodução não entra aqui). Ao atrasar, derruba backlog antigo e mantém o mais recente.
     const speakQueue: Array<{ text: string; gen: number }> = [];
     let speakPump: Promise<void> = Promise.resolve();
+
+    const unsubMute = registerMute?.((muted: boolean) => {
+      if (muted) {
+        clearGen = generation;
+        generation += 1;
+        activeCtrl?.abort();
+        activeCtrl = null;
+        if (activeChild) {
+          try { activeChild.kill('SIGKILL'); } catch { /* ignore */ }
+          activeChild = null;
+        }
+        speakQueue.length = 0;
+        pending = 0;
+      }
+    });
 
     function write(text: string, final: boolean): void {
       if (!text) return;
@@ -118,7 +154,7 @@ export const sinkCaptions: NodeTypeDef = {
     // modelo gera e o player toca em paralelo. O 1º som cai de "frase inteira
     // sintetizada" (~1,2 s) para ~0,2 s.
     async function synthesizeAndPlay(text: string, myGen: number): Promise<void> {
-      if (ctx.signal.aborted || myGen !== generation) return;
+      if (ctx.signal.aborted || myGen !== generation || isAudioMuted?.() === true) return;
       const clean = text.replace(/\s+/g, ' ').trim();
       if (!clean) return;
       const truncated = clean.length > maxTextChars ? clean.slice(0, maxTextChars) + '…' : clean;
@@ -154,7 +190,7 @@ export const sinkCaptions: NodeTypeDef = {
         ctx.metrics.counter('sink.captions.tts_errors', 1);
         return;
       }
-      if (ctx.signal.aborted || myGen !== generation) return;
+      if (ctx.signal.aborted || myGen !== generation || isAudioMuted?.() === true) return;
 
       const sr = Number(res.headers.get('x-sample-rate')) || sampleRateHz;
       const args = ['-f', 's16le', '-ar', String(sr), '-ch_layout', 'mono', '-nodisp', '-autoexit', '-loglevel', 'error'];
@@ -192,7 +228,7 @@ export const sinkCaptions: NodeTypeDef = {
           void (async () => {
             try {
               for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
-                if (myGen !== generation || p.exitCode !== null) break;
+                if (myGen !== generation || p.exitCode !== null || isAudioMuted?.() === true) break;
                 bytes += chunk.byteLength;
                 p.stdin?.write(Buffer.from(chunk));
               }
@@ -225,14 +261,14 @@ export const sinkCaptions: NodeTypeDef = {
           } catch (e: unknown) {
             ctx.log('error', `output.playback: ${String(e)}`);
           } finally {
-            pending = Math.max(0, pending - 1);
+            if (next.gen > clearGen) pending = Math.max(0, pending - 1);
           }
         }
       }).catch(() => { /* mantém cadeia viva */ });
     }
 
     function enqueueSpeak(text: string): void {
-      if (outputMode !== 'speak' || stopped || ctx.signal.aborted) return;
+      if (outputMode !== 'speak' || stopped || ctx.signal.aborted || isAudioMuted?.() === true) return;
       const clean = text.replace(/\s+/g, ' ').trim();
       if (!clean) return;
       // pending conta item em reprodução + pendentes na fila
@@ -281,6 +317,9 @@ export const sinkCaptions: NodeTypeDef = {
       },
       async stop() {
         stopped = true;
+        if (typeof unsubMute === 'function') {
+          try { unsubMute(); } catch { /* ignore */ }
+        }
         speakQueue.length = 0;
         pending = 0;
         await speakPump.catch(() => {});
@@ -311,6 +350,7 @@ export const sinkPlayback: NodeTypeDef = {
   type: 'sink.playback',
   sink: true,
   paramNames: ['player', 'tempDir', 'maxQueue', 'playbackRate', 'muted'],
+  bindingNames: ['__isAudioMuted', '__registerAudioMuteListener'],
   inputs: [{ name: 'in', type: 'audio_chunk' }],
   outputs: [],
   validateParams: (p) => {
@@ -334,6 +374,10 @@ export const sinkPlayback: NodeTypeDef = {
     const playbackRate = (ctx.params.playbackRate as number | undefined) ?? 1.25;
     const maxQueue = (ctx.params.maxQueue as number | undefined) ?? 2;
     const muted = ctx.params.muted === true;
+    const isAudioMuted = ctx.bindings.__isAudioMuted as (() => boolean) | undefined;
+    const registerMute = ctx.bindings.__registerAudioMuteListener as
+      | ((fn: (muted: boolean) => void) => (() => void) | void)
+      | undefined;
     let dir: string | null = null;
     let pending = 0;
     let dropped = 0;
@@ -341,13 +385,27 @@ export const sinkPlayback: NodeTypeDef = {
     let stopped = false;
     let activeChild: ChildProcess | null = null;
     let generation = 0;
+    let clearGen = -1;
     const queue: Array<{ payload: AudioChunkPayload; gen: number }> = [];
     let pump: Promise<void> = Promise.resolve();
 
+    const unsubMute = registerMute?.((nowMuted: boolean) => {
+      if (nowMuted) {
+        clearGen = generation;
+        generation += 1;
+        queue.length = 0;
+        pending = 0;
+        if (activeChild) {
+          try { activeChild.kill('SIGKILL'); } catch { /* ignore */ }
+          activeChild = null;
+        }
+      }
+    });
+
     async function play(payload: AudioChunkPayload, myGen: number): Promise<void> {
-      if (stopped || ctx.signal.aborted || myGen !== generation) return;
+      if (stopped || ctx.signal.aborted || myGen !== generation || isAudioMuted?.() === true) return;
       if (!dir) dir = await mkdtemp(join(tmpdir(), 'falador-play-'));
-      if (stopped || ctx.signal.aborted || myGen !== generation) return;
+      if (stopped || ctx.signal.aborted || myGen !== generation || isAudioMuted?.() === true) return;
       const file = join(dir, `chunk-${fileNo++}.wav`);
       await new Promise<void>((resolve, reject) => {
         const ws = createWriteStream(file);
@@ -355,7 +413,7 @@ export const sinkPlayback: NodeTypeDef = {
         ws.on('finish', () => resolve());
         ws.end(Buffer.from(payload.data));
       });
-      if (stopped || ctx.signal.aborted || myGen !== generation) {
+      if (stopped || ctx.signal.aborted || myGen !== generation || isAudioMuted?.() === true) {
         await rm(file, { force: true }).catch(() => {});
         return;
       }
@@ -399,7 +457,7 @@ export const sinkPlayback: NodeTypeDef = {
           } catch (e: unknown) {
             ctx.log('error', `sink.playback: ${String(e)}`);
           } finally {
-            pending = Math.max(0, pending - 1);
+            if (next.gen > clearGen) pending = Math.max(0, pending - 1);
           }
         }
       }).catch(() => {});
@@ -408,7 +466,7 @@ export const sinkPlayback: NodeTypeDef = {
     return {
       async start() {},
       async onInput(_port, msg) {
-        if (muted || stopped || ctx.signal.aborted || msg.control) return;
+        if (muted || isAudioMuted?.() === true || stopped || ctx.signal.aborted || msg.control) return;
         const payload = msg.payload as AudioChunkPayload | null;
         if (!payload || payload.format !== 'wav' || !(payload.data instanceof Uint8Array)) {
           ctx.log('warn', 'sink.playback: payload não é AudioChunkPayload — descartado');
@@ -433,6 +491,9 @@ export const sinkPlayback: NodeTypeDef = {
       },
       async stop() {
         stopped = true;
+        if (typeof unsubMute === 'function') {
+          try { unsubMute(); } catch { /* ignore */ }
+        }
         queue.length = 0;
         pending = 0;
         // espera a fala em curso terminar (não as demais) e limpa temp

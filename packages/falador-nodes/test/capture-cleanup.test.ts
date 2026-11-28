@@ -46,6 +46,7 @@ function waitDead(pid: number, timeoutMs = 2000): Promise<boolean> {
 function makeCtx(params: Record<string, unknown>) {
   return {
     params,
+    bindings: {},
     log: () => {},
     signal: { aborted: false } as AbortSignal,
     emit: async () => true,

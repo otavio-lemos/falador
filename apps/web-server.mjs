@@ -136,6 +136,7 @@ function getLogsDir() {
 }
 
 let currentRun = null; // { child, clients:Set<res>, stopRequested }
+let windowAudioMuted = false;
 const ptySessions = new Map(); // id -> { id, proc, shell, cwd, cols, rows, buffer, bufferBytes, clients, alive, exitCode }
 
 function clampInt(val, fallback, min, max) {
@@ -668,7 +669,29 @@ function broadcast(event, data) {
     currentRun.history.push(payload);
     if (currentRun.history.length > 500) currentRun.history.shift();
   }
-  for (const res of currentRun.clients) res.write(payload);
+  for (const res of [...currentRun.clients]) {
+    try {
+      if (!res.destroyed && !res.writableEnded) res.write(payload);
+      else currentRun.clients.delete(res);
+    } catch {
+      currentRun.clients.delete(res);
+    }
+  }
+}
+
+function writeRunStdin(obj) {
+  const run = currentRun;
+  if (!run || run.stopRequested) return false;
+  const stdin = run.child?.stdin;
+  if (!stdin || stdin.destroyed || stdin.writableEnded || !stdin.writable || run.child.exitCode !== null) {
+    return false;
+  }
+  try {
+    stdin.write(JSON.stringify(obj) + '\n', () => {});
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function startRun(flow, runSeconds, flowName, testMode) {
@@ -678,7 +701,12 @@ function startRun(flow, runSeconds, flowName, testMode) {
   const args = [CLI, tmp];
   if (runSeconds) args.push('--run-seconds', String(runSeconds));
   if (testMode) args.push('--test-mode');
-  const child = spawn('node', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn('node', args, {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, FALADOR_AUDIO_MUTED: windowAudioMuted ? '1' : '0' },
+  });
+  // Evita Unhandled 'error' event (write EPIPE) quando o child fecha o stdin durante stop/SIGTERM
+  child.stdin?.on('error', () => {});
   const clients = new Set();
   const history = [];
   const transcriptionSinks = classifyFlowTranscriptionSinks(flow);
@@ -690,6 +718,7 @@ function startRun(flow, runSeconds, flowName, testMode) {
   let clientStopTimer = null;
   const sses = (res) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    res.on('error', () => { clients.delete(res); });
     res.write(`event: attached\ndata: {}\n\n`);
     for (const item of history) res.write(item);
     clients.add(res);
@@ -864,6 +893,7 @@ function startRun(flow, runSeconds, flowName, testMode) {
       // undici keep-alive: o child do runner pode não sair sozinho no fim do run
       // (lição §4) — emitido run_stopped/summary, encerra o child e libera o next run.
       if (ev.type === 'summary' || ev.type === 'run_stopped') {
+        runEntry.stopRequested = true;
         if (ev.type === 'summary' && currentRun && currentRun.testMode) {
           try {
             const dir = join(ROOT, 'logs', 'test-runs');
@@ -880,7 +910,11 @@ function startRun(flow, runSeconds, flowName, testMode) {
         if (currentRun) currentRun.runId = ev.runId ?? currentRun.runId;
         appendWebLog(`[runner] run_started flow=${flowName || flow?.name || 'sessao'} runId=${ev.runId ?? ''}`.trim());
       } else if (ev.type === 'node_error') {
-        appendWebLog(`[runner] node_error [${ev.nodeId ?? '?'}] (${ev.code ?? 'error'}): ${String(ev.message ?? '').slice(0, 500)}`);
+        if (ev.code === 'log_info') {
+          appendWebLog(`[runner] info [${ev.nodeId ?? '?'}]: ${String(ev.message ?? '').slice(0, 500)}`);
+        } else {
+          appendWebLog(`[runner] node_error [${ev.nodeId ?? '?'}] (${ev.code ?? 'error'}): ${String(ev.message ?? '').slice(0, 500)}`);
+        }
       } else if (ev.type === 'flow_invalid') {
         appendWebLog(`[runner] flow_invalid: ${String(ev.error ?? JSON.stringify(ev)).slice(0, 500)}`);
       } else if (ev.type === 'edge_overflow') {
@@ -1146,11 +1180,26 @@ async function handleApi(req, res, pathname) {
     currentRun.sse(res);
     return true;
   }
+  if (pathname === '/api/audio-mute' && req.method === 'GET') {
+    return json(res, 200, { muted: windowAudioMuted }, { 'Cache-Control': 'no-store' }), true;
+  }
+  if (pathname === '/api/audio-mute' && req.method === 'POST') {
+    const body = await readBody(req);
+    if (typeof body.muted !== 'boolean') {
+      return json(res, 400, { error: 'muted boolean obrigatório' }), true;
+    }
+    windowAudioMuted = body.muted;
+    writeRunStdin({ type: 'audio_mute', muted: windowAudioMuted });
+    return json(res, 200, { ok: true, muted: windowAudioMuted }), true;
+  }
   if (pathname === '/api/run' && req.method === 'POST') {
     const body = await readBody(req);
     if (!body.flow) {
       appendWebLog('[api/run] 400 flow obrigatório');
       return json(res, 400, { error: 'flow obrigatório' }), true;
+    }
+    if (typeof body.muted === 'boolean') {
+      windowAudioMuted = body.muted;
     }
     const r = startRun(body.flow, body.runSeconds ?? 0, body.flowName, body.testMode === true);
     if (r.error) {
@@ -1166,8 +1215,8 @@ async function handleApi(req, res, pathname) {
     if (!currentRun) {
       return json(res, 200, { ok: true, sent: false, nodeId, note: 'nenhum run em andamento' }), true;
     }
-    currentRun.child.stdin?.write(JSON.stringify({ type: 'reset_history', nodeId }) + '\n');
-    return json(res, 200, { ok: true, sent: true, nodeId }), true;
+    const sent = writeRunStdin({ type: 'reset_history', nodeId });
+    return json(res, 200, { ok: true, sent, nodeId }), true;
   }
   if (pathname === '/api/run/chat' && req.method === 'POST') {
     const body = await readBody(req);
@@ -1177,11 +1226,11 @@ async function handleApi(req, res, pathname) {
     if (!currentRun) {
       return json(res, 409, { error: 'nenhum run em andamento' }), true;
     }
-    currentRun.child.stdin?.write(JSON.stringify({ type: 'chat_input', nodeId, text }) + '\n');
-    if (sessionBuffer) {
+    const sent = writeRunStdin({ type: 'chat_input', nodeId, text });
+    if (sent && sessionBuffer) {
       sessionBuffer.captions.push({ ts: new Date().toISOString(), nodeId, kind: 'transcription', text });
     }
-    return json(res, 200, { ok: true, sent: true, nodeId }), true;
+    return json(res, 200, { ok: true, sent, nodeId }), true;
   }
   if (pathname === '/api/gate' && req.method === 'POST') {
     // aprovação/edição/rejeição do human.approve: {"nodeId","text"|null}
@@ -1195,10 +1244,10 @@ async function handleApi(req, res, pathname) {
         text: body.text.trim(),
       });
     }
-    currentRun.child.stdin?.write(JSON.stringify({
+    writeRunStdin({
       type: 'gate_action', nodeId: body.nodeId, text: body.text ?? null,
       ...(typeof body.rejectionText === 'string' && body.rejectionText.trim() ? { rejectionText: body.rejectionText.trim() } : {}),
-    }) + '\n');
+    });
     // todas as janelas (aba + console) removem o card do gate ao ser respondido
     broadcast('runner', { type: 'gate_cancelled', nodeId: String(body.nodeId), reason: 'answered' });
     return json(res, 200, { ok: true }), true;
@@ -1458,6 +1507,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+  server.on('error', (err) => {
+    console.error(`[falador-web] falha ao escutar 127.0.0.1:${PORT}: ${err?.code ?? err?.message ?? err}`);
+    process.exit(1);
+  });
   server.listen(PORT, '127.0.0.1', () => {
     const addr = server.address();
     const boundPort = typeof addr === 'object' && addr ? addr.port : PORT;

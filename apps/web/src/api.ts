@@ -134,6 +134,17 @@ export async function fetchTopics(text: string): Promise<string[]> {
 export async function stopRun(): Promise<void> {
   await fetch('/api/stop', { method: 'POST' });
 }
+export async function setAudioMute(muted: boolean): Promise<void> {
+  try {
+    await fetch('/api/audio-mute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ muted: Boolean(muted) }),
+    });
+  } catch {
+    // silencioso para nunca quebrar se o endpoint não responder em mocks
+  }
+}
 export async function resetHistory(nodeId?: string): Promise<{ ok: boolean; sent?: boolean; nodeId?: string }> {
   const r = await fetch('/api/run/reset-history', {
     method: 'POST',
@@ -293,9 +304,13 @@ export function openRun(
   testMode?: boolean,
 ): AbortController {
   const ctl = new AbortController();
+  let muted = false;
+  try {
+    muted = localStorage.getItem('falador.windowMuted') === '1';
+  } catch { /* ignore */ }
   fetch('/api/run', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ flow, ...(flowName ? { flowName } : {}), ...(testMode ? { testMode: true } : {}) }), signal: ctl.signal,
+    body: JSON.stringify({ flow, muted: Boolean(muted), ...(flowName ? { flowName } : {}), ...(testMode ? { testMode: true } : {}) }), signal: ctl.signal,
   }).then(async (r) => {
     if (!r.ok) {
       let msg = `falha ao iniciar run (HTTP ${r.status})`;

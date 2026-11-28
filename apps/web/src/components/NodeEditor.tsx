@@ -8,7 +8,7 @@ import {
 } from '@carbon/react';
 import { Close, Renew } from '@carbon/icons-react';
 import { isAsrLfm3Model, PARAM_HELP, type ParamDoc } from '../data';
-import { isTextModel, isAsrModel, isTtsModel, isStsModel, isDecisionModel } from '../live-utils';
+import { isTextModel, isAsrModel, isVoiceOutputModel, isDecisionModel } from '../live-utils';
 import type { FaladorNodeData } from '../flow-utils';
 import type { NodeMetrics, RunnerEvent } from '../api';
 
@@ -19,7 +19,7 @@ interface Props {
   onClose: () => void;
   metrics?: NodeMetrics;
   events: RunnerEvent[];
-  models: { omlx: string[]; cache: string[] };
+  models: { omlx: string[]; cache: string[]; details?: { id: string; model_type: string }[] };
   apps: string[];
   onRefreshApps: () => void;
 }
@@ -31,7 +31,10 @@ function modelsForNode(nodeType: string, models: { omlx: string[]; cache: string
   const all = [...models.omlx, ...models.cache.filter((m) => !models.omlx.includes(m))];
   if (nodeType === 'asr.realtime') return all.filter((m) => isAsrModel(m, mType(m)) && !/lfm.*audio/i.test(m));
   if (nodeType === 'asr.realtime.translate') return all.filter((m) => isAsrLfm3Model(m));
-  if (nodeType === 'tts.sts') return all.filter((m) => isTtsModel(m, mType(m)) || isStsModel(m, mType(m)));
+  if (nodeType === 'tts.sts' || nodeType === 'sink.captions') {
+    const voiceModels = all.filter((m) => isVoiceOutputModel(m, mType(m)));
+    return voiceModels.length > 0 ? voiceModels : ['LiquidAI--LFM3-Audio-2B-MLX-8bit', 'LFM3-Omni-2B-MLX-8bit'];
+  }
   if (nodeType === 'decision.llm') return [...models.omlx.filter((m) => isDecisionModel(m, mType(m))), ...models.omlx.filter((m) => isTextModel(m, mType(m)))];
   if (nodeType === 'turn.detector') return models.omlx.filter((m) => isDecisionModel(m, mType(m)));
   if (nodeType === 'llm.omlx' || nodeType === 'translate.llm' || nodeType === 'agent.tools' || nodeType === 'goal.validator') {
@@ -43,6 +46,11 @@ function modelsForNode(nodeType: string, models: { omlx: string[]; cache: string
 export function NodeEditor({ nodeId, data, onChange, onClose, metrics, events, models, apps, onRefreshApps }: Props) {
   const docs = PARAM_HELP[data.type] ?? {};
   const p = data.params;
+  // TODOS os params do catálogo, não só os do JSON salvo — senão params com default
+  // (sampleRateHz, timeoutMs, maxTextChars, player, playbackRate, maxQueue, outputFile)
+  // somem do editor e a URL aparece sem label.
+  const allNames = Object.keys(docs);
+  const paramNames = Array.from(new Set([...allNames, ...data.paramNames]));
   const set = (name: string, value: unknown) => onChange({ ...p, [name]: value });
   const nodeEvents = events.filter((e) => (e as { nodeId?: string }).nodeId === nodeId).slice(-12);
   const nodeModels = modelsForNode(data.type, models);
@@ -64,12 +72,13 @@ export function NodeEditor({ nodeId, data, onChange, onClose, metrics, events, m
         <TabPanels>
           <TabPanel>
             <div className="node-editor-fields">
-              {data.paramNames.length === 0 && (
+              {paramNames.length === 0 && (
                 <p className="node-editor-empty">Este nó não tem parâmetros ajustáveis.</p>
               )}
-              {data.paramNames.map((name) => (
+              {paramNames.map((name) => (
                 <ParamField
                   key={name}
+                  nodeType={data.type}
                   name={name}
                   doc={docs[name]}
                   value={p[name]}
@@ -114,8 +123,9 @@ export function NodeEditor({ nodeId, data, onChange, onClose, metrics, events, m
 }
 
 function ParamField({
-  name, doc, value, onChange, nodeModels, apps, onRefreshApps,
+  nodeType, name, doc, value, onChange, nodeModels, apps, onRefreshApps,
 }: {
+  nodeType: string;
   name: string;
   doc?: ParamDoc;
   value: unknown;
@@ -132,6 +142,9 @@ function ParamField({
   if (control === 'model') {
     const cur = value === undefined || value === null ? '' : String(value);
     const items = nodeModels.map((m) => ({ id: m, label: shortLabel(m) }));
+    if (nodeType === 'sink.captions') {
+      items.unshift({ id: '-', label: '— (só escrever)' });
+    }
     // garante que o valor atual aparece mesmo se não estiver na lista
     if (cur && !items.some((i) => i.id === cur)) {
       items.unshift({ id: cur, label: shortLabel(cur) });
@@ -198,7 +211,7 @@ function ParamField({
     return (
       <div className="pe-field">
         <Dropdown
-          id={`pe-${name}`} size="sm" titleText={name} hideLabel label={name}
+          id={`pe-${name}`} size="sm" titleText={name} label={name}
           helperText={helper} items={doc.options}
           itemToString={(it) => (it ? it.label : '')}
           selectedItem={doc.options.find((o) => o.val === cur) ?? doc.options[0]}
@@ -238,7 +251,7 @@ function ParamField({
     return (
       <div className="pe-field">
         <TextArea
-          id={`pe-${name}`} labelText={name} hideLabel rows={3}
+          id={`pe-${name}`} labelText={name} rows={3}
           placeholder={doc?.def} helperText={helper}
           value={value === undefined || value === null ? '' : String(value)}
           onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
@@ -251,7 +264,7 @@ function ParamField({
     return (
       <div className="pe-field">
         <TextArea
-          id={`pe-${name}`} labelText={`${name} (JSON)`} hideLabel rows={3}
+          id={`pe-${name}`} labelText={`${name} (JSON)`} rows={3}
           placeholder={doc?.def} helperText={helper}
           invalid={!!jsonErr} invalidText={jsonErr}
           defaultValue={raw}
@@ -269,7 +282,7 @@ function ParamField({
   return (
     <div className="pe-field">
       <TextInput
-        id={`pe-${name}`} labelText={name} hideLabel size="sm"
+        id={`pe-${name}`} labelText={name} size="sm"
         placeholder={doc?.def} helperText={helper}
         value={value === undefined || value === null ? '' : String(value)}
         onChange={(e) => {

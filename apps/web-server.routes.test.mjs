@@ -371,3 +371,117 @@ test('auditoria: eventos audit chegam no SSE e o export (webhook) carrega sessio
     await new Promise((r) => hook.close(r));
   }
 });
+
+test('GET/POST /api/audio-mute valida boolean, mantém estado da janela e propaga para run em andamento', async () => {
+  // Estado inicial
+  const initRes = await api('/api/audio-mute');
+  assert.equal(initRes.status, 200);
+  assert.deepEqual(await initRes.json(), { muted: false });
+
+  // Validação 400 quando muted não é boolean
+  for (const bad of [{}, { muted: 'true' }, { muted: 1 }, { muted: null }]) {
+    const r = await post('/api/audio-mute', bad);
+    assert.equal(r.status, 400);
+    assert.match((await r.json()).error, /muted boolean obrigatório/);
+  }
+
+  // Toggle true -> GET reflete true -> toggle false -> GET reflete false
+  const muteOn = await post('/api/audio-mute', { muted: true });
+  assert.equal(muteOn.status, 200);
+  assert.deepEqual(await muteOn.json(), { ok: true, muted: true });
+  assert.deepEqual(await (await api('/api/audio-mute')).json(), { muted: true });
+
+  const muteOff = await post('/api/audio-mute', { muted: false });
+  assert.equal(muteOff.status, 200);
+  assert.deepEqual(await muteOff.json(), { ok: true, muted: false });
+  assert.deepEqual(await (await api('/api/audio-mute')).json(), { muted: false });
+
+  // Propaga POST /api/run { muted: true } (via FALADOR_AUDIO_MUTED) e POST /api/audio-mute ao child vivo
+  const liveFlow = {
+    version: 1,
+    stopWhenSourcesDone: false,
+    nodes: [
+      { id: 'inp', type: 'input.chat', params: {} },
+      { id: 'out', type: 'sink.captions', params: { mode: 'callback', outputMode: 'write' } },
+    ],
+    edges: [{ from: 'inp.out', to: 'out.phrase' }],
+  };
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 10000);
+  try {
+    const runRes = await api('/api/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ flow: liveFlow, flowName: 'mute-test', muted: true }),
+      signal: ctl.signal,
+    });
+    assert.equal(runRes.status, 200);
+    assert.deepEqual(await (await api('/api/audio-mute')).json(), { muted: true });
+
+    const reader = runRes.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    let sentToggle = false;
+    let gotAudioMuteEvent = null;
+    while (!gotAudioMuteEvent) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const block = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const dataLine = block.split('\n').find((l) => l.startsWith('data: '));
+        if (!dataLine) continue;
+        let ev;
+        try { ev = JSON.parse(dataLine.slice(6)); } catch { continue; }
+        if (ev.type === 'run_started' && !sentToggle) {
+          sentToggle = true;
+          const r = await post('/api/audio-mute', { muted: false });
+          assert.equal(r.status, 200);
+        }
+        if (ev.type === 'audio_mute') {
+          gotAudioMuteEvent = ev;
+        }
+      }
+    }
+    assert.deepEqual(gotAudioMuteEvent, { type: 'audio_mute', muted: false });
+  } finally {
+    clearTimeout(timer);
+    ctl.abort();
+    await post('/api/stop', {});
+    await post('/api/audio-mute', { muted: false });
+  }
+});
+
+test('POST /api/audio-mute durante/após encerramento abrupto do child nunca derruba o servidor com EPIPE', async () => {
+  const shortFlow = {
+    version: 1,
+    stopWhenSourcesDone: true,
+    nodes: [
+      { id: 'src', type: 'source.tone', params: { count: 1, intervalMs: 10 } },
+      { id: 'out', type: 'sink.captions', params: { mode: 'callback', outputMode: 'write' } },
+    ],
+    edges: [{ from: 'src.out', to: 'out.phrase' }],
+  };
+  for (let i = 0; i < 5; i++) {
+    const ctl = new AbortController();
+    const runPromise = api('/api/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ flow: shortFlow, flowName: `epipe-${i}` }),
+      signal: ctl.signal,
+    }).catch(() => null);
+    // Dispara rajada de /api/audio-mute concorrente com o encerramento do child e /api/stop
+    await Promise.all([
+      post('/api/audio-mute', { muted: true }),
+      post('/api/stop', {}),
+      post('/api/audio-mute', { muted: false }),
+      runPromise,
+    ]);
+    ctl.abort();
+  }
+  const health = await api('/api/audio-mute');
+  assert.equal(health.status, 200);
+  assert.deepEqual(await health.json(), { muted: false });
+});

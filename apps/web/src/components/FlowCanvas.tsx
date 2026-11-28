@@ -1,5 +1,5 @@
 // Canvas React Flow + editor INLINE ancorado no nó selecionado (acompanha pan/zoom/drag).
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   ReactFlow, Background, BackgroundVariant, Controls, MiniMap,
   useViewport, useReactFlow, MarkerType, ConnectionMode,
@@ -31,13 +31,65 @@ interface Props {
   metrics: RunSnapshot;
   events: RunnerEvent[];
   running: boolean;
-  models: { omlx: string[]; cache: string[] };
+  models: { omlx: string[]; cache: string[]; details?: { id: string; model_type: string }[] };
   apps: string[];
   onRefreshApps: () => void;
 }
 
 export function FlowCanvas(p: Props) {
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, fitView } = useReactFlow();
+  const wrapRef = useRef<HTMLDivElement>(null);
+  // Centraliza ao entrar/trocar de workflow (fitView da prop só vale na 1ª montagem).
+  const prevNodeCountRef = useRef(0);
+  const prevFlowKeyRef = useRef<string | null>(null);
+  const nodesCountRef = useRef(p.nodes.length);
+  nodesCountRef.current = p.nodes.length;
+
+  useEffect(() => {
+    const count = p.nodes.length;
+    const key = p.nodes.map((n) => n.id).join(',');
+    const initialLoad = prevFlowKeyRef.current === null && count > 0;
+    const flowChanged = prevFlowKeyRef.current !== null && count > 0 && prevFlowKeyRef.current !== key;
+    const grew = count > prevNodeCountRef.current && prevNodeCountRef.current > 0;
+    prevNodeCountRef.current = count;
+    if (count > 0) prevFlowKeyRef.current = key;
+    if (initialLoad || flowChanged || grew) {
+      const t = setTimeout(() => {
+        fitView({ padding: 0.16, maxZoom: 0.95, minZoom: 0.4, duration: initialLoad ? 0 : 150 }).catch(() => fitView());
+      }, 50);
+      return () => clearTimeout(t);
+    }
+  }, [p.nodes, fitView]);
+
+  // Quando o Builder sai de display:none (.view--hidden -> .view), recentraliza o grafo já carregado.
+  const wasHiddenRef = useRef(true);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const ro = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      const visible = Boolean(rect && rect.width > 0 && rect.height > 0);
+      if (!visible) {
+        wasHiddenRef.current = true;
+        return;
+      }
+      if (wasHiddenRef.current) {
+        wasHiddenRef.current = false;
+        if (nodesCountRef.current > 0) {
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(() => {
+            fitView({ padding: 0.16, maxZoom: 0.95, minZoom: 0.4 }).catch(() => fitView());
+          }, 50);
+        }
+      }
+    });
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      if (timer) clearTimeout(timer);
+    };
+  }, [fitView]);
 
   // nome exibido = o mesmo do workflow ("Input 1", "Output 2"…), nunca o rótulo genérico
   const names = useMemo(
@@ -179,6 +231,7 @@ export function FlowCanvas(p: Props) {
 
   return (
     <div
+      ref={wrapRef}
       className="canvas-wrap"
       onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
       onDrop={(e) => {
@@ -227,7 +280,7 @@ function EditorAnchor({ nodes, selectedId, onChange, onClose, metrics, events, m
   nodes: FNode[]; selectedId: string;
   onChange: (params: Record<string, unknown>) => void; onClose: () => void;
   metrics?: NodeMetrics; events: RunnerEvent[];
-  models: { omlx: string[]; cache: string[] };
+  models: { omlx: string[]; cache: string[]; details?: { id: string; model_type: string }[] };
   apps: string[];
   onRefreshApps: () => void;
 }) {

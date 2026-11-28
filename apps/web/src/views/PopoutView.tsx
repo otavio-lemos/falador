@@ -71,7 +71,6 @@ export function PopoutView() {
           inputMode={inputMode}
           outputMode="write"
           onToggleMicMute={noop}
-          onToggleOutputMode={noop}
           models={{ omlx: [], cache: [] }}
           apps={[]}
           contextDocs={[]}

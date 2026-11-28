@@ -531,7 +531,7 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 }
 
 .stage-dd--triple {
-  flex: 1.5 1 0;
+  flex: 1.35 1 0;
   min-width: 0;
 }
 
@@ -546,6 +546,16 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   text-overflow: ellipsis;
   font-size: 0.7rem;
   line-height: 1rem;
+  position: relative;
+  padding-left: 10px;
+}
+.stage-dd-label::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
 }
 
 .stage-dd-solution {
@@ -554,8 +564,8 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   padding: 0 4px;
   height: 14px;
   border-radius: 2px;
-  background: rgba(255, 255, 255, 0.08);
-  color: $txt-2;
+  background: var(--accent);
+  color: white;
   font-size: 0.6rem;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -592,14 +602,14 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 
 // Dropdown de instância (número): ultra-compacto, tamanho mínimo possível
 .stage-dd-ctrl .stage-inst-select {
-  flex: 0 0 44px !important;
-  width: 44px !important;
-  min-width: 44px !important;
-  max-width: 44px !important;
+  flex: 0 0 34px !important;
+  width: 34px !important;
+  min-width: 34px !important;
+  max-width: 34px !important;
 
   .cds--list-box__field {
-    padding-inline-start: 4px !important;
-    padding-inline-end: 18px !important;
+    padding-inline-start: 3px !important;
+    padding-inline-end: 14px !important;
     justify-content: center;
   }
 
@@ -611,9 +621,9 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   }
 
   .cds--list-box__menu-icon {
-    right: 2px !important;
-    width: 14px;
-    height: 14px;
+    right: 1px !important;
+    width: 12px;
+    height: 12px;
     svg {
       width: 12px;
       height: 12px;
@@ -621,7 +631,7 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   }
 
   .cds--list-box__menu {
-    min-inline-size: 44px !important;
+    min-inline-size: 34px !important;
     inline-size: max-content !important;
   }
 }
@@ -629,7 +639,7 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
 // Dropdown principal da etapa (modo / modelo / etc.)
 .stage-dd-ctrl .stage-main-select {
   flex: 1 1 0;
-  min-width: 0;
+  min-width: 28px;
   max-width: none;
 
   .cds--list-box,
@@ -638,7 +648,7 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
   }
 
   .cds--list-box__field {
-    padding-inline: 6px 26px !important;
+    padding-inline: 4px 18px !important;
   }
 
   .cds--list-box__label {
@@ -647,33 +657,60 @@ body { background: $bg-app; color: $txt-1; font-family: 'IBM Plex Sans', system-
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
+  .cds--list-box__menu-icon {
+    right: 2px !important;
+    width: 14px;
+    height: 14px;
+    svg {
+      width: 12px;
+      height: 12px;
+    }
+  }
 }
 
 // Dropdown secundário da etapa (transporte / idioma)
 .stage-dd-ctrl .stage-sec-select {
-  flex: 0 1 auto;
-  min-width: 55px;
+  flex: 0.85 1 0;
+  min-width: 48px;
   max-width: none;
 
+  .cds--list-box,
   .cds--list-box__field {
-    padding-inline: 6px 26px !important;
+    min-width: 0;
+  }
+
+  .cds--list-box__field {
+    padding-inline: 4px 18px !important;
   }
 
   .cds--list-box__label {
     font-size: 0.8125rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .cds--list-box__menu-icon {
+    right: 2px !important;
+    width: 14px;
+    height: 14px;
+    svg {
+      width: 12px;
+      height: 12px;
+    }
   }
 }
 
 // Dropdown de SSH / Transporte: menor possível cabendo 'SSH' e 'Local'
 .stage-dd-ctrl .stage-sec-select--ssh {
-  flex: 0 0 66px !important;
-  width: 66px !important;
-  min-width: 66px !important;
-  max-width: 66px !important;
+  flex: 0 0 50px !important;
+  width: 50px !important;
+  min-width: 50px !important;
+  max-width: 50px !important;
 
   .cds--list-box__field {
-    padding-inline-start: 6px !important;
-    padding-inline-end: 20px !important;
+    padding-inline: 4px 18px !important;
   }
 
   .cds--list-box__label {
