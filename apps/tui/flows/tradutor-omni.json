@@ -1,7 +1,7 @@
 {
   "version": 1,
   "stopWhenSourcesDone": false,
-  "description": "Tradutor Omni (streaming áudio) — captura SCK → Voxtral ASR streaming → LFM3-Omni TTS direto (:8092). Fala em qualquer idioma → português falado + legenda. Mais rápido: ASR streaming + TTS streaming sem etapa de tradução de texto separada.",
+  "description": "Tradutor Omni (Streaming End-to-End) — Captura SCK → Voxtral ASR streaming → LFM3-Omni TTS direto (:8092). Fala em qualquer idioma → português falado + legenda. Mais rápido: ASR streaming + TTS streaming sem etapa de tradução de texto separada.",
   "nodes": [
     {
       "id": "capture1",
@@ -10,6 +10,16 @@
         "backend": "sck",
         "input": "",
         "chunkMs": 80,
+        "sampleRate": 16000,
+        "ffmpegPath": "/opt/homebrew/bin/ffmpeg",
+        "pythonPath": ".venv/bin/python",
+        "sidecarPath": "services/capture-sidecar.py",
+        "sckPath": "services/capture-sck",
+        "excludePids": "",
+        "excludeNames": "afplay,ffplay,omlx",
+        "muted": false,
+        "placeholder": "Digite sua mensagem ou comando (Enter para enviar)...",
+        "initialMessage": "",
         "isDefault": true
       }
     },
@@ -17,9 +27,15 @@
       "id": "asr1",
       "type": "asr.realtime",
       "params": {
+        "url": "ws://127.0.0.1:8090/v1/realtime",
         "model": "/Users/otaviolemos/.cache/huggingface/hub/models--mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit/snapshots/fdebf7b2af834a1db4b8a3c99ab7480b333adf9e",
-        "serverVad": true,
         "inputRate": 16000,
+        "serverVad": true,
+        "commitEveryMs": 900,
+        "silenceThresholdMs": 800,
+        "maxPendingMs": 2000,
+        "emitInterruptOnSpeech": false,
+        "bargeInDebounceMs": 300,
         "outputRequired": false
       }
     },
@@ -27,17 +43,35 @@
       "id": "sink1",
       "type": "sink.captions",
       "params": {
+        "mode": "callback",
+        "showParcials": true,
+        "outputFile": "",
         "outputMode": "write",
+        "isDefault": true,
         "ttsUrl": "http://127.0.0.1:8092",
         "language": "Portuguese",
         "voice": "female",
+        "sampleRateHz": 24000,
+        "timeoutMs": 60000,
+        "maxTextChars": 1400,
+        "player": "/opt/homebrew/bin/ffplay",
         "playbackRate": 1.25,
-        "isDefault": true
+        "maxQueue": 2,
+        "model": "LFM3-Omni-2B-MLX-8bit"
       }
     }
   ],
   "edges": [
-    { "from": "capture1.out", "to": "asr1.in", "capacity": 32, "overflow": "drop_oldest", "ttlMs": 1500 },
-    { "from": "asr1.out", "to": "sink1.in" }
+    {
+      "from": "capture1.out",
+      "to": "asr1.in",
+      "capacity": 32,
+      "overflow": "drop_oldest",
+      "ttlMs": 1500
+    },
+    {
+      "from": "asr1.out",
+      "to": "sink1.in"
+    }
   ]
 }

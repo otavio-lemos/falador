@@ -1,7 +1,7 @@
 {
   "version": 1,
   "stopWhenSourcesDone": false,
-  "description": "Tradutor universal — captura SCK → Voxtral ASR streaming → translate.llm (LFM3-1.7B) → sink.captions (legenda na tela, sem síntese de fala para não duplicar o áudio do Chrome). Qualquer idioma de entrada → português.",
+  "description": "Tradutor Universal — Captura SCK → Voxtral ASR streaming → translate.llm (LFM3-1.7B) → sink.captions (legenda na tela + TTS LFM3-Audio opcional). Qualquer idioma de entrada → português (ou outro via dropdown).",
   "nodes": [
     {
       "id": "capture1",
@@ -10,6 +10,16 @@
         "backend": "sck",
         "input": "",
         "chunkMs": 80,
+        "sampleRate": 16000,
+        "ffmpegPath": "/opt/homebrew/bin/ffmpeg",
+        "pythonPath": ".venv/bin/python",
+        "sidecarPath": "services/capture-sidecar.py",
+        "sckPath": "services/capture-sck",
+        "excludePids": "",
+        "excludeNames": "afplay,ffplay,omlx",
+        "muted": false,
+        "placeholder": "Digite sua mensagem ou comando (Enter para enviar)...",
+        "initialMessage": "",
         "isDefault": true
       }
     },
@@ -17,29 +27,49 @@
       "id": "asr1",
       "type": "asr.realtime",
       "params": {
-        "model": "mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit",
-        "serverVad": true,
+        "url": "ws://127.0.0.1:8090/v1/realtime",
+        "model": "/Users/otaviolemos/.cache/huggingface/hub/models--mlx-community--Voxtral-Mini-4B-Realtime-2602-4bit/snapshots/fdebf7b2af834a1db4b8a3c99ab7480b333adf9e",
         "inputRate": 16000,
-        "outputRequired": false,
-        "bargeInDebounceMs": 100,
-        "commitEveryMs": 600,
-        "silenceThresholdMs": 400,
-        "maxPendingMs": 1200,
-        "emitInterruptOnSpeech": true
+        "serverVad": true,
+        "commitEveryMs": 900,
+        "silenceThresholdMs": 800,
+        "maxPendingMs": 2000,
+        "emitInterruptOnSpeech": false,
+        "bargeInDebounceMs": 300,
+        "outputRequired": false
+      }
+    },
+    {
+      "id": "translate1",
+      "type": "translate.llm",
+      "params": {
+        "baseUrl": "http://127.0.0.1:8080",
+        "model": "LiquidAI--LFM3-1.7B-MLX-4bit",
+        "targetLanguage": "Portuguese",
+        "temperature": 0.1,
+        "maxTokens": 256,
+        "enableThinking": false
       }
     },
     {
       "id": "sink1",
       "type": "sink.captions",
       "params": {
-        "outputMode": "speak",
-        "language": "English",
-        "voice": "male",
-        "playbackRate": 1.25,
+        "mode": "callback",
+        "showParcials": true,
+        "outputFile": "",
+        "outputMode": "write",
         "isDefault": true,
-        "model": "LFM3-Omni-2B-MLX-8bit",
-        "showParcials": false,
-        "mode": "callback"
+        "ttsUrl": "http://127.0.0.1:8091",
+        "language": "Portuguese",
+        "voice": "female",
+        "sampleRateHz": 24000,
+        "timeoutMs": 60000,
+        "maxTextChars": 1400,
+        "player": "/opt/homebrew/bin/ffplay",
+        "playbackRate": 1.25,
+        "maxQueue": 2,
+        "model": "LiquidAI--LFM3-Audio-2B-MLX-8bit"
       }
     }
   ],
@@ -53,9 +83,13 @@
     },
     {
       "from": "asr1.out",
-      "to": "sink1.in",
+      "to": "translate1.parcs",
       "capacity": 16,
-      "overflow": "block"
+      "overflow": "drop_oldest"
+    },
+    {
+      "from": "translate1.out",
+      "to": "sink1.in"
     }
   ]
 }
