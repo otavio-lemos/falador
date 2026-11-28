@@ -259,18 +259,20 @@ describe('sink.captions', () => {
   test('outputMode=speak: escreve via __onCaption (parcial+final) E sintetiza/toca só no final', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'falador-out-speak-'));
     const fakePlayer = join(dir, 'play.sh');
-    const playedArgs = join(dir, 'played.txt');
-    writeFileSync(fakePlayer, `#!/bin/sh\necho "$1" >> "${playedArgs}"\nexit 0\n`);
+    const playedPcm = join(dir, 'played.pcm');
+    writeFileSync(fakePlayer, `#!/bin/sh\ncat > "${playedPcm}"\nexit 0\n`);
     chmodSync(fakePlayer, 0o755);
 
     const ttsBodies: Array<{ text: string; language: string; voice: string }> = [];
+    const paths: string[] = [];
     const srv = createServer((req, res) => {
       let body = '';
+      paths.push(req.url ?? '');
       req.on('data', (c) => (body += c));
       req.on('end', () => {
         ttsBodies.push(JSON.parse(body));
-        res.writeHead(200, { 'Content-Type': 'audio/wav' });
-        res.end(Buffer.from('RIFFfakewavbytes'));
+        res.writeHead(200, { 'Content-Type': 'audio/pcm', 'X-Sample-Rate': '24000' });
+        res.end(Buffer.alloc(4800, 7));
       });
     });
     await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
@@ -298,11 +300,52 @@ describe('sink.captions', () => {
     assert.equal(calls.length, 2);
     assert.equal(calls[0].final, false);
     assert.equal(calls[1].text, 'Hello world');
+    assert.deepEqual(paths, ['/tts-stream']);
     assert.equal(ttsBodies.length, 1);
     assert.deepEqual(ttsBodies[0], { text: 'Hello world', language: 'English', voice: 'male', sample_rate: 24000 });
-    assert.ok(existsSync(playedArgs));
+    assert.equal(readFileSync(playedPcm).length, 4800);
     assert.ok(ctx._logs.some((l) => l.level === 'info' && l.msg.startsWith('fala:')));
     assert.ok(ctx._logs.some((l) => l.level === 'info' && l.msg.startsWith('playback ok')));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('outputMode=speak: começa a tocar ANTES do fim da síntese (PCM por chunk)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'falador-out-stream-'));
+    const fakePlayer = join(dir, 'play.sh');
+    const playedPcm = join(dir, 'played.pcm');
+    writeFileSync(fakePlayer, `#!/bin/sh\ncat > "${playedPcm}"\nexit 0\n`);
+    chmodSync(fakePlayer, 0o755);
+
+    let ended = false;
+    const srv = createServer((req, res) => {
+      req.resume();
+      res.writeHead(200, { 'Content-Type': 'audio/pcm', 'X-Sample-Rate': '24000' });
+      res.write(Buffer.alloc(4800, 1)); // 100 ms já prontos
+      setTimeout(() => {
+        res.write(Buffer.alloc(4800, 2));
+        res.end();
+        ended = true;
+      }, 1200);
+    });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    const port = (srv.address() as { port: number }).port;
+
+    const ctx = makeCtx(
+      { mode: 'callback', outputMode: 'speak', ttsUrl: `http://127.0.0.1:${port}`, player: fakePlayer },
+      { __onCaption: () => {} },
+    );
+    const node = sinkCaptions.create(ctx) as NodeRuntime;
+    await node.start();
+    await node.onInput('in', { seq: 1, ts: 1, payload: { text: 'fala longa', final: true } } as any);
+    await delay(800); // meio da síntese (o shell do player leva ~200 ms p/ subir aqui)
+    const midBytes = existsSync(playedPcm) ? readFileSync(playedPcm).length : 0;
+    const endedMid = ended;
+    await node.stop('done');
+    srv.close();
+    assert.equal(endedMid, false, 'síntese ainda não terminou no meio da checagem');
+    assert.equal(midBytes, 4800, 'player deve ter recebido o 1º chunk antes do fim da síntese');
+    assert.equal(ended, true);
+    assert.ok((ctx._timers['sink.captions.ttft.ms']?.length ?? 0) >= 1);
     rmSync(dir, { recursive: true, force: true });
   });
 

@@ -46,7 +46,9 @@
         "language": "Portuguese",
         "voice": "male",
         "isDefault": true,
-        "ttsUrl": "http://127.0.0.1:8091"
+        "ttsUrl": "http://127.0.0.1:8091",
+        "playbackRate": 1.25,
+        "maxQueue": 2
       }
     }
   ],

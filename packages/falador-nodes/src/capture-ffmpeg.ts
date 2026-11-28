@@ -31,14 +31,14 @@ export function resolveSounddeviceInput(rawInput: string): string {
   return trimmed === '' ? 'Microfone' : trimmed.replace(/^:/, '').trim();
 }
 
-/** PIDs dos nossos serviços de áudio e do afplay, para o SCK ignorar no modo "todos". */
+/** PIDs dos nossos serviços de áudio e do player da fala, para o SCK ignorar no modo "todos". */
 async function ownAudioPids(explicit?: string): Promise<number[]> {
   if (explicit !== undefined) {
     return explicit.split(/[\s,]+/).map((n: string): number => Number(n)).filter((n: number) => Number.isFinite(n) && n > 0);
   }
   try {
     const { stdout } = await promisify(execFile)('pgrep', [
-      '-f', 'services/(sts-sidecar|omni-sidecar)\\.py|mlx_audio/server\\.py|omlx serve|/afplay ',
+      '-f', 'services/(sts-sidecar|omni-sidecar)\\.py|mlx_audio/server\\.py|omlx serve|/afplay |/ffplay ',
     ]);
     return stdout.split(/[\s,]+/).map((n: string): number => Number(n)).filter((n: number) => Number.isFinite(n) && n > 0);
   } catch {
@@ -177,8 +177,8 @@ export const captureFfmpeg: NodeTypeDef = {
         const sdDevice = resolveSounddeviceInput(input);
         // Nomes são resolvidos DENTRO do SCK, no momento do filtro — pega processo que subir depois.
         // Sem "python" genérico: PIDs vêm dos argumentos exatos dos nossos serviços;
-        // afplay é efêmero e é resolvido por nome dentro do SCK.
-        const excludeNames = String(ctx.params.excludeNames ?? 'afplay,omlx')
+        // afplay/ffplay são efêmeros e são resolvidos por nome dentro do SCK.
+        const excludeNames = String(ctx.params.excludeNames ?? 'afplay,ffplay,omlx')
           .split(/[\s,]+/).map((s: string) => s.trim().toLowerCase()).filter(Boolean);
         const excludeArgs = backend === 'sck'
           ? [

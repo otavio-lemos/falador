@@ -12,7 +12,8 @@
 |---|---|---|---|
 | **8080** | `omlx-server` (brew, Apache-2.0) | LLM texto, OpenAI-compat (SSE) | LFM3-1.7B-MLX-4bit (tradução, decisão, assistente) |
 | **8090** | `python -m mlx_audio.server` | ASR **streaming** OpenAI Realtime subset (`/v1/realtime`) | Voxtral-Mini-4B-Realtime-2602-4bit |
-| **8091** | `services/sts-sidecar.py` (nosso) | `POST /tts` (voz EN/PT) + `POST /asr-translate` (tradução nativa por janela) | LFM3-Audio-2B-MLX-8bit |
+| **8091** | `services/sts-sidecar.py` (nosso) | `POST /tts` (WAV) + `POST /tts-stream` (PCM por frame) + `POST /asr-translate` (tradução nativa por janela) | LFM3-Audio-2B-MLX-8bit |
+| **8092** | `services/omni-sidecar.py` (nosso) | mesmos endpoints do 8091 (`/tts`, `/tts-stream`, `/asr-translate`) | LFM3-Omni-2B-MLX-8bit |
 | **8787** | `apps/web-server.mjs` (nosso, zero-dep) | UI web + host: catálogo, flows, run NDJSON/SSE, gates | — (spawn do runner) |
 
 Nenhum serviço sai para a rede — tudo bind em `127.0.0.1`.

@@ -368,8 +368,9 @@ export const PARAM_HELP: Record<string, Record<string, ParamDoc>> = {
     sampleRateHz: { help: 'sample rate do WAV TTS (Hz)', def: '24000', control: 'slider', min: 16000, max: 48000, step: 8000, unit: 'Hz' },
     timeoutMs: { help: 'timeout da síntese TTS (ms)', def: '60000' },
     maxTextChars: { help: 'corta o texto falado em N caracteres', def: '1400' },
-    player: { help: 'binário que toca o WAV no modo Falar', def: '/usr/bin/afplay' },
-    maxQueue: { help: 'falas empilhadas além disso são descartadas', def: '4', control: 'slider', min: 1, max: 16, step: 1 },
+    player: { help: 'player que toca o PCM em streaming no modo Falar (precisa ler stdin: ffplay)', def: '/opt/homebrew/bin/ffplay' },
+    playbackRate: { help: 'velocidade da fala (1.0 = normal; >1 mais rápido, reduz atraso)', def: '1.25', control: 'slider', min: 0.75, max: 2, step: 0.05 },
+    maxQueue: { help: 'falas pendentes (ao vivo: descarta backlog antigo, mantém a mais recente)', def: '2', control: 'slider', min: 1, max: 8, step: 1 },
     mode: { help: 'stdout = terminal; callback = eventos pra UI (use callback na web)', def: 'stdout', control: 'dropdown', options: [{ val: 'stdout', label: 'stdout — terminal' }, { val: 'callback', label: 'callback — UI' }] },
     showParcials: { help: 'mostra parciais ao vivo', def: 'true', control: 'toggle' },
     outputFile: { help: 'arquivo opcional para salvar somente as frases finais', def: '', control: 'text' },
@@ -377,7 +378,8 @@ export const PARAM_HELP: Record<string, Record<string, ParamDoc>> = {
   'sink.playback': {
     player: { help: 'binário que toca o WAV', def: '/usr/bin/afplay' },
     tempDir: { help: 'diretório dos WAVs temporários', def: '(tmp do sistema)' },
-    maxQueue: { help: 'falas empilhadas além disso são descartadas', def: '4', control: 'slider', min: 1, max: 16, step: 1 },
+    playbackRate: { help: 'velocidade da fala (1.0 = normal; >1 mais rápido, reduz atraso)', def: '1.25', control: 'slider', min: 0.75, max: 2, step: 0.05 },
+    maxQueue: { help: 'falas pendentes (ao vivo: descarta backlog antigo, mantém a mais recente)', def: '2', control: 'slider', min: 1, max: 8, step: 1 },
   },
   'human.approve': {
     mode: {

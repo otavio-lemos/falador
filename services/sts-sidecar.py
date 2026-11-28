@@ -11,10 +11,14 @@ ocorrer por frase).
 Uso:
     .venv/bin/python services/sts-sidecar.py --model <caminho-do-snapshot> --port 8091
 
-Endpoint:
+Endpoints:
     POST /tts  {"text": "...", "language": "English", "voice": "female", "sample_rate": 16000}
-    → resposta: audio/wav bruto (streaming não — generate() do STS não é streaming;
-       RTF medido 3,6×/4,9× realtime, suficiente p/ frases do Cenário 1).
+    → resposta: audio/wav bruto (generate() acumula a frase inteira; RTF 3,6×/4,9×).
+    POST /tts-stream  (mesmo corpo)
+    → resposta: PCM s16le mono 24 kHz cru, escrito POR FRAME enquanto o modelo fala
+      (stream_slots + codec.decode a cada 4 frames = 320 ms). Medido: 1º chunk em
+      262 ms e frase de 6,88 s em 1,46 s (o /tts só respondia ao fim dos 1,46 s).
+      Headers: X-Sample-Rate, X-Sample-Format.
     GET  /health → {"model": "..."}
 """
 import argparse
@@ -30,6 +34,42 @@ import numpy as np
 MODEL = None
 MODEL_PATH = None
 LOCK = threading.Lock()  # MLX não é thread-safe entre generates
+FRAMES_PER_CHUNK = 4  # 4 frames de 80 ms = 320 ms de áudio por decode
+
+
+def _to_pcm16(wav):
+    x = np.clip(np.asarray(wav, dtype=np.float32).squeeze(), -1.0, 1.0)
+    return (x * 32767.0).astype(np.int16).tobytes()
+
+
+def _pcm16_chunks(text, language, voice):
+    """PCM s16le 24 kHz à medida que o modelo fala (stream_slots por frame).
+
+    Os 12 codec tokens de cada frame viram 1920 amostras (80 ms); decodifica em
+    lotes de 4 frames p/ amortizar o codec sem perder latência.
+    """
+    import mlx.core as mx
+
+    messages = [
+        {"role": "system", "content": f"Perform TTS in {language} using a {voice} voice."},
+        {"role": "user", "content": [{"type": "text", "text": text}]},
+    ]
+    inputs = MODEL.processor.prepare(messages)
+    codec = MODEL.codec()
+    eos = MODEL.config.audio_eos_code
+    batch = []
+    for _token, codes in MODEL.stream_slots(**inputs, generation_mode="audio"):
+        if codes is None:
+            continue
+        if int(codes[0].item()) == eos:
+            break
+        batch.append(codes)
+        if len(batch) == FRAMES_PER_CHUNK:
+            yield _to_pcm16(codec.decode(mx.stack(batch, axis=-1)))
+            batch = []
+    if batch:
+        yield _to_pcm16(codec.decode(mx.stack(batch, axis=-1)))
+
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -112,9 +152,60 @@ class Handler(BaseHTTPRequestHandler):
             print(f"[sts-sidecar] POST /asr-translate 500 ({ms}ms) error={e}", flush=True)
             self._send_json(500, {"error": str(e)})
 
+    def _handle_tts_stream(self):
+        t0 = time.monotonic()
+        try:
+            n = int(self.headers.get("Content-Length", 0))
+            req = json.loads(self.rfile.read(n) or b"{}")
+            text = (req.get("text") or "").strip()
+            if not text:
+                self._send_json(400, {"error": "text obrigatorio"})
+                return
+            language = req.get("language", "English")
+            voice = req.get("voice", "female")
+            sr = 24000  # o codec do LFM3-Audio sai sempre a 24 kHz
+
+            # Segura o lock pela geração inteira (como o /tts): o cliente lê o corpo
+            # sem esperar a reprodução, então o wall time é o da geração (~1,2 s).
+            with LOCK:
+                gen = _pcm16_chunks(text, language, voice)
+                first = next(gen, None)  # erro aqui ainda vira 500
+                if first is None:
+                    self._send_json(500, {"error": "sem audio gerado"})
+                    return
+                first_ms = int((time.monotonic() - t0) * 1000)
+                self.send_response(200)
+                self.send_header("Content-Type", "audio/pcm")
+                self.send_header("X-Sample-Rate", str(sr))
+                self.send_header("X-Sample-Format", "s16le-mono")
+                self.end_headers()
+                sent = len(first)
+                self.wfile.write(first)
+                for chunk in gen:
+                    self.wfile.write(chunk)
+                    sent += len(chunk)
+            ms = int((time.monotonic() - t0) * 1000)
+            print(
+                f"[sts-sidecar] POST /tts-stream 200 ({ms}ms, 1º chunk {first_ms}ms) "
+                f"lang={language} voice={voice} bytes={sent}",
+                flush=True,
+            )
+        except (BrokenPipeError, ConnectionResetError):
+            print("[sts-sidecar] /tts-stream: cliente desconectou", flush=True)
+        except Exception as e:  # delivery-friendly: erro em json
+            ms = int((time.monotonic() - t0) * 1000)
+            print(f"[sts-sidecar] POST /tts-stream 500 ({ms}ms) error={e}", flush=True)
+            try:
+                self._send_json(500, {"error": str(e)})
+            except OSError:
+                pass
+
     def do_POST(self):
         if self.path == "/asr-translate":
             self._handle_asr_translate()
+            return
+        if self.path == "/tts-stream":
+            self._handle_tts_stream()
             return
         if self.path != "/tts":
             self.send_response(404)

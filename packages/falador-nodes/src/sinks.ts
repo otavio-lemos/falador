@@ -6,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ControlMsg, NodeCtx, NodeRuntime, NodeTypeDef } from '../../falador-graph/src/index.ts';
-import { payloadText, postJsonBytes } from './sse.ts';
+import { payloadText } from './sse.ts';
 import { ttsSts as _ttsSts } from './tts-sts.ts';
 import type { AudioChunkPayload } from './tts-sts.ts';
 import type { TraceMeta } from './trace.ts';
@@ -77,9 +77,9 @@ export const sinkCaptions: NodeTypeDef = {
     const sampleRateHz = (ctx.params.sampleRateHz as number | undefined) ?? 24000;
     const timeoutMs = (ctx.params.timeoutMs as number | undefined) ?? 60_000;
     const maxTextChars = (ctx.params.maxTextChars as number | undefined) ?? 1400;
-    const player = (ctx.params.player as string | undefined) ?? '/usr/bin/afplay';
-    const playbackRate = (ctx.params.playbackRate as number | undefined) ?? 1.15;
-    const maxQueue = (ctx.params.maxQueue as number | undefined) ?? 4;
+    const player = (ctx.params.player as string | undefined) ?? '/opt/homebrew/bin/ffplay';
+    const playbackRate = (ctx.params.playbackRate as number | undefined) ?? 1.25;
+    const maxQueue = (ctx.params.maxQueue as number | undefined) ?? 2;
     const cb = ctx.bindings.__onCaption as
       | ((c: { text: string; final: boolean; trace?: TraceMeta }) => void)
       | undefined;
@@ -90,10 +90,8 @@ export const sinkCaptions: NodeTypeDef = {
       fileStream = createWriteStream(outputFile, { flags: 'a', encoding: 'utf-8' });
     }
 
-    let speakDir: string | null = null;
     let pending = 0;
     let dropped = 0;
-    let fileNo = 0;
     let stopped = false;
     let generation = 0;
     let activeCtrl: AbortController | null = null;
@@ -116,6 +114,9 @@ export const sinkCaptions: NodeTypeDef = {
       ctx.metrics.counter('sink.captions.messages', 1);
     }
 
+    // Fala em streaming: o sidecar manda PCM s16le por frame (80 ms) enquanto o
+    // modelo gera e o player toca em paralelo. O 1º som cai de "frase inteira
+    // sintetizada" (~1,2 s) para ~0,2 s.
     async function synthesizeAndPlay(text: string, myGen: number): Promise<void> {
       if (ctx.signal.aborted || myGen !== generation) return;
       const clean = text.replace(/\s+/g, ' ').trim();
@@ -127,73 +128,90 @@ export const sinkCaptions: NodeTypeDef = {
       const onAbort = () => ctrl.abort();
       ctx.signal.addEventListener('abort', onAbort, { once: true });
       const tTts = Date.now();
-      let wav: Uint8Array;
+      let res: Response;
       try {
-        wav = await postJsonBytes(
-          `${ttsUrl}/tts`,
-          { text: truncated, language, voice, sample_rate: sampleRateHz },
-          timeoutMs,
-          ctrl.signal,
-        );
+        res = await fetch(`${ttsUrl}/tts-stream`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ text: truncated, language, voice, sample_rate: sampleRateHz }),
+          // timeoutMs cobre só a espera pelo 1º chunk (o corpo flui até o fim da fala)
+          signal: AbortSignal.any([ctrl.signal, AbortSignal.timeout(timeoutMs)]),
+        });
       } catch (e: unknown) {
         const err = e as Error;
-        if (err?.name === 'AbortError' || ctrl.signal.aborted || ctx.signal.aborted || myGen !== generation) return;
-        ctx.log('error', `output.tts falhou: ${err?.message ?? String(e)}`);
-        ctx.metrics.counter('sink.captions.tts_errors', 1);
+        if (err?.name !== 'AbortError' && !ctx.signal.aborted && myGen === generation) {
+          ctx.log('error', `output.tts falhou: ${err?.message ?? String(e)}`);
+          ctx.metrics.counter('sink.captions.tts_errors', 1);
+        }
         return;
       } finally {
         ctx.signal.removeEventListener('abort', onAbort);
         if (activeCtrl === ctrl) activeCtrl = null;
       }
 
-      if (ctx.signal.aborted || myGen !== generation) return;
-      ctx.metrics.timer('sink.captions.tts.ms', Date.now() - tTts);
-      ctx.log('info', `fala: "${clean.slice(0, 80)}" (${(wav.byteLength / 1024).toFixed(0)} KB)`);
-
-      if (!speakDir) speakDir = await mkdtemp(join(tmpdir(), 'falador-out-'));
-      if (ctx.signal.aborted || myGen !== generation) return;
-      const file = join(speakDir, `chunk-${fileNo++}.wav`);
-      await new Promise<void>((resolve, reject) => {
-        const ws = createWriteStream(file);
-        ws.on('error', reject);
-        ws.on('finish', () => resolve());
-        ws.end(Buffer.from(wav));
-      });
-      if (ctx.signal.aborted || myGen !== generation) {
-        await rm(file, { force: true }).catch(() => {});
+      if (!res.ok || !res.body) {
+        ctx.log('error', `output.tts: /tts-stream respondeu HTTP ${res.status}`);
+        ctx.metrics.counter('sink.captions.tts_errors', 1);
         return;
       }
+      if (ctx.signal.aborted || myGen !== generation) return;
+
+      const sr = Number(res.headers.get('x-sample-rate')) || sampleRateHz;
+      const args = ['-f', 's16le', '-ar', String(sr), '-ch_layout', 'mono', '-nodisp', '-autoexit', '-loglevel', 'error'];
+      if (playbackRate !== 1) args.push('-af', `atempo=${playbackRate}`);
+      args.push('-');
+      ctx.log('info', `fala: "${clean.slice(0, 80)}" (streaming ${sr} Hz)`);
 
       const tPlay = Date.now();
+      let bytes = 0;
       try {
         await new Promise<void>((resolve, reject) => {
-          const args = playbackRate !== 1 ? ['-r', String(playbackRate), '-q', '1', file] : [file, '-q', '1'];
-          const p = spawn(player, args);
+          const p = spawn(player, args, { stdio: ['pipe', 'ignore', 'ignore'] });
           activeChild = p;
+          let settled = false;
           const onPlayAbort = () => {
             try { p.kill('SIGKILL'); } catch { /* ignore */ }
           };
-          ctx.signal.addEventListener('abort', onPlayAbort, { once: true });
-          const cleanup = () => {
+          const done = (err?: Error) => {
+            if (settled) return;
+            settled = true;
             ctx.signal.removeEventListener('abort', onPlayAbort);
             if (activeChild === p) activeChild = null;
+            if (err) reject(err);
+            else resolve();
           };
-          p.on('error', (err) => {
-            cleanup();
-            reject(err);
+          ctx.signal.addEventListener('abort', onPlayAbort, { once: true });
+          p.on('error', (err) => done(err));
+          p.on('close', (code) => {
+            if (code === 0 || code === null || myGen !== generation) done();
+            else done(new Error(`${player} exit ${code}`));
           });
-          p.on('exit', (code) => {
-            cleanup();
-            if (code === 0 || code === null || myGen !== generation) resolve();
-            else reject(new Error(`afplay exit ${code}`));
-          });
+          p.stdin?.on('error', () => { /* EPIPE ao interromper */ });
+          // Sem esperar drain: o stdin absorve a frase (~KB) e o sidecar termina de
+          // gerar rápido em vez de ficar preso no ritmo da reprodução.
+          void (async () => {
+            try {
+              for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+                if (myGen !== generation || p.exitCode !== null) break;
+                bytes += chunk.byteLength;
+                p.stdin?.write(Buffer.from(chunk));
+              }
+            } catch { /* abort/EPIPE */ }
+            try { p.stdin?.end(); } catch { /* ignore */ }
+          })();
         });
         if (myGen === generation) {
+          ctx.metrics.timer('sink.captions.ttft.ms', tPlay - tTts);
           ctx.metrics.timer('sink.captions.playback.ms', Date.now() - tPlay);
-          ctx.log('info', `playback ok (${((Date.now() - tPlay) / 1000).toFixed(1)}s)`);
+          ctx.log(
+            'info',
+            `playback ok (${((Date.now() - tPlay) / 1000).toFixed(1)}s, ${(bytes / 1024).toFixed(0)} KB)`,
+          );
         }
-      } finally {
-        await rm(file, { force: true }).catch(() => {});
+      } catch (e: unknown) {
+        if (myGen === generation && !ctx.signal.aborted) {
+          ctx.log('error', `output.playback: ${String(e)}`);
+        }
       }
     }
 
@@ -265,10 +283,7 @@ export const sinkCaptions: NodeTypeDef = {
         stopped = true;
         speakQueue.length = 0;
         pending = 0;
-        const dirToClean = speakDir;
-        await speakPump.catch(() => {}).then(() => {
-          if (dirToClean) return rm(dirToClean, { recursive: true, force: true }).catch(() => {});
-        });
+        await speakPump.catch(() => {});
         await new Promise<void>((res) => {
           if (fileStream) fileStream!.end(res);
           else res();
@@ -316,8 +331,8 @@ export const sinkPlayback: NodeTypeDef = {
   },
   create: (ctx: NodeCtx): NodeRuntime => {
     const player = (ctx.params.player as string | undefined) ?? '/usr/bin/afplay';
-    const playbackRate = (ctx.params.playbackRate as number | undefined) ?? 1.15;
-    const maxQueue = (ctx.params.maxQueue as number | undefined) ?? 4;
+    const playbackRate = (ctx.params.playbackRate as number | undefined) ?? 1.25;
+    const maxQueue = (ctx.params.maxQueue as number | undefined) ?? 2;
     const muted = ctx.params.muted === true;
     let dir: string | null = null;
     let pending = 0;
