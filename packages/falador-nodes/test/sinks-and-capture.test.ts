@@ -349,6 +349,73 @@ describe('sink.captions', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  test('fluxos tradutor e tradutor-omni: fala em streaming com os params reais de cada flow', async () => {
+    const flowsDir = new URL('../../../apps/tui/flows/', import.meta.url);
+    for (const file of ['tradutor.json', 'tradutor-omni.json']) {
+      const flow = JSON.parse(readFileSync(new URL(file, flowsDir), 'utf-8')) as {
+        nodes: Array<{ type: string; params: Record<string, unknown> }>;
+      };
+      const sink = flow.nodes.find((n) => n.type === 'sink.captions');
+      assert.ok(sink, `${file} precisa de sink.captions`);
+      const params = sink!.params;
+      assert.equal(params.outputMode, 'speak', file);
+      assert.equal(params.language, 'Portuguese', file);
+      assert.equal(params.voice, 'male', file);
+      assert.equal(params.playbackRate, 1.25, file);
+      assert.match(String(params.ttsUrl), /^http:\/\/127\.0\.0\.1:809[12]$/, file);
+
+      const dir = mkdtempSync(join(tmpdir(), `falador-flow-${file}-`));
+      const fakePlayer = join(dir, 'play.sh');
+      const playedPcm = join(dir, 'played.pcm');
+      const playedArgs = join(dir, 'args.txt');
+      writeFileSync(
+        fakePlayer,
+        `#!/bin/sh\nprintf '%s\\n' "$@" > "${playedArgs}"\ncat > "${playedPcm}"\nexit 0\n`,
+      );
+      chmodSync(fakePlayer, 0o755);
+
+      const paths: string[] = [];
+      const bodies: Array<Record<string, unknown>> = [];
+      const srv = createServer((req, res) => {
+        let body = '';
+        paths.push(req.url ?? '');
+        req.on('data', (c) => (body += c));
+        req.on('end', () => {
+          bodies.push(JSON.parse(body));
+          res.writeHead(200, { 'Content-Type': 'audio/pcm', 'X-Sample-Rate': '24000' });
+          res.write(Buffer.alloc(4800, 1)); // 4 frames de 80 ms
+          setTimeout(() => res.end(Buffer.alloc(4800, 2)), 30);
+        });
+      });
+      await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+      const port = (srv.address() as { port: number }).port;
+
+      const ctx = makeCtx(
+        { ...params, ttsUrl: `http://127.0.0.1:${port}`, player: fakePlayer },
+        { __onCaption: () => {} },
+      );
+      const node = sinkCaptions.create(ctx) as NodeRuntime;
+      await node.start();
+      await node.onInput('in', { seq: 1, ts: 1, payload: { text: 'frase de teste', final: true } } as any);
+      await node.stop('done');
+      srv.close();
+
+      assert.deepEqual(paths, ['/tts-stream'], file);
+      assert.deepEqual(
+        bodies[0],
+        { text: 'frase de teste', language: params.language, voice: params.voice, sample_rate: 24000 },
+        file,
+      );
+      assert.equal(readFileSync(playedPcm).length, 9600, file);
+      const args = readFileSync(playedArgs, 'utf-8').trim().split('\n');
+      assert.ok(args.includes('-f') && args.includes('s16le'), `${file}: player deve ler PCM cru`);
+      assert.ok(args.includes('-ar') && args.includes('24000'), `${file}: sample rate do header`);
+      assert.ok(args.join(' ').includes('atempo=1.25'), `${file}: playbackRate do flow`);
+      assert.ok(ctx._logs.some((l) => l.level === 'info' && l.msg.includes('streaming 24000 Hz')), file);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('outputMode=speak: interrupt cancela playback em curso e encerra limpo no stop()', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'falador-out-int-'));
     const fakePlayer = join(dir, 'slow-play.sh');
@@ -356,8 +423,8 @@ describe('sink.captions', () => {
     chmodSync(fakePlayer, 0o755);
 
     const srv = createServer((_req, res) => {
-      res.writeHead(200, { 'Content-Type': 'audio/wav' });
-      res.end(Buffer.from('RIFFfake'));
+      res.writeHead(200, { 'Content-Type': 'audio/pcm', 'X-Sample-Rate': '24000' });
+      res.end(Buffer.alloc(9600, 3));
     });
     await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
     const port = (srv.address() as { port: number }).port;

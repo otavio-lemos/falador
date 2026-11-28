@@ -40,6 +40,12 @@ depois: a fala EN→PT saía com **1,2–1,5 s de silêncio** depois da traduç�
 E2E pelo runner (`input.chat` → `sink.captions` speak) nos dois: `fala: "…" (streaming 24000 Hz)`
 + `playback ok (2,3 s, 128 KB)`.
 
+Suíte completa (2026-11-27): `falador-nodes` **257 pass/2 skip/0 fail** — o teste
+`fluxos tradutor e tradutor-omni` lê os dois JSONs reais, usa os params de cada um contra um
+servidor `/tts-stream` falso e assere que o player recebe PCM com `-ar <header>` e
+`-af atempo=<playbackRate>`; `falador-graph` **49/49**, runner CLI + host **46/46**,
+`tsc --noEmit` + `vite build` e Playwright **53/53**.
+
 ## Alternativas descartadas
 
 - **`afplay` com arquivo WAV crescendo**: afplay espera o arquivo completo (e não faz sentido com
